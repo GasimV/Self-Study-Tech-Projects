@@ -1,0 +1,59 @@
+cert.crt
+cert.key
+
+# Ignore compiled Python files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# Ignore Django-specific files
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.env
+
+# Ignore virtual environment
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Ignore static files collected by Django
+staticfiles/
+
+# Ignore media files (if media is dynamically uploaded by users)
+media/
+
+# Ignore test result files
+.coverage
+*.cover
+*.log
+nosetests.xml
+coverage.xml
+
+# Ignore Django migrations
+*.log
+migrations/
+
+# Ignore node modules if you use JavaScript libraries (e.g., for front-end)
+node_modules/
+
+# Ignore database files
+*.sqlite3
+
+# Ignore MacOS system files
+.DS_Store
+
+# Ignore Windows system files
+Thumbs.db
