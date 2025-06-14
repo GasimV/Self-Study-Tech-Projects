@@ -1,4 +1,4 @@
-# Generative Deep Learning (2nd Edition) — Study Projects
+# Generative Deep Learning — Study Projects
 
 This repository contains my hands-on study notes and implementation projects based on the book **"Generative Deep Learning (2nd Edition)" by David Foster**. The goal is to learn and explore a wide range of generative AI models using **TensorFlow** and **Keras**, by practically applying the concepts introduced in each chapter.
 
