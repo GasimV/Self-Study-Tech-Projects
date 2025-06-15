@@ -1,5 +1,3 @@
----
-
 # Computer Vision Systems
 
 This is a self-study project focused on **Computer Vision** and its integration into **vision systems**. It includes learning notes, code experiments, and mini-projects covering both foundational algorithms and practical system applications.
@@ -15,5 +13,3 @@ This is a self-study project focused on **Computer Vision** and its integration 
 ## 🚀 Goal
 
 To build a strong foundation in computer vision and understand how to apply it in real-world vision systems.
-
----
