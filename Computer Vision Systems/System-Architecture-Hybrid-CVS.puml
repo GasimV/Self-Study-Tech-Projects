@@ -1,0 +1,32 @@
+@startuml
+title Hybrid CV System: C++ OpenCV + Python ML/DL
+
+actor User
+
+rectangle "Deployed System (Docker/VM)" {
+    node "Preprocessing Module (C++)" {
+        component "Image Capture" 
+        component "OpenCV Preprocessing"
+        component "Data Output\n(e.g., .npy, shared memory)"
+    }
+
+    node "Model Inference Module (Python)" {
+        component "Data Loader"
+        component "ML Model (PyTorch/TensorFlow)"
+        component "Post-processing & Decision Logic"
+    }
+
+    database "Output Storage\n(or Logs/Results)"
+
+    User --> "Image Capture" : Trigger/Image Input
+    "Image Capture" --> "OpenCV Preprocessing" : Raw Image
+    "OpenCV Preprocessing" --> "Data Output\n(e.g., .npy, shared memory)" : Preprocessed Data
+
+    "Data Output\n(e.g., .npy, shared memory)" --> "Data Loader" : Data Read
+    "Data Loader" --> "ML Model (PyTorch/TensorFlow)" : Input Tensor
+    "ML Model (PyTorch/TensorFlow)" --> "Post-processing & Decision Logic" : Inference Output
+    "Post-processing & Decision Logic" --> "Output Storage\n(or Logs/Results)" : Results/Logs
+    "Output Storage\n(or Logs/Results)" --> User : Final Output
+}
+
+@enduml
