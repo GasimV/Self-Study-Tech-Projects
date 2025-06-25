@@ -1,0 +1,5 @@
+# Ignore the images folder and its contents
+images/
+
+# Ignore all PNG files in the repo
+*.png

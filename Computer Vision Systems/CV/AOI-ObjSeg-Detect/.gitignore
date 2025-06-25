@@ -1,6 +1,3 @@
-.ipynb_checkpoints/
-.env
-
 # Build folders
 /build/
 /CMakeFiles/
