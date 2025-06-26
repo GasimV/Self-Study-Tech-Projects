@@ -71,3 +71,50 @@ Update `c_cpp_properties.json`:
 When run with a valid `ticket.png` image, each detected text region appears in a separate popup window, correctly rotated and bordered.
 
 ---
+---
+
+## 💻 Additional Sample Usage
+
+### 📎 segmentOcr.exe
+Runs text segmentation with OCR output to file using Tesseract.
+
+```bash
+.\Debug\segmentOcr.exe
+```
+
+**Workflow:**
+- Loads `ticketHigh.png` and binarizes it.
+- Segments text regions via dilation and contour filtering.
+- Deskews and crops each region.
+- Uses Tesseract OCR (`por` language) to extract text.
+- Outputs results into `ticket.txt`.
+
+---
+
+### 📎 segment.exe
+Runs text segmentation and displays each detected region.
+
+```bash
+.\Debug\segment.exe
+```
+
+**Workflow:**
+- Loads `ticket.png`, binarizes it with Otsu.
+- Extracts text regions using contour and geometric filtering.
+- Deskews and crops each detected region.
+- Displays the output as popup windows.
+
+---
+
+### 📎 segmentOcrHigh.exe
+Performs OCR on high-resolution segmented text images.
+
+```bash
+.\Debug\segmentOcrHigh.exe
+```
+
+**Workflow:**
+- Similar to `segmentOcr.exe` but uses stricter thresholds and padding.
+- Ideal for cleaner OCR on higher-resolution documents.
+- Outputs recognized text to `ticket.txt`.
+
