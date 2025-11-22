@@ -1,2 +1,6 @@
 .ipynb_checkpoints/
 .env
+logs/
+checkpoint/
+models/
+*train.jsonl
