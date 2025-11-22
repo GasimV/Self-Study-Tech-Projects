@@ -3,4 +3,5 @@
 logs/
 checkpoint/
 models/
+data/
 *train.jsonl
