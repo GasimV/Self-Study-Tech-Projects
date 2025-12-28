@@ -1,0 +1,135 @@
+# %%capture
+# import os, re
+# if "COLAB_" not in "".join(os.environ.keys()):
+#     !pip install unsloth
+# else:
+#     # Do this only in Colab notebooks! Otherwise use pip install unsloth
+#     import torch; v = re.match(r"[0-9]{1,}\.[0-9]{1,}", str(torch.__version__)).group(0)
+#     xformers = "xformers==" + ("0.0.33.post1" if v=="2.9" else "0.0.32.post2" if v=="2.8" else "0.0.29.post3")
+#     !pip install --no-deps bitsandbytes accelerate {xformers} peft trl triton cut_cross_entropy unsloth_zoo
+#     !pip install sentencepiece protobuf "datasets==4.3.0" "huggingface_hub>=0.34.0" hf_transfer
+#     !pip install --no-deps unsloth
+# !pip install transformers==4.56.2
+# !pip install --no-deps trl==0.22.2
+
+import os, re
+import torch
+import unsloth  # must be before transformers
+from datasets import load_dataset
+from transformers import TrainingArguments
+from unsloth import FastLanguageModel, UnslothTrainer, UnslothTrainingArguments
+
+# Run this to disable CCE since it is not supported for CPT
+#%env UNSLOTH_RETURN_LOGITS=1
+#UNSLOTH_RETURN_LOGITS= os.getenv("UNSLOTH_RETURN_LOGITS", "1")
+os.environ['UNSLOTH_RETURN_LOGITS'] = "1"
+
+# Model configuration
+max_seq_length = 4096
+dtype = None
+load_in_4bit = False
+
+# Load model and tokenizer
+print("Loading model...")
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name="unsloth/gemma-3-4b-pt",
+    max_seq_length=max_seq_length,
+    dtype=dtype,
+    load_in_4bit=load_in_4bit,
+)
+
+# Configure LoRA
+print("Configuring LoRA...")
+model = FastLanguageModel.get_peft_model(
+    model,
+    r=128,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                    "gate_proj", "up_proj", "down_proj",
+                    "embed_tokens", ], # "lm_head"
+    lora_alpha=128,
+    lora_dropout=0,
+    bias="none",
+    use_gradient_checkpointing="unsloth",
+    random_state=3407,
+    use_rslora=True,
+    loftq_config=None,
+)
+
+# Load custom JSONL dataset
+print("Loading dataset...")
+dataset = load_dataset("json", data_files="az_cpt_clean_plus_enru_tr_min512_sentence_chunked_4096_ov256_min512.jsonl", split="train")
+
+# Shuffle the dataset for better training
+print("Shuffling dataset...")
+dataset = dataset.shuffle(seed=3407)
+
+# Show dataset info
+print(f"Dataset size: {len(dataset)}")
+print(f"Sample: {dataset[0]}")
+
+# The dataset should already have a "text" field, so no formatting needed
+# If you need to add EOS token, uncomment below:
+EOS_TOKEN = tokenizer.eos_token
+
+def add_eos_token(examples):
+    texts = examples["text"]
+    outputs = [text + EOS_TOKEN for text in texts]
+    return {"text": outputs}
+
+dataset = dataset.map(add_eos_token, batched=True)
+
+# Show memory stats
+gpu_stats = torch.cuda.get_device_properties(0)
+start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
+print(f"{start_gpu_memory} GB of memory reserved.")
+
+# Configure trainer
+print("Setting up trainer...")
+trainer = UnslothTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=dataset,
+    dataset_text_field="text",
+    max_seq_length=max_seq_length,
+    dataset_num_proc=4,
+    args=UnslothTrainingArguments(
+        per_device_train_batch_size=24,
+        gradient_accumulation_steps=16,
+        
+        # Set num_train_epochs=1 for a full run, and turn off max_steps=None.
+        # Use warmup_ratio and num_train_epochs for longer runs!
+        # max_steps=None,
+        # warmup_steps=10,
+        warmup_ratio = 0.05,
+        num_train_epochs = 5,
+
+        # Select a 2 to 10x smaller learning rate for the embedding matrices!
+        learning_rate=1e-5,
+        embedding_learning_rate=2e-6,
+        
+        # Gradient clipping to prevent exploding gradients
+        max_grad_norm=0.9,
+        
+        logging_steps=1,
+        optim="adamw_torch_fused", # adamw_8bit
+        weight_decay=0.001,
+        lr_scheduler_type="cosine", # linear
+        seed=3407,
+        output_dir="outputs",
+        report_to="none",
+
+        # Save checkpoints periodically
+        save_strategy="steps",
+        save_steps=250,
+        # save_total_limit=3,
+    ),
+)
+
+# Train
+print("Starting training...")
+trainer_stats = trainer.train()
+
+print("Training complete!")
+print(f"Training stats: {trainer_stats}")
