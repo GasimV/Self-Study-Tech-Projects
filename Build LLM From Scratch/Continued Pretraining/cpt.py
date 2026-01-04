@@ -12,6 +12,9 @@
 # !pip install transformers==4.56.2
 # !pip install --no-deps trl==0.22.2
 
+# nohup python cpt.py > cpt.log 2>&1 & - run the script in the background
+# tail -f cpt.log - watch the progress of CPT
+
 import os, re
 import torch
 import unsloth  # must be before transformers
@@ -32,7 +35,8 @@ load_in_4bit = False
 # Load model and tokenizer
 print("Loading model...")
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name="unsloth/gemma-3-4b-pt",
+    # model_name="unsloth/gemma-3-4b-pt",
+    model_name="/workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-100/checkpoint_100_merged",
     max_seq_length=max_seq_length,
     dtype=dtype,
     load_in_4bit=load_in_4bit,
@@ -45,9 +49,9 @@ model = FastLanguageModel.get_peft_model(
     r=128,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                     "gate_proj", "up_proj", "down_proj",
-                    "embed_tokens", ], # "lm_head"
+                    "lm_head", "embed_tokens"],
     lora_alpha=128,
-    lora_dropout=0,
+    lora_dropout=0.001,
     bias="none",
     use_gradient_checkpointing="unsloth",
     random_state=3407,
@@ -55,28 +59,37 @@ model = FastLanguageModel.get_peft_model(
     loftq_config=None,
 )
 
-# Load custom JSONL dataset
-print("Loading dataset...")
-dataset = load_dataset("json", data_files="az_cpt_clean_plus_enru_tr_min512_sentence_chunked_4096_ov256_min512.jsonl", split="train")
+# Load custom JSONL datasets
+print("Loading training dataset...")
+train_dataset = load_dataset("json",
+                             data_files="az_cpt_clean_plus_enru_tr_min512_sentence_chunked_4096_ov256_min512.jsonl",
+                             split="train")
 
-# Shuffle the dataset for better training
-print("Shuffling dataset...")
-dataset = dataset.shuffle(seed=3407)
+print("Loading validation dataset...")
+eval_dataset = load_dataset("json", data_files="/workspace/ertan/Gemma-4B-Gasym/validation_data.jsonl", split="train")
+
+# Shuffle the training dataset for better training
+print("Shuffling training dataset...")
+train_dataset = train_dataset.shuffle(seed=3407)
 
 # Show dataset info
-print(f"Dataset size: {len(dataset)}")
-print(f"Sample: {dataset[0]}")
+print(f"Training dataset size: {len(train_dataset)}")
+print(f"Validation dataset size: {len(eval_dataset)}")
+print(f"Training sample: {train_dataset[0]}")
 
-# The dataset should already have a "text" field, so no formatting needed
-# If you need to add EOS token, uncomment below:
+# Add EOS token to both datasets
 EOS_TOKEN = tokenizer.eos_token
+
 
 def add_eos_token(examples):
     texts = examples["text"]
     outputs = [text + EOS_TOKEN for text in texts]
     return {"text": outputs}
 
-dataset = dataset.map(add_eos_token, batched=True)
+
+print("Adding EOS tokens...")
+train_dataset = train_dataset.map(add_eos_token, batched=True)
+eval_dataset = eval_dataset.map(add_eos_token, batched=True)
 
 # Show memory stats
 gpu_stats = torch.cuda.get_device_properties(0)
@@ -85,44 +98,50 @@ max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
 print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
 print(f"{start_gpu_memory} GB of memory reserved.")
 
-# Configure trainer
+# Configure trainer with validation
 print("Setting up trainer...")
 trainer = UnslothTrainer(
     model=model,
     tokenizer=tokenizer,
-    train_dataset=dataset,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,  # Add validation dataset
     dataset_text_field="text",
     max_seq_length=max_seq_length,
     dataset_num_proc=4,
     args=UnslothTrainingArguments(
         per_device_train_batch_size=24,
-        gradient_accumulation_steps=16,
-        
+        per_device_eval_batch_size=10,  # Batch size for validation
+        gradient_accumulation_steps=4,
+
         # Set num_train_epochs=1 for a full run, and turn off max_steps=None.
         # Use warmup_ratio and num_train_epochs for longer runs!
         # max_steps=None,
         # warmup_steps=10,
-        warmup_ratio = 0.05,
-        num_train_epochs = 5,
+        warmup_ratio=0.03,
+        num_train_epochs=5,
 
         # Select a 2 to 10x smaller learning rate for the embedding matrices!
-        learning_rate=1e-5,
-        embedding_learning_rate=2e-6,
-        
+        learning_rate=5e-8,
+        embedding_learning_rate=1e-8,
+
         # Gradient clipping to prevent exploding gradients
         max_grad_norm=0.9,
-        
-        logging_steps=1,
-        optim="adamw_torch_fused", # adamw_8bit
+
+        logging_steps=4,
+        optim="adamw_torch_fused",  # adamw_8bit
         weight_decay=0.001,
-        lr_scheduler_type="cosine", # linear
+        lr_scheduler_type="cosine",  # linear
         seed=3407,
-        output_dir="outputs",
+        output_dir="outputs_base_100",
         report_to="none",
+
+        # Validation configuration
+        eval_strategy="steps",  # Evaluate during training
+        eval_steps=100,  # Evaluate every 100 steps
 
         # Save checkpoints periodically
         save_strategy="steps",
-        save_steps=250,
+        save_steps=100,
         # save_total_limit=3,
     ),
 )
@@ -133,3 +152,6 @@ trainer_stats = trainer.train()
 
 print("Training complete!")
 print(f"Training stats: {trainer_stats}")
+
+# Print final validation loss
+print(f"\nFinal validation loss: {trainer_stats.metrics.get('eval_loss', 'N/A')}")

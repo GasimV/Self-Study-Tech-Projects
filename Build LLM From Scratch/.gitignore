@@ -31,3 +31,5 @@ Thumbs.db
 *.bin
 data/
 datasets/
+*.docx
+*.jsonl
