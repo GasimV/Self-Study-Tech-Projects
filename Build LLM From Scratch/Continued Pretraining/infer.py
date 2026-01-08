@@ -8,9 +8,26 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 """
-python infer.py \
-  --model-path /workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-250/checkpoint_250_merged \
-  --prompt "Merhaba, kısaca kendini tanıt."
+for LANG in az tr ru en; do
+  case $LANG in
+    az) PROMPT=$'İstifadəçi: Salam, mənim adım Qasım. Səndə özünü təqdim et.\nAssistent:' ;;
+    tr) PROMPT=$'Kullanıcı: Merhaba, benim adım Kasım. Sen de kendini tanıt.\nAsistan:' ;;
+    ru) PROMPT=$'Пользователь: Привет, меня зовут Касым. Представься тоже.\nАссистент:' ;;
+    en) PROMPT=$'User: Hi, my name is Gasym. Please introduce yourself as well.\nAssistant:' ;;
+  esac
+
+  for M in 1400 2400; do
+    echo "=== MODEL $M | LANG $LANG ==="
+    python infer.py \
+      --model-path /data2/Gemma-Gasym-Ertan/checkpoint-$M\_merged \
+      --prompt "$PROMPT" \
+      --do-sample --temperature 0.7 --top-p 0.95 --top-k 50 \
+      --repetition-penalty 1.2 \
+      --max-new-tokens 200 \
+      --seed 123
+    echo
+  done
+done
 
 """
 
@@ -71,6 +88,8 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "cuda", "cpu"],
         help="Device selection (auto uses device_map).",
     )
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=0)
+
     return parser.parse_args()
 
 
@@ -205,6 +224,12 @@ def build_generation_kwargs(args: argparse.Namespace, tokenizer: AutoTokenizer) 
                 "top_k": args.top_k,
             }
         )
+    else:
+        # Deterministic decoding defaults (you can also add num_beams here if you want)
+        pass
+    if args.no_repeat_ngram_size and args.no_repeat_ngram_size > 0:
+        gen_kwargs["no_repeat_ngram_size"] = args.no_repeat_ngram_size
+
     return gen_kwargs
 
 
