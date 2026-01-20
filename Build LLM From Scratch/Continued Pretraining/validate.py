@@ -11,10 +11,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 """
 python validate.py \
   --model unsloth/gemma-3-4b-pt \
-  --model /workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-200/checkpoint_200_merged \
-  --model /workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-300/checkpoint_300_merged \
-  --model /workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-400/checkpoint_400_merged \
-  --data /workspace/ertan/Gemma-4B-Gasym/validation_data.jsonl \
+  --model /.../checkpoint_200_merged \
+  --data /.../validation_data.jsonl \
   --dataset-field text \
   --add-eos
 """
