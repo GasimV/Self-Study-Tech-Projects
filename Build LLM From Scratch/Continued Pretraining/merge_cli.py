@@ -6,10 +6,10 @@ from safetensors import safe_open
 
 '''
 python merge_cli.py \
-  --base /.../checkpoint_100_merged \
-  --lora /.../checkpoint-1400 \
-  --tok-dir /.../checkpoint-1400 \
-  --out  /.../checkpoint-1400_merged \
+  --base /.../ \
+  --lora /.../ \
+  --tok-dir /.../ \
+  --out  /.../ \
   --device-map cpu \
   --dtype float16
 

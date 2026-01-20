@@ -4,11 +4,11 @@
 Merge LoRA adapter into a merged Gemma checkpoint.
 
 Merges:
-  base_merged = /.../cpt/checkpoint_100_merged
-  lora_adapter = /.../cpt/checkpoint-6700
+  base_merged = /.../
+  lora_adapter = /.../
 
 Outputs:
-  out_dir = /.../cpt/checkpoint_100_merged_lora_merged
+  out_dir = /.../
 
 This produces a standalone HF model directory you can load with:
   AutoModelForCausalLM.from_pretrained(out_dir, ...)
@@ -46,9 +46,9 @@ def assert_adapter_dir(path: str):
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base_merged", default="/.../cpt/checkpoint_100_merged")
-    ap.add_argument("--lora", default="/.../cpt/checkpoint-6700")
-    ap.add_argument("--out_dir", default="/.../cpt/checkpoint_100_lora_merged")
+    ap.add_argument("--base_merged", default="/.../")
+    ap.add_argument("--lora", default="/.../")
+    ap.add_argument("--out_dir", default="/.../")
     ap.add_argument("--cpu_merge", action="store_true", help="Merge on CPU to reduce VRAM usage (slower).")
     args = ap.parse_args()
 

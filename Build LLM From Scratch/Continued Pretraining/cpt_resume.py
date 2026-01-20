@@ -76,7 +76,7 @@ print("Loading training dataset...")
 train_dataset = load_dataset("json", data_files=".../.jsonl", split="train")
 
 print("Loading validation dataset...")
-eval_dataset = load_dataset("json", data_files=".../validation_data.jsonl", split="train")
+eval_dataset = load_dataset("json", data_files=".../name.jsonl", split="train")
 
 # Shuffle the training dataset for better training
 print("Shuffling training dataset...")
