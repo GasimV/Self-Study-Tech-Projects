@@ -7,30 +7,6 @@ from typing import Any, Dict, List
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-"""
-for LANG in az tr ru en; do
-  case $LANG in
-    az) PROMPT=$'İstifadəçi: Salam, mənim adım Qasım. Səndə özünü təqdim et.\nAssistent:' ;;
-    tr) PROMPT=$'Kullanıcı: Merhaba, benim adım Kasım. Sen de kendini tanıt.\nAsistan:' ;;
-    ru) PROMPT=$'Пользователь: Привет, меня зовут Касым. Представься тоже.\nАссистент:' ;;
-    en) PROMPT=$'User: Hi, my name is Gasym. Please introduce yourself as well.\nAssistant:' ;;
-  esac
-
-  for M in 1400 2400; do
-    echo "=== MODEL $M | LANG $LANG ==="
-    python infer.py \
-      --model-path /data2/Gemma-Gasym-Ertan/checkpoint-$M\_merged \
-      --prompt "$PROMPT" \
-      --do-sample --temperature 0.7 --top-p 0.95 --top-k 50 \
-      --repetition-penalty 1.2 \
-      --max-new-tokens 200 \
-      --seed 123
-    echo
-  done
-done
-
-"""
-
 
 DEFAULT_MAX_LENGTH = 8192
 
