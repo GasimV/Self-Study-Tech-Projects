@@ -36,7 +36,7 @@ load_in_4bit = False
 output_dir = "outputs_base_100"
 
 # Resolve resume checkpoint (env override or latest in output_dir)
-resume_checkpoint = "/workspace/ertan/Gemma-4B-Gasym/outputs_base_100/checkpoint-9000" # os.environ.get("RESUME_CHECKPOINT")
+resume_checkpoint = "..." # os.environ.get("RESUME_CHECKPOINT")
 if resume_checkpoint is None:
     resume_checkpoint = get_last_checkpoint(output_dir)
 if resume_checkpoint is None:
@@ -48,7 +48,7 @@ else:
 print("Loading model...")
 model, tokenizer = FastLanguageModel.from_pretrained(
     # model_name="unsloth/gemma-3-4b-pt",
-    model_name="/workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-100/checkpoint_100_merged",
+    model_name="...",
     max_seq_length=max_seq_length,
     dtype=dtype,
     load_in_4bit=load_in_4bit,
@@ -73,10 +73,10 @@ model = FastLanguageModel.get_peft_model(
 
 # Load custom JSONL datasets
 print("Loading training dataset...")
-train_dataset = load_dataset("json", data_files="az_cpt_clean_plus_enru_tr_min512_sentence_chunked_4096_ov256_min512.jsonl", split="train")
+train_dataset = load_dataset("json", data_files=".../.jsonl", split="train")
 
 print("Loading validation dataset...")
-eval_dataset = load_dataset("json", data_files="/workspace/ertan/Gemma-4B-Gasym/validation_data.jsonl", split="train")
+eval_dataset = load_dataset("json", data_files=".../validation_data.jsonl", split="train")
 
 # Shuffle the training dataset for better training
 print("Shuffling training dataset...")

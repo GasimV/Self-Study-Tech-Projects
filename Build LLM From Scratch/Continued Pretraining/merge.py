@@ -4,16 +4,16 @@ from peft import PeftModel
 from safetensors import safe_open
 import torch, os
 
-#BASE = "/home/ertan/orpheustts/orpheus/ft2/outputs_lora_v1/checkpoint_2637_merged"
+#BASE = "/.../checkpoint_2637_merged"
 #BASE = "unsloth/orpheus-3b-0.1-ft"
 #BASE = "unsloth/orpheus-3b-0.1-pretrained"
-#LORA = "/home/ertan/orpheustts/orpheus/ft2/outputs_lora_v4_ft_over_ft/checkpoint-1318"
-#TOK_DIR = "/home/ertan/orpheustts/orpheus/ft2/outputs_lora_v4_ft_over_ft"  # tokenizer burada kaydedildi
-#OUT  = "/home/ertan/orpheustts/orpheus/ft2/outputs_lora_v4_ft_over_ft/checkpoint_1318_ft_over_ft_merged"
+#LORA = "/.../checkpoint-1318"
+#TOK_DIR = "/.../outputs_lora_v4_ft_over_ft"  # tokenizer burada kaydedildi
+#OUT  = "/.../checkpoint_1318_ft_over_ft_merged"
 BASE    = "unsloth/gemma-3-4b-pt"
-LORA    = "/workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-500"
-TOK_DIR = "/workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-500"  # tokenizer burada kaydedildi
-OUT     = "/workspace/ertan/Gemma-4B-Gasym/outputs/checkpoint-500/checkpoint_500_merged"
+LORA    = "/.../checkpoint-500"
+TOK_DIR = "/.../checkpoint-500"  # tokenizer burada kaydedildi
+OUT     = "/.../checkpoint-500/checkpoint_500_merged"
  
 # 1) Doğru tokenizer (LoRA ile aynı vocab!)
 tok = AutoTokenizer.from_pretrained(TOK_DIR, use_fast=True)

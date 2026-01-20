@@ -33,3 +33,9 @@ data/
 datasets/
 *.docx
 *.jsonl
+
+# Scripts
+Continued Pretraining/compare_gemma_base_ft_lora.py
+Continued Pretraining/infer.py
+Continued Pretraining/validate.py
+Continued Pretraining/merge.py
