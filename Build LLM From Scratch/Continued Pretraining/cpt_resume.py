@@ -33,7 +33,7 @@ max_seq_length = 4096
 dtype = None
 load_in_4bit = False
 
-output_dir = "outputs_base_100"
+output_dir = "..."
 
 # Resolve resume checkpoint (env override or latest in output_dir)
 resume_checkpoint = "..." # os.environ.get("RESUME_CHECKPOINT")
