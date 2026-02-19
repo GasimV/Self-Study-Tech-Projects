@@ -94,6 +94,66 @@ def train_model_simple(model, train_loader, val_loader,
     return train_losses, val_losses, track_tokens_seen
 
 
+def train_model(model, train_loader, val_loader, optimizer, device,
+                n_epochs, eval_freq, eval_iter, start_context, tokenizer,
+                warmup_steps, initial_lr=3e-05, min_lr=1e-6):
+
+    train_losses, val_losses, track_tokens_seen, track_lrs = [], [], [], []
+    tokens_seen, global_step = 0, -1
+
+    peak_lr = optimizer.param_groups[0]["lr"]   #1 Retrieves the initial learning rate from the optimizer, assuming we use it as the peak learning rate 
+    total_training_steps = len(train_loader) * n_epochs     #2 Calculates the total number of iterations in the training process 
+    lr_increment = (peak_lr - initial_lr) / warmup_steps    #3 Calculates the learning rate increment during the warmup phase 
+
+    for epoch in range(n_epochs):
+        model.train()
+        for input_batch, target_batch in train_loader:
+            optimizer.zero_grad()
+            global_step += 1
+
+            if global_step < warmup_steps:   #4 Adjusts the learning rate based on the current phase (warmup or cosine annealing) 
+                lr = initial_lr + global_step * lr_increment  
+            else:
+                progress = ((global_step - warmup_steps) / 
+                            (total_training_steps - warmup_steps))
+                lr = min_lr + (peak_lr - min_lr) * 0.5 * (
+                    1 + math.cos(math.pi * progress))
+
+            for param_group in optimizer.param_groups:   #5 Applies the calculated learning rate to the optimizer
+                param_group["lr"] = lr
+            track_lrs.append(lr)
+            loss = calc_loss_batch(input_batch, target_batch, model, device)
+            loss.backward()
+
+            if global_step >= warmup_steps:         #6 Applies gradient clipping after the warmup phase to avoid exploding gradients 
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=1.0
+                )
+ #7 Everything below here remains unchanged compared to the train_model_simple function above. 
+            optimizer.step() 
+            tokens_seen += input_batch.numel()
+
+            if global_step % eval_freq == 0:
+                train_loss, val_loss = evaluate_model(
+                    model, train_loader, val_loader,
+                    device, eval_iter
+                )
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
+                track_tokens_seen.append(tokens_seen)
+                print(f"Ep {epoch+1} (Iter {global_step:06d}): "
+                      f"Train loss {train_loss:.3f}, "
+                      f"Val loss {val_loss:.3f}"
+                )
+
+
+        generate_and_print_sample(
+            model, tokenizer, device, start_context
+        )
+
+    return train_losses, val_losses, track_tokens_seen, track_lrs
+
+
 def evaluate_model(model, train_loader, val_loader, device, eval_iter):
     model.eval()  #1 Dropout is disabled during evaluation for stable, reproducible results. 
     with torch.no_grad(): #2 Disables gradient tracking, which is not required during evaluation, to reduce the computational overhead
