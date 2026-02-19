@@ -1,7 +1,8 @@
 import psutil
 import json
 import urllib.request
-
+from tqdm import tqdm
+from data_prep import format_input
 
 def check_if_running(process_name):
     running = False
@@ -51,3 +52,21 @@ def query_model(
     return response_data
 
 
+def generate_model_scores(json_data, json_key, model="gemma3:1b"):
+    scores = []
+    for entry in tqdm(json_data, desc="Scoring entries"):
+        prompt = (
+            f"Given the input `{format_input(entry)}` "
+            f"and correct output `{entry['output']}`, "
+            f"score the model response `{entry[json_key]}`"
+            f" on a scale from 0 to 100, where 100 is the best score. "
+            f"Respond with the integer number only."   #1 Modified instruction line to only return the score
+        )
+        score = query_model(prompt, model)
+        try:
+            scores.append(int(score))
+        except ValueError:
+            print(f"Could not convert score: {score}")
+            continue
+
+    return scores
