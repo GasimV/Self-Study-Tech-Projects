@@ -1,0 +1,11 @@
+[Unit]
+Description=Linux Lab Practice Service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do date >> %h/projects/Linux-Lab/data/output/linux-lab-service.log; sleep 10; done'
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

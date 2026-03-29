@@ -1,0 +1,9 @@
+data/output/*
+data/backup/*
+*.tar.gz
+*.log
+.env
+
+# Keep directory structure
+!data/output/.gitkeep
+!data/backup/.gitkeep
