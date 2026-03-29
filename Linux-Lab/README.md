@@ -9,8 +9,10 @@ A hands-on Linux practice lab with runnable scripts covering files, permissions,
 ## Setup (after cloning into Ubuntu)
 
 ```bash
-git clone https://github.com/GasimV/Self-Study-Tech-Projects Linux-Lab
-cd Linux-Lab
+mkdir -p ~/projects
+cd ~/projects
+git clone https://github.com/GasimV/Self-Study-Tech-Projects
+cd Self-Study-Tech-Projects/Linux-Lab
 chmod +x lab/*.sh scripts/*.sh
 ```
 
@@ -109,8 +111,9 @@ git commit -m "your message"
 git push origin master
 
 # --- On Ubuntu ---
-cd ~/projects/Linux-Lab
+cd ~/projects/Self-Study-Tech-Projects
 git pull origin master
+cd Linux-Lab   # all scripts run from here
 ```
 
 ---

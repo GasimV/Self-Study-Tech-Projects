@@ -2,4 +2,4 @@
 # Runs backup.sh every 5 minutes
 # Install: crontab -e, then paste the line below (replace <username> with your actual username)
 
-*/5 * * * * /home/<username>/projects/Linux-Lab/scripts/backup.sh >> /home/<username>/projects/Linux-Lab/data/output/cron-backup.log 2>&1
+*/5 * * * * /home/<username>/projects/Self-Study-Tech-Projects/Linux-Lab/scripts/backup.sh >> /home/<username>/projects/Self-Study-Tech-Projects/Linux-Lab/data/output/cron-backup.log 2>&1
