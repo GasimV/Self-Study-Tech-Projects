@@ -18,6 +18,26 @@ cd Self-Study-Tech-Projects/Linux-Lab
 chmod +x lab/*.sh scripts/*.sh
 ```
 
+> **Why `chmod +x`?**
+> On Linux, every file has three permission bits: **read (r)**, **write (w)**, **execute (x)**.
+> A `.sh` file is just a text file — without the `x` bit, Linux refuses to run it as a program:
+>
+> ```
+> ./lab/01-files.sh   # → Permission denied ✗
+> ```
+>
+> `chmod +x` adds the execute bit so the OS treats it as a runnable script:
+>
+> ```
+> chmod +x lab/*.sh   # add execute to all .sh files in lab/
+> ./lab/01-files.sh   # → works ✓
+> ```
+>
+> **Why it's needed after cloning:** Git on Windows doesn't preserve Linux file permissions.
+> When you push from Windows and clone on Ubuntu, all `.sh` files arrive without the execute bit. `chmod +x` restores it.
+>
+> You can always bypass it with `bash script.sh`, but `chmod +x` is the correct Linux way — and it's exactly what `lab/02-permissions.sh` teaches you.
+
 ---
 
 ## Running Lab Scripts
