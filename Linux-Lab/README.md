@@ -221,7 +221,7 @@ The reference cron line is also in `cron/backup.cron`.
 
 ```bash
 # --- On Windows (PowerShell / Git Bash) ---
-cd "E:\Software\GitHub Self-Study\Linux-Lab"
+cd "...\Linux-Lab"
 git add .
 git commit -m "your message"
 git push origin master
@@ -249,6 +249,6 @@ cd Linux-Lab   # all scripts run from here
 
 ## Reference
 
-- `Linux Commands.pdf` — command handbook (do not modify)
+- `Linux Commands.pdf` — command handbook
 - `notes/commands.md` — quick reference for commands used in this lab
 - `data/input/app.log` — sample log file for grep/search practice
