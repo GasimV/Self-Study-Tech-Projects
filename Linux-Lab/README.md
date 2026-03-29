@@ -78,6 +78,26 @@ Each block = one network interface. Scan for `enp*` lines and look for `inet`.
 
 ---
 
+## Script Header Explained
+
+Every script in this repo starts with:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+```
+
+| Line                  | What it does                                   |
+|-----------------------|------------------------------------------------|
+| `#!/usr/bin/env bash` | Run this script with Bash                      |
+| `set -e`              | Exit immediately if any command fails          |
+| `set -u`              | Error if an undefined variable is used         |
+| `set -o pipefail`     | Fail if any command in a pipeline fails        |
+
+> "Run with Bash + fail fast + no silent errors"
+
+---
+
 ## Script Portability Pattern
 
 Every script in this repo starts with:
