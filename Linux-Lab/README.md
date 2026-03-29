@@ -8,6 +8,8 @@ A hands-on Linux practice lab with runnable scripts covering files, permissions,
 
 ## Setup (after cloning into Ubuntu)
 
+> `~/` is a shortcut for your home directory — e.g., `/home/vboxuser` on Ubuntu.
+
 ```bash
 mkdir -p ~/projects
 cd ~/projects
