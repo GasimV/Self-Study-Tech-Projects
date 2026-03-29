@@ -1,0 +1,10 @@
+The quick brown fox jumps over the lazy dog.
+Linux is a free and open-source operating system kernel.
+Practice makes perfect — run these commands every day.
+Files, permissions, processes, and networking are the core skills.
+Always read the manual: man <command>
+Use grep to search, find to locate, and tar to archive.
+chmod 755 means owner can read/write/execute; others can read/execute.
+pipelines are powerful: cat file | grep pattern | sort | uniq
+The home directory is ~ and the root is /
+Every process has a PID — use ps, pgrep, or kill to manage them.

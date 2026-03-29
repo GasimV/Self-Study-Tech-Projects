@@ -1,9 +1,13 @@
 data/output/*
 data/backup/*
 *.tar.gz
-*.log
+data/output/*.log
 .env
 
 # Keep directory structure
 !data/output/.gitkeep
 !data/backup/.gitkeep
+
+# Override parent repo rules: track sample data files
+!data/input/*.txt
+!data/input/app.log
