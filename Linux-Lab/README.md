@@ -173,6 +173,8 @@ cp services/linux-lab.service ~/.config/systemd/user/
 # Default %h expands to $HOME automatically in systemd
 
 # 2. Reload and control
+# daemon-reload: makes systemd read new/updated .service files
+# Required after adding or editing a service — systemd won't auto-detect changes
 systemctl --user daemon-reload
 systemctl --user start linux-lab
 systemctl --user status linux-lab
@@ -182,6 +184,17 @@ systemctl --user restart linux-lab
 # 3. Follow logs
 journalctl --user -u linux-lab -f
 ```
+
+**`--user` vs system:**
+
+| Flag       | Talks to              | Service files                  | Needs sudo? |
+|------------|-----------------------|--------------------------------|-------------|
+| `--user`   | Your user systemd     | `~/.config/systemd/user/`      | No          |
+| *(none)*   | System-wide systemd   | `/etc/systemd/system/`         | Yes         |
+
+**`daemon-reload`** — tells systemd to re-read all unit files from disk and rebuild its internal state (updates dependency graph). Run it every time you add or edit a `.service` file.
+
+> `--user` selects your personal systemd instance; `daemon-reload` makes it re-read service files from disk.
 
 ---
 
