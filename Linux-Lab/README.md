@@ -78,6 +78,47 @@ Each block = one network interface. Scan for `enp*` lines and look for `inet`.
 
 ---
 
+## Script Portability Pattern
+
+Every script in this repo starts with:
+
+```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+```
+
+**What it does:**
+
+| Variable     | Value (example)               | Meaning              |
+|--------------|-------------------------------|----------------------|
+| `SCRIPT_DIR` | `/home/user/Linux-Lab/scripts`| Where the script is  |
+| `REPO_ROOT`  | `/home/user/Linux-Lab`        | Project root         |
+
+**Why it matters** — without it, relative paths break when you run the script from a different directory:
+
+```bash
+cp data/input/file.txt data/backup/   # breaks if run from outside the repo
+cp "$REPO_ROOT/data/input/file.txt" "$REPO_ROOT/data/backup/"  # always works
+```
+
+**How it works:**
+
+- `${BASH_SOURCE[0]}` — path of the current script (e.g., `/home/user/Linux-Lab/scripts/backup.sh`)
+- `dirname` — strips the filename, leaving the directory (e.g., `/home/user/Linux-Lab/scripts`)
+- `cd ... && pwd` — resolves it to an absolute path (`pwd` = **P**rint **W**orking **D**irectory)
+- `$SCRIPT_DIR/..` — goes one level up to the repo root (e.g., `/home/user/Linux-Lab`)
+
+**Under the hood (very short):**
+
+* Bash → handles variables + `$(...)`; it is the **brain**
+* `dirname`, `pwd` → normal programs; **tools**
+* Linux kernel → executes commands + handles filesystem; **executor**
+* **One-Line Mental Model**: Bash orchestrates everything, external tools do small jobs, and the Linux kernel executes the actual system operations.
+
+> This pattern makes scripts location-independent — run them from anywhere.
+
+---
+
 ## Using Reusable Scripts
 
 ```bash
