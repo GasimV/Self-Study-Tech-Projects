@@ -59,6 +59,25 @@ bash lab/10-cleanup.sh      # clean data/output/
 
 ---
 
+## Reading `ip a` Output
+
+Each block = one network interface. Scan for `enp*` lines and look for `inet`.
+
+| Interface  | Example IP       | What it is                        |
+|------------|------------------|-----------------------------------|
+| `lo`       | `127.0.0.1`      | Loopback — self only, ignore      |
+| `enp0s3`   | `10.0.2.15`      | Internet (VirtualBox NAT)         |
+| `enp0s8`   | `192.168.56.x`   | Host ↔ VM (SSH, file transfer)    |
+| `flannel.1`| `10.244.0.x`     | Kubernetes overlay network        |
+| `cni0`     | `10.244.0.1`     | Container bridge (K8s/Docker)     |
+| `veth*`    | no IP            | Virtual cables to containers      |
+
+**What to use in this lab:**
+- `enp0s3` — internet access (`ping`, `curl`, `apt`)
+- `enp0s8` — connect from Windows host (`ssh`, `scp`)
+
+---
+
 ## Using Reusable Scripts
 
 ```bash
@@ -76,6 +95,7 @@ log_info  "Starting task"
 log_warn  "Something looks off"
 log_error "Something failed"
 ```
+
 
 ---
 
