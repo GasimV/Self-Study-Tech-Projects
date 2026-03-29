@@ -242,7 +242,7 @@ cd Linux-Lab   # all scripts run from here
 - [ ] Create and extract your own `.tar.gz` archive
 - [ ] Install and start the systemd user service; check `journalctl`
 - [ ] Add the cron job and verify it creates backups
-- [ ] Modify `scripts/hello.sh` and push from Windows; pull on Ubuntu
+- [ ] (Optionally) Modify `scripts/hello.sh` and push from Windows; pull on Ubuntu
 - [ ] Write a new script in `scripts/` that sources `common.sh`
 
 ---
