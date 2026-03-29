@@ -200,18 +200,51 @@ journalctl --user -u linux-lab -f
 
 ## Cron Job
 
+**cron** = background scheduler. **crontab** = your personal list of scheduled commands.
+
 Runs `backup.sh` every 5 minutes.
 
 ```bash
-# 1. Open your crontab
+# 1. Open your crontab (opens in nano)
 crontab -e
 
-# 2. Paste this line (replace <username> with your actual username):
-*/5 * * * * /home/<username>/projects/Linux-Lab/scripts/backup.sh >> /home/<username>/projects/Linux-Lab/data/output/cron-backup.log 2>&1
+# 2. Go to the bottom, paste this line (replace vboxuser with your username):
+*/5 * * * * /home/vboxuser/projects/Self-Study-Tech-Projects/Linux-Lab/scripts/backup.sh >> /home/vboxuser/projects/Self-Study-Tech-Projects/Linux-Lab/data/output/cron-backup.log 2>&1
 
-# 3. Verify
+# 3. Save and exit nano: Ctrl+O → Enter → Ctrl+X
+
+# 4. Verify
 crontab -l
 ```
+
+**Line explained:**
+
+| Part       | Meaning                              |
+|------------|--------------------------------------|
+| `*/5`      | Every 5 minutes                      |
+| `* * * *`  | Every hour / day / month / weekday   |
+| `>> file`  | Append output to log file            |
+| `2>&1`     | Include errors in the same log       |
+
+> Nano tip: paste from terminal with **right-click** or **Shift+Ctrl+V** — `Ctrl+C` does not copy in nano.
+
+**After ~5 minutes, verify it ran:**
+
+```bash
+ls data/output/
+cat data/output/cron-backup.log
+```
+
+**To stop the cron job:**
+
+```bash
+crontab -e   # find the line, delete it (Ctrl+K), save and exit
+crontab -l   # verify it's gone
+```
+
+- Removing the line stops future runs — cron will not execute it again.
+- To stop a currently running instance: `pgrep -a backup.sh` then `kill <PID>`.
+- To remove **all** cron jobs at once: `crontab -r` (destructive — use carefully).
 
 The reference cron line is also in `cron/backup.cron`.
 
