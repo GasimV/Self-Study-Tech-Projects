@@ -382,6 +382,8 @@ Ray offers stronger built-in distributed serving ergonomics, but introduces its 
 
 ## Current State and Gaps in Model Portability
 
+![MLOps Portability Cover Image](MLOps-Portability-Cover-Image.png)
+
 Model portability is still **immature** for LLMs.
 
 ### ONNX
