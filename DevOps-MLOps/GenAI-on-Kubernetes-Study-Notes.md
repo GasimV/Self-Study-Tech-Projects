@@ -388,25 +388,22 @@ Model portability is still **immature** for LLMs.
 
 ### ONNX
 
-**ONNX** is strong for general ML portability because it provides a structured model format.
-
-But for LLMs, it is often **not fully self-contained** because important artifacts like **tokenizers** may remain outside the model format.
+- **ONNX** is strong for general ML portability because it provides a structured model format.
+- But for LLMs, it is often **not fully self-contained** because important artifacts like **tokenizers** may remain outside the model format.
 
 ### GGUF
 
-**GGUF** is a more specialized format for LLMs and is relatively self-contained.
-
-But it is also more tightly coupled to certain runtimes, especially **`llama.cpp`**.
+- **GGUF** is a more specialized format for LLMs and is relatively self-contained.
+- But it is also more tightly coupled to certain runtimes, especially **`llama.cpp`**.
 
 ### Safetensors
 
-**Safetensors** is increasingly important for production deployments.
+- **Safetensors** is increasingly important for production deployments.
+- It is commonly used in a **multifile layout**, which works well with **OCI artifacts** because components can be distributed as separate layers for:
 
-It is commonly used in a **multifile layout**, which works well with **OCI artifacts** because components can be distributed as separate layers for:
-
-- **Caching**
-- **Parallel downloads**
-- **Flexibility**
+-- **Caching**
+-- **Parallel downloads**
+-- **Flexibility**
 
 ### Core takeaway
 
@@ -420,7 +417,7 @@ The field is evolving too quickly:
 
 ### What is practical today
 
-For now, **GGUF** and **Safetensors** are often the most practical formats depending on the serving stack and deployment goal.
+- For now, **GGUF** and **Safetensors** are often the most practical formats depending on the serving stack and deployment goal.
 
 ### Important mental model
 
@@ -443,7 +440,7 @@ This is why discovery, indexing, and management matter so much in Kubernetes env
 
 ### Recall prompt
 
-*Why is OCI-level standardization for models harder than OCI standardization for containers?*
+- *Why is OCI-level standardization for models harder than OCI standardization for containers?*
 
 [Back to Contents](#contents)
 
