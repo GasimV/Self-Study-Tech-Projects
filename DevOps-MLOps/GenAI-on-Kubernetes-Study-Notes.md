@@ -400,10 +400,9 @@ Model portability is still **immature** for LLMs.
 
 - **Safetensors** is increasingly important for production deployments.
 - It is commonly used in a **multifile layout**, which works well with **OCI artifacts** because components can be distributed as separate layers for:
-
--- **Caching**
--- **Parallel downloads**
--- **Flexibility**
+  - **Caching**
+  - **Parallel downloads**
+  - **Flexibility**
 
 ### Core takeaway
 
