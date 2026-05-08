@@ -455,6 +455,125 @@ One physical GPU
 -> repeats quickly
 ```
 
+#### CPU comparison: cores, logical processors, and time slicing
+
+CPU scheduling is a related concept, but **CPU logical processors** and **time slicing** are not exactly the same thing.
+
+A CPU has **physical cores** and may also expose **logical processors** through **hyper-threading** or **Simultaneous Multithreading (SMT)**.
+
+Example:
+
+```text
+CPU: 8 physical cores
+Hyper-threading: 2 logical processors per core
+OS sees: 16 logical CPUs
+```
+
+The OS scheduler can place work on those 16 logical CPUs. But two logical CPUs on the same physical core still share the same execution resources, so they are **not equal to two full physical cores**.
+
+Time slicing is slightly different:
+
+```text
+Logical CPU / hyper-threading:
+two hardware threads share one physical core at the same time
+
+Time slicing:
+many processes take turns using a CPU core over time
+```
+
+The analogy:
+
+```text
+Physical core = real hardware
+Logical CPU = hardware-exposed shared execution slot
+Time slicing = scheduler rapidly switches workloads on the hardware
+```
+
+For GPUs, time slicing is closer to saying:
+
+```text
+One real GPU is advertised as multiple schedulable "GPU slots,"
+but those slots still share the same physical GPU.
+```
+
+Think of a **physical CPU core** like **one cashier**.
+
+##### 1. Time slicing: one cashier, many customers taking turns
+
+There is **one cashier** and **five customers**.
+
+The cashier serves:
+
+```text
+Customer A for 10 seconds
+Customer B for 10 seconds
+Customer C for 10 seconds
+Customer D for 10 seconds
+Customer E for 10 seconds
+then back to Customer A
+```
+
+Each customer feels like they are "being served," but actually they are **taking turns**.
+
+That is **time slicing**.
+
+##### 2. Multiple physical cores: many real cashiers
+
+Now there are **four cashiers**.
+
+```text
+Cashier 1 serves Customer A
+Cashier 2 serves Customer B
+Cashier 3 serves Customer C
+Cashier 4 serves Customer D
+```
+
+This is real parallel work. More work can happen at the same time.
+
+That is like **four physical CPU cores**.
+
+##### 3. Logical processors / hyper-threading: one cashier with two order windows
+
+Now imagine **one cashier has two windows**.
+
+```text
+Window 1: Customer A
+Window 2: Customer B
+```
+
+But behind both windows, it is still **one cashier**.
+
+The cashier can stay busier because when Customer A is waiting for payment approval, the cashier can help Customer B. But the cashier did not become two full cashiers.
+
+That is like **one physical core with two logical processors**.
+
+##### Simple summary
+
+```text
+Physical core:
+a real worker
+
+Logical processor:
+an extra lane/window into the same worker
+
+Time slicing:
+many tasks taking turns with the worker
+```
+
+For GPU time slicing, imagine:
+
+```text
+1 physical GPU = 1 big machine
+
+Kubernetes advertises it as:
+gpu-slot-1
+gpu-slot-2
+gpu-slot-3
+gpu-slot-4
+```
+
+But underneath, all four slots still use the **same physical GPU**, taking turns.
+
 #### What time slicing gives you
 
 - Better GPU utilization when workloads are **small**, **bursty**, or **idle** part of the time
