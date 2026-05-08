@@ -710,6 +710,73 @@ NVIDIA explains that, without MPS, kernels from different CUDA contexts are sche
 
 Source: [NVIDIA Multi-Process Service architecture](https://docs.nvidia.com/deploy/mps/architecture.html) and [NVIDIA MPS introduction](https://docs.nvidia.com/deploy/mps/introduction.html).
 
+#### MPS clarification
+
+**MPS does not manually assign each tiny job to individual CUDA cores like a traffic officer.**
+
+Instead, it lets work from different processes enter the GPU in a way that the GPU hardware scheduler can run them **concurrently** when resources are available.
+
+Simple example:
+
+```text
+Without MPS:
+
+Model A has its own CUDA context.
+Model B has its own CUDA context.
+
+GPU runs work from Model A.
+Then switches context.
+GPU runs work from Model B.
+Then switches back.
+```
+
+This can leave GPU capacity unused if Model A's kernel is small and does not occupy the whole GPU.
+
+With MPS:
+
+```text
+Model A sends CUDA work.
+Model B sends CUDA work.
+Model C sends CUDA work.
+
+MPS makes these clients share a common execution path/context,
+so the GPU can see more work at the same time.
+```
+
+Then the GPU can do something like:
+
+```text
+Model A uses part of the GPU
+Model B uses another available part
+Model C uses remaining available capacity
+```
+
+The mental model is close:
+
+```text
+MPS helps prevent GPU resources from sitting idle
+when one model alone cannot fully occupy the GPU.
+```
+
+But more precisely:
+
+```text
+MPS exposes work from multiple CUDA processes concurrently,
+and the GPU hardware scheduler fills available compute capacity.
+```
+
+So MPS is less like:
+
+```text
+daemon assigns every task to every CUDA core
+```
+
+And more like:
+
+```text
+daemon opens a shared highway so multiple CUDA applications can feed work to the GPU together
+```
+
 #### Mental model
 
 ```text
