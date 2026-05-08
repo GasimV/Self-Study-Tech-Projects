@@ -8,19 +8,22 @@
    - [Core APIs](#core-apis)
    - [From `InferenceService` to `LLMInferenceService`](#from-inferenceservice-to-llminferenceservice)
    - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
-3. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
-4. [Model Registry](#model-registry)
+3. [GPU Sharing and Sub-GPU Allocation](#gpu-sharing-and-sub-gpu-allocation)
+   - [Time Slicing](#time-slicing)
+   - [MIG](#mig)
+4. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
+5. [Model Registry](#model-registry)
    - [Hugging Face Model Hub](#hugging-face-model-hub)
    - [MLflow Model Registry](#mlflow-model-registry)
    - [Kubeflow Model Registry](#kubeflow-model-registry)
    - [OCI](#oci)
      - [Registry](#registry)
      - [Images](#images)
-5. [Accessing Model Data in Kubernetes](#accessing-model-data-in-kubernetes)
+6. [Accessing Model Data in Kubernetes](#accessing-model-data-in-kubernetes)
    - [KServe `storageUri` and Storage Initializers](#kserve-storageuri-and-storage-initializers)
    - [Built-in KServe Storage Initializers](#built-in-kserve-storage-initializers)
    - [Shared Storage with PersistentVolumes](#shared-storage-with-persistentvolumes)
-6. [High-Value Recall Checklist](#high-value-recall-checklist)
+7. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -377,6 +380,210 @@ Ray offers stronger built-in distributed serving ergonomics, but introduces its 
 #### Recall prompt
 
 *Why is separating runtime management from model management an operational advantage rather than just a design preference?*
+
+[Back to Contents](#contents)
+
+## GPU Sharing and Sub-GPU Allocation
+
+The **NVIDIA GPU Operator** supports advanced GPU features for **partitioning** or **slicing** a single GPU across multiple workloads.
+
+This may not always be central for operating very large LLMs, because many LLMs need most or all of a GPU's memory. Still, it is important to understand because GPU sharing can improve utilization for **inference**, **small models**, **interactive notebooks**, and **bursty workloads**.
+
+The operator supports two main sharing modes, which can also be combined:
+
+1. **Time slicing**
+2. **MIG**
+
+### Time Slicing
+
+**Time slicing** allows multiple containers to share one physical GPU by allocating **time-based slices**.
+
+By default, if a pod requests:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 1
+```
+
+Kubernetes grants that pod **exclusive access** to one physical GPU.
+
+Time slicing changes the scheduling model by allowing **GPU oversubscription**. The NVIDIA device plug-in can advertise multiple virtual GPU replicas for each real GPU. For example, one physical GPU can be represented as four or eight schedulable GPU devices.
+
+That means several pods can each request what looks like one GPU, while actually sharing the same hardware.
+
+**Time slicing** means several workloads **take turns using the same hardware**.
+
+Imagine one GPU as a single classroom projector.
+
+Without time slicing:
+
+```text
+Pod A gets the projector.
+Pod B must wait.
+Pod C must wait.
+```
+
+With time slicing:
+
+```text
+Pod A uses the GPU for a tiny moment
+then Pod B uses it
+then Pod C uses it
+then back to Pod A
+```
+
+It happens very fast, so it looks like they are sharing the GPU at the same time.
+
+CPU time slicing is similar:
+
+```text
+One CPU core
+-> runs browser for a moment
+-> runs music app for a moment
+-> runs terminal for a moment
+-> repeats quickly
+```
+
+GPU time slicing:
+
+```text
+One physical GPU
+-> serves model A request
+-> serves model B request
+-> serves model C request
+-> repeats quickly
+```
+
+#### What time slicing gives you
+
+- Better GPU utilization when workloads are **small**, **bursty**, or **idle** part of the time
+- Ability to run several lightweight inference workloads on one GPU
+- Sharing support for older GPUs that do **not** support MIG, such as some **T4** or **V100** environments
+- Higher overall throughput when individual workloads do not need full GPU capacity all the time
+
+#### Important trade-off
+
+Time-sliced workloads are **not getting full GPU power at the same time**.
+
+If all pods become busy, each pod gets slower because they are sharing the same physical GPU.
+
+<u>Key limitation:</u> time slicing provides **compute-time sharing**, not strong isolation.
+
+Unlike MIG, time slicing does **not** provide:
+
+- GPU memory isolation
+- Fault isolation
+- Dedicated memory quotas
+- Guaranteed full-GPU performance
+
+All pods sharing the same physical GPU can access the same GPU memory pool. If one pod allocates most of the GPU memory, other pods may fail to allocate memory. If one process causes a GPU reset, the other workloads sharing that GPU can also be affected.
+
+#### Example configuration for time slicing
+
+To enable GPU time slicing, configure the NVIDIA device plug-in through a `ConfigMap` referenced by the GPU Operator configuration.
+
+Example configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-sharing-config
+  namespace: gpu-operator-resources
+data:
+  sharing: |
+    version: v1
+    sharing:
+      timeslicing:
+        renameByDefault: true
+        resources:
+        - name: nvidia.com/gpu
+          replicas: 8
+```
+
+Important fields:
+
+- **`renameByDefault: true`** renames the shared resource from `nvidia.com/gpu` to `nvidia.com/gpu.shared`.
+- **`replicas: 8`** exposes eight schedulable GPU units for each physical GPU.
+- **`resources.name`** controls which GPU resource is oversubscribed.
+
+For one physical GPU, `replicas: 8` exposes eight virtual GPU units. For ten physical GPUs, the node can advertise eighty virtual GPU units.
+
+The node may also receive a label such as:
+
+```text
+gpu.replicas=8
+```
+
+This marks the oversubscription level.
+
+#### Scheduling warning
+
+A pod requesting multiple time-sliced GPUs does **not** get twice the performance of a single shared GPU.
+
+For example:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 2
+```
+
+In shared mode, this usually gives the pod shares on two separate physical GPUs, each still shared with other workloads. That is rarely useful and can confuse users into thinking they received two full GPUs.
+
+For this reason, the device plug-in can be configured to reject requests for more than one GPU in shared mode.
+
+<u>Practical rule:</u> time slicing is intended for pods that request exactly **one** GPU, where that "one GPU" really means **one shared slice** of a physical GPU.
+
+For multi-GPU workloads, keep GPUs **exclusive** or use **MIG** where appropriate.
+
+#### Best fit
+
+Time slicing is useful when:
+
+- You have many small inference tasks
+- You serve multiple lightweight models
+- You run interactive notebooks
+- Workloads are bursty and often idle
+- The models collectively fit in GPU memory
+- The GPU does not support MIG
+
+Time slicing is often less useful for large LLMs because LLMs typically need most or all of a GPU's available memory.
+
+### MIG
+
+**MIG** stands for **Multi-Instance GPU**.
+
+It is available on certain NVIDIA GPUs, such as **A100** and **H100**, and allows one physical GPU to be partitioned into multiple **isolated GPU instances**.
+
+Where time slicing is mainly **temporal sharing**, MIG is **hardware partitioning**.
+
+Simple distinction:
+
+- **Time slicing**: workloads take turns on the same physical GPU.
+- **MIG**: the GPU is split into isolated hardware-backed instances.
+
+MIG is better when workloads need stronger guarantees around:
+
+- **Isolation**
+- **Predictable memory allocation**
+- **Fault containment**
+- **More stable performance**
+
+For scenarios requiring stronger isolation guarantees and fixed memory allocations per workload, MIG is the more appropriate NVIDIA sharing mechanism.
+
+#### Encode this
+
+- **Sub-GPU allocation improves utilization by sharing one GPU across workloads**
+- **Time slicing = oversubscription and time-based sharing**
+- **MIG = hardware-backed GPU partitioning**
+- **Time slicing improves utilization but does not isolate memory or faults**
+- **Large LLMs often still need exclusive GPUs because memory is the real constraint**
+
+#### Recall prompt
+
+*Why can time slicing improve GPU utilization but still be risky for production workloads that need memory or fault isolation?*
 
 [Back to Contents](#contents)
 
@@ -1579,6 +1786,7 @@ Use these prompts for fast review:
 - **Core APIs**: What is the difference between **`ServingRuntime`** and **`InferenceService`**?
 - **LLM APIs**: Why was **`LLMInferenceService`** introduced?
 - **Operations**: Why should runtime lifecycle and model lifecycle be separated?
+- **GPU sharing**: What is the difference between **time slicing** and **MIG**?
 - **Portability**: Why are ONNX, GGUF, and Safetensors each useful but incomplete?
 - **Registry**: Why does a model registry store metadata more often than weights?
 - **Hugging Face**: Why is it the default public discovery platform but not the full production answer?
