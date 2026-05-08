@@ -10,6 +10,7 @@
    - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
 3. [GPU Sharing and Sub-GPU Allocation](#gpu-sharing-and-sub-gpu-allocation)
    - [Time Slicing](#time-slicing)
+   - [MPS](#mps)
    - [MIG](#mig)
 4. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
 5. [Model Registry](#model-registry)
@@ -389,10 +390,11 @@ The **NVIDIA GPU Operator** supports advanced GPU features for **partitioning** 
 
 This may not always be central for operating very large LLMs, because many LLMs need most or all of a GPU's memory. Still, it is important to understand because GPU sharing can improve utilization for **inference**, **small models**, **interactive notebooks**, and **bursty workloads**.
 
-The operator supports two main sharing modes, which can also be combined:
+The core GPU sharing concepts to distinguish are:
 
 1. **Time slicing**
-2. **MIG**
+2. **MPS**
+3. **MIG**
 
 ### Time Slicing
 
@@ -670,6 +672,73 @@ Time slicing is useful when:
 
 Time slicing is often less useful for large LLMs because LLMs typically need most or all of a GPU's available memory.
 
+### MPS
+
+**NVIDIA Multi-Process Service (MPS)** is **not the same as simple time slicing**.
+
+Both allow multiple workloads to share one GPU, but they work differently.
+
+```text
+Time slicing:
+Multiple pods/processes are placed on the same GPU.
+They take turns using GPU execution resources over time.
+Work from different CUDA contexts is scheduled in time slices.
+This is simple oversubscription, but it does not provide strong isolation.
+
+MPS:
+Multiple CUDA processes can submit work to the GPU more concurrently.
+Instead of each process being isolated behind its own separately time-sliced CUDA context,
+MPS coordinates their GPU work through an MPS server/control daemon.
+This allows kernels from different client processes to run concurrently when the GPU has available capacity.
+```
+
+#### How MPS works
+
+```text
+1. An MPS control daemon runs on the node.
+
+2. When a CUDA application starts, the CUDA driver tries to connect to the MPS control daemon.
+
+3. The daemon starts or reuses an MPS server.
+
+4. CUDA client processes connect to that MPS server.
+
+5. The MPS server coordinates shared GPU execution so work from multiple clients can use the GPU concurrently instead of only being time-sliced.
+```
+
+NVIDIA explains that, without MPS, kernels from different CUDA contexts are scheduled by a **time-sliced scheduler** and cannot execute concurrently. With MPS, client CUDA contexts route work through the MPS server, which bypasses that limitation and allows kernels from different clients to execute simultaneously. On Volta and newer GPUs, the MPS server is less in the critical path because clients manage more resources directly while the server mediates remaining shared resources.
+
+Source: [NVIDIA Multi-Process Service architecture](https://docs.nvidia.com/deploy/mps/architecture.html) and [NVIDIA MPS introduction](https://docs.nvidia.com/deploy/mps/introduction.html).
+
+#### Mental model
+
+```text
+Time slicing = one cashier serving customers one by one very quickly.
+
+MPS = one shared kitchen where several cooks prepare different orders at the same time,
+while a kitchen manager coordinates access to shared equipment.
+```
+
+Simple distinction:
+
+```text
+MIG = split one physical GPU into hard isolated GPU instances.
+
+Time slicing = share one GPU by letting workloads take turns.
+
+MPS = share one GPU by allowing CUDA processes to run more concurrently through an MPS server/control daemon.
+```
+
+#### Important nuance
+
+```text
+MPS improves GPU utilization, but it is not the same as hard isolation.
+On newer NVIDIA GPUs, MPS has better address-space behavior,
+but MIG is still the stronger isolation model.
+```
+
+For Kubernetes and the NVIDIA GPU Operator, **time slicing** and **MPS** are both GPU sharing strategies. But MPS is more advanced than basic time slicing because it enables more concurrent CUDA execution instead of only rotating workloads in turns.
+
 ### MIG
 
 **MIG** stands for **Multi-Instance GPU**.
@@ -681,6 +750,7 @@ Where time slicing is mainly **temporal sharing**, MIG is **hardware partitionin
 Simple distinction:
 
 - **Time slicing**: workloads take turns on the same physical GPU.
+- **MPS**: CUDA processes run more concurrently through an MPS server/control daemon.
 - **MIG**: the GPU is split into isolated hardware-backed instances.
 
 MIG is better when workloads need stronger guarantees around:
@@ -692,12 +762,108 @@ MIG is better when workloads need stronger guarantees around:
 
 For scenarios requiring stronger isolation guarantees and fixed memory allocations per workload, MIG is the more appropriate NVIDIA sharing mechanism.
 
+### Model-Serving Example: One GPU, Three Small Models
+
+Imagine one Kubernetes node has **one NVIDIA GPU**, and we want to serve **three small AI models**:
+
+```text
+Model A: sentiment analysis
+Model B: text embeddings
+Model C: small chatbot
+```
+
+#### 1. Time slicing
+
+Kubernetes pretends the single GPU is several shareable GPU slots.
+
+```text
+Pod A -> Model A -> GPU slot 1
+Pod B -> Model B -> GPU slot 2
+Pod C -> Model C -> GPU slot 3
+```
+
+But physically, there is still only **one GPU**.
+
+The GPU serves them like this:
+
+```text
+Model A runs for a tiny slice of time
+Model B runs for a tiny slice of time
+Model C runs for a tiny slice of time
+then repeats
+```
+
+This is good for light workloads, but if all three get busy, they slow each other down.
+
+#### 2. MPS
+
+The three model servers still share the same GPU, but instead of only taking turns, their CUDA work can run more concurrently.
+
+```text
+Model A sends small GPU jobs
+Model B sends small GPU jobs
+Model C sends small GPU jobs
+
+MPS coordinates them so the GPU can execute work from multiple models more efficiently.
+```
+
+This is useful when each model alone does not fully use the GPU. MPS helps **fill the gaps**.
+
+Mental image:
+
+```text
+Time slicing:
+one model at a time, very fast switching
+
+MPS:
+multiple small model jobs sharing the GPU more concurrently
+```
+
+#### 3. MIG
+
+The physical GPU is split into real isolated GPU partitions.
+
+```text
+GPU partition 1 -> Pod A -> Model A
+GPU partition 2 -> Pod B -> Model B
+GPU partition 3 -> Pod C -> Model C
+```
+
+Each model gets its own dedicated slice of GPU memory and compute.
+
+This is stronger isolation than time slicing or MPS. Model A cannot easily interfere with Model B's GPU memory.
+
+Simple comparison:
+
+```text
+Time slicing:
+three models take turns on one GPU
+
+MPS:
+three models share one GPU more concurrently
+
+MIG:
+one GPU is carved into separate mini-GPUs
+```
+
+For AI model serving:
+
+```text
+Use time slicing when workloads are light and occasional.
+
+Use MPS when workloads are small but active, and you want better utilization.
+
+Use MIG when you need stronger isolation and predictable GPU slices.
+```
+
 #### Encode this
 
 - **Sub-GPU allocation improves utilization by sharing one GPU across workloads**
 - **Time slicing = oversubscription and time-based sharing**
+- **MPS = concurrent CUDA execution through an MPS server/control daemon**
 - **MIG = hardware-backed GPU partitioning**
 - **Time slicing improves utilization but does not isolate memory or faults**
+- **MPS improves utilization but is still not hard isolation**
 - **Large LLMs often still need exclusive GPUs because memory is the real constraint**
 
 #### Recall prompt
@@ -1905,7 +2071,7 @@ Use these prompts for fast review:
 - **Core APIs**: What is the difference between **`ServingRuntime`** and **`InferenceService`**?
 - **LLM APIs**: Why was **`LLMInferenceService`** introduced?
 - **Operations**: Why should runtime lifecycle and model lifecycle be separated?
-- **GPU sharing**: What is the difference between **time slicing** and **MIG**?
+- **GPU sharing**: What is the difference between **time slicing**, **MPS**, and **MIG**?
 - **Portability**: Why are ONNX, GGUF, and Safetensors each useful but incomplete?
 - **Registry**: Why does a model registry store metadata more often than weights?
 - **Hugging Face**: Why is it the default public discovery platform but not the full production answer?
