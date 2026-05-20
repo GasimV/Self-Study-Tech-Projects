@@ -24,7 +24,15 @@
    - [KServe `storageUri` and Storage Initializers](#kserve-storageuri-and-storage-initializers)
    - [Built-in KServe Storage Initializers](#built-in-kserve-storage-initializers)
    - [Shared Storage with PersistentVolumes](#shared-storage-with-persistentvolumes)
-7. [High-Value Recall Checklist](#high-value-recall-checklist)
+7. [Running in Production](#running-in-production)
+   - [Model and Runtime Tuning](#model-and-runtime-tuning)
+   - [Language Model Evaluation](#language-model-evaluation)
+   - [Language Model Compression](#language-model-compression)
+   - [Model Performance Benchmark](#model-performance-benchmark)
+   - [vLLM Runtime Parameters Tuning](#vllm-runtime-parameters-tuning)
+   - [Autoscaling](#autoscaling)
+   - [Optimize vLLM Startup Time](#optimize-vllm-startup-time)
+8. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -941,7 +949,7 @@ Use MIG when you need stronger isolation and predictable GPU slices.
 
 ## Current State and Gaps in Model Portability
 
-![MLOps Portability Cover Image](MLOps-Portability-Cover-Image.png)
+![MLOps Portability Cover Image](assets\MLOps-Portability-Cover-Image.png)
 
 Model portability is still **immature** for LLMs.
 
@@ -2129,6 +2137,919 @@ PVs are often a strong choice for shared model serving, but for very high-throug
 
 [Back to Contents](#contents)
 
+## Running in Production
+
+Once an LLM is deployed on Kubernetes, the real production question changes from **"does it respond?"** to **"does it respond consistently, efficiently, and under load?"**
+
+Production LLM serving is not the same as running a normal stateless web container. GenAI workloads have several unusual properties:
+
+- **large model artifacts**
+- **high GPU memory pressure**
+- **variable request cost based on token count**
+- **runtime state such as KV cache**
+- **long startup and warmup phases**
+- **network-sensitive distributed serving patterns**
+
+The trap is treating a model server like any other container:
+
+```text
+set resource limits
+expose a Service
+ship it
+```
+
+That misses the operational reality. LLM inference needs careful tuning around model choice, runtime memory, autoscaling, request routing, model loading, and sometimes distributed serving topology.
+
+This chapter focuses on five production areas:
+
+| Area | Core question |
+| --- | --- |
+| **Model and runtime tuning** | Which model/runtime settings meet the use case without wasting GPU budget? |
+| **Autoscaling** | How should replicas change when LLM request cost is token-dependent? |
+| **Optimizing vLLM startup time** | How do we reduce deployment and scale-up latency? |
+| **LLM-aware routing** | How do we route requests to replicas that can serve them efficiently? |
+| **Disaggregated serving** | When do prefill/decode or multi-node topologies become necessary? |
+
+The most fundamental decision is still the first one: **pick and tune a model that matches the workload before spending effort scaling it.**
+
+### Model and Runtime Tuning
+
+For many teams, the first GenAI application starts with a managed API such as **OpenAI ChatGPT**, where configuration options are intentionally limited.
+
+On-premise or self-managed Kubernetes serving is different. You must choose the model yourself, and that choice depends on:
+
+- **task type**
+- **latency requirements**
+- **real-time versus batch inference**
+- **expected concurrency**
+- **accuracy requirements**
+- **GPU memory and cost constraints**
+
+Model size matters, but it is not enough. Two models with the same parameter count can behave very differently because of:
+
+- architecture
+- training data
+- training method
+- instruction tuning
+- context length
+- tokenizer behavior
+- quantization or compression state
+
+**Key idea:** model selection should be based on measured task performance, not manual prompt testing alone.
+
+Traditional predictive AI models are usually trained for one specific problem. LLMs are broader: they can summarize, reason, answer questions, classify text, generate code, and more. So the first evaluation step is to decide which ability actually matters for the application.
+
+Examples:
+
+- A chatbot may care about **truthfulness**, **latency**, and **safety**
+- A RAG system may care about **faithfulness to retrieved context**
+- A coding assistant may care about **program correctness**
+- A summarizer may care about **coverage** and **low hallucination**
+
+### Language Model Evaluation
+
+**Language model evaluation** measures a model's ability against specific tasks or risks.
+
+Evaluation can target:
+
+- **knowledge**
+- **reasoning**
+- **truthfulness**
+- **toxicity**
+- **robustness**
+- **domain-specific correctness**
+- **RAG faithfulness**
+- **security resistance**
+
+One widely used project is [EleutherAI's `lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness), which provides many out-of-the-box benchmark tasks.
+
+Each benchmark generally contains:
+
+- a **dataset** of prompts/questions
+- expected **answers or labels**
+- an **evaluation function**
+- one or more **metrics**
+
+Many tasks are structured as multiple-choice questions because that makes scoring easier and less subjective.
+
+#### Evaluation flow
+
+The evaluation process is usually asynchronous because benchmark runs can take many minutes or hours.
+
+![Language model evaluation execution flow](<assets/Language model evaluation execution flow.png>)
+
+**Figure 4-1. Language model evaluation execution flow**
+
+High-level flow:
+
+```text
+benchmark task
+  -> prompt/query generation
+  -> deployed model endpoint
+  -> model response
+  -> scoring function
+  -> metrics and report
+```
+
+Tools such as **TrustyAI** can wrap `lm-evaluation-harness` with Kubernetes-native resources such as an `LMEvalJob` CRD.
+
+#### Leaderboards
+
+Leaderboards help create an initial shortlist of models.
+
+Useful examples include:
+
+- [Hugging Face Open LLM Leaderboard](https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard)
+- benchmark-specific leaderboards for **math**, **reasoning**, **safety**, or **coding**
+
+Important caveat:
+
+> Leaderboards are useful for narrowing the search, but they are not a substitute for local evaluation. Published benchmark scores still have trust and reproducibility implications.
+
+The practical workflow is:
+
+1. Use leaderboards to identify candidate models
+2. Evaluate the candidates locally on application-relevant tasks
+3. Benchmark runtime performance on production-like hardware
+4. Re-evaluate after compression or fine-tuning
+
+#### Common benchmark families
+
+**MMLU**
+
+**Massive Multitask Language Understanding** tests knowledge across many multiple-choice topics, including science, history, government, law, mathematics, and more.
+
+**MMMU**
+
+**Massive Multi-discipline Multimodal Understanding** extends the idea to multimodal models.
+
+**RAG evaluation**
+
+RAG systems need metrics that evaluate both retrieval and generation. [Ragas](https://github.com/explodinggradients/ragas) is commonly used to measure:
+
+- context relevance
+- answer faithfulness
+- retrieval quality
+- answer correctness
+
+**Security evaluation**
+
+[NVIDIA garak](https://github.com/NVIDIA/garak) is a vulnerability scanner for LLMs. It can probe for:
+
+- prompt injection weakness
+- jailbreak susceptibility
+- harmful output generation
+- other model security risks
+
+#### Why evaluation matters after model selection
+
+Evaluation is not only a model-picking activity.
+
+It is also required after production optimization because techniques like **quantization** and **distillation** change model behavior.
+
+Compression can reduce model size dramatically and improve throughput on the same hardware, but it can also reduce accuracy. A well-compressed model may recover more than **99%** of the original model's accuracy, but that needs to be measured.
+
+#### Encode this
+
+- **Model selection starts with the application task, not the leaderboard**
+- **Leaderboards create a shortlist; local evaluation validates the choice**
+- **RAG and security workloads need specialized evaluation**
+- **Compression requires re-evaluation because model weights change**
+
+#### Recall prompt
+
+*Why is manual prompt testing not enough for choosing a production LLM?*
+
+### Language Model Compression
+
+An LLM such as **Meta-Llama-3.1-8B-Instruct** has roughly **8 billion parameters**.
+
+If each parameter is stored as a 16-bit floating point value:
+
+```text
+8 billion parameters x 16 bits = about 16 GB
+```
+
+That is only the model weights. GPU memory also needs space for:
+
+- **activations**
+- **KV cache**
+- **intermediate tensors**
+- **runtime/kernel overhead**
+- **output tensors**
+
+The main family of model compression techniques is **quantization**.
+
+> **QUANTIZATION**
+>
+> Quantization reduces the memory footprint by representing values with lower precision, such as **FP8**, **INT8**, or other compressed formats.
+>
+> This is not just rounding numbers. Good quantization uses calibration and error-compensation techniques so the compressed model remains useful.
+
+#### Why runtime support matters
+
+Compression alone is not enough.
+
+If the runtime cannot process quantized data efficiently, it may need to convert values back to 16-bit precision during execution. That reduces or eliminates the benefit.
+
+The ideal setup is:
+
+```text
+compressed model
+  + runtime-native quantization support
+  + optimized GPU kernels
+  = better throughput and lower memory pressure
+```
+
+vLLM has native support for many quantization techniques and can enable optimized kernels when it detects a quantized model.
+
+#### Risks
+
+Quantization is powerful, but not free.
+
+Main risks:
+
+- accuracy loss
+- degraded reasoning quality
+- hallucination increase
+- hardware-specific kernel limitations
+- unexpected behavior on long-context or domain-specific tasks
+
+The mitigation is straightforward but non-negotiable:
+
+**evaluate before and after compression.**
+
+#### Example 4-1. Compress an LLM using `llmcompressor`
+
+```python
+from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
+from llmcompressor.transformers import oneshot
+
+# Select quantization algorithm. In this case, we:
+#   * apply SmoothQuant to make the activations easier to quantize
+#   * quantize the weights to int8 with GPTQ (static per channel)
+#   * quantize the activations to int8 (dynamic per token)
+recipe = [
+    SmoothQuantModifier(smoothing_strength=0.8),
+    GPTQModifier(scheme="W8A8", targets="Linear", ignore=["lm_head"]),
+]
+
+# Apply quantization using the built-in open_platypus dataset.
+oneshot(
+    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    dataset="open_platypus",
+    recipe=recipe,
+    output_dir="TinyLlama-1.1B-Chat-v1.0-INT8",
+    max_seq_length=2048,
+    num_calibration_samples=512,
+)
+```
+
+What to notice:
+
+- `recipe` defines the quantization pipeline
+- `SmoothQuantModifier` prepares activations for easier quantization
+- `GPTQModifier(scheme="W8A8")` quantizes both **weights** and **activations** to 8-bit
+- `dataset` is used for calibration
+- `output_dir` contains the compressed model and config files needed for serving
+
+> **TIP**
+>
+> Compression can make LLM serving dramatically more efficient, but improper quantization can break model quality.
+>
+> When possible, consider professionally compressed and validated models from trusted publishers, then still evaluate them against your own workload.
+
+#### Encode this
+
+- **Quantization reduces memory pressure by lowering numeric precision**
+- **Runtime kernel support determines whether compression improves throughput**
+- **Compression changes model behavior, so evaluation must be repeated**
+- **A compressed model is an optimization artifact, not automatically a production-ready artifact**
+
+#### Recall prompt
+
+*Why can a quantized model fail to improve performance if the runtime does not support quantized execution natively?*
+
+### Model Performance Benchmark
+
+Production tuning requires measurement under realistic load.
+
+Important LLM-serving metrics include:
+
+- **Time To First Token (TTFT)**
+- **Inter-Token Latency (ITL)**
+- **tokens per second**
+- **request throughput**
+- **latency distribution**
+- **GPU memory utilization**
+- **KV cache pressure**
+- **queue depth**
+
+Traditional HTTP load generators can call an LLM endpoint, but they usually do not understand LLM-specific metrics like TTFT and ITL. Specialized tools are better.
+
+#### GuideLLM
+
+[GuideLLM](https://github.com/neuralmagic/guidellm) is built to benchmark and tune LLM deployments under realistic inference patterns.
+
+It can simulate different workload modes:
+
+- synchronous request chains
+- fixed concurrency
+- constant request rates
+- sweep scenarios
+- Poisson-style traffic patterns
+
+#### Example 4-2. Run a benchmark with GuideLLM
+
+```bash
+guidellm benchmark \
+  --target http://127.0.0.1:8000 \
+  --model mistralai/Mistral-7B-Instruct-v0.2 \
+  --output-path output_file.json \
+  --rate-type sweep \
+  --data 'prompt_tokens=256,output_tokens=128' \
+  --max-seconds 400 \
+  --warmup-percent 0.2
+```
+
+What to notice:
+
+- `--target` points to the already deployed model endpoint
+- `--output-path` stores the benchmark report
+- `--rate-type sweep` tests multiple request-rate scenarios
+- `--data` should match expected production input/output token sizes
+- `--warmup-percent` gives the runtime warmup time before measured results matter
+
+![Example output of a GuideLLM run](<assets/Example output of a GuideLLM run.png>)
+
+**Figure 4-2. Example output of a GuideLLM run**
+
+#### MLPerf Inference
+
+[MLPerf Inference](https://mlcommons.org/benchmarks/inference-datacenter/) comes from **MLCommons**, an AI engineering consortium focused on open collaboration and reproducible AI system benchmarks.
+
+It publishes results for:
+
+- data center configurations
+- edge/device configurations
+- multiple model and hardware combinations
+
+#### Inference Perf
+
+**Inference Perf** is a GenAI inference benchmarking effort from the Kubernetes serving community.
+
+It can:
+
+- run locally
+- run in a cluster
+- target OpenAI-compatible endpoints
+- use custom datasets that resemble production scenarios
+
+#### vLLM benchmark suite
+
+vLLM also provides benchmark scripts and nightly benchmark jobs.
+
+These are useful when validating:
+
+- model/runtime combinations
+- GPU configurations
+- vLLM tuning changes
+- regression risk after upgrades
+
+#### CI/CD integration
+
+Performance tests should be part of the release pipeline.
+
+The useful pattern is:
+
+```text
+deploy model to production-like environment
+  -> run benchmark workload
+  -> store benchmark output
+  -> compare against previous release
+  -> update capacity/rate-limit assumptions
+```
+
+**Important:** benchmark numbers are only useful when the environment resembles production, especially in:
+
+- GPU type
+- GPU count
+- model artifact
+- quantization format
+- runtime version
+- storage path
+- network topology
+
+#### Encode this
+
+- **LLM benchmarking needs token-aware metrics**
+- **TTFT and ITL matter more than generic HTTP latency alone**
+- **Benchmarks feed capacity planning, rate limits, and autoscaling thresholds**
+- **Production-like hardware is part of the benchmark, not an implementation detail**
+
+#### Recall prompt
+
+*Why is requests-per-second alone a weak metric for LLM-serving capacity?*
+
+### vLLM Runtime Parameters Tuning
+
+vLLM usually starts from strong defaults, but it cannot automatically know everything about:
+
+- workload shape
+- expected concurrency
+- maximum context size
+- GPU memory budget
+- latency objective
+
+The key memory fact:
+
+**vLLM greedily uses available GPU memory to maximize throughput.**
+
+The ideal situation is:
+
+```text
+model weights fit in VRAM
+  + activation memory fits in VRAM
+  + KV cache has enough room
+  = stable throughput and low latency variance
+```
+
+When KV cache space is too small, vLLM may need to evict or swap data. That usually shows up as higher **inter-token latency** and lower throughput.
+
+> **HOW TO CALCULATE MODEL MEMORY REQUIREMENTS**
+>
+> Start with the model parameters:
+>
+> ```text
+> parameter count x bytes per parameter = baseline weight memory
+> ```
+>
+> A full-size model commonly uses **2 bytes per parameter** with FP16 or BF16.
+>
+> An 8B model therefore needs roughly:
+>
+> ```text
+> 8 billion x 2 bytes = about 16 GB
+> ```
+>
+> Then add memory for runtime overhead, activations, KV cache, and output tensors.
+>
+> For an 8B FP16 model with a 2048 context and batch size 1, a simplified estimate may land around **17.3 GB**. Increasing batch size to 10 can push the requirement above **28 GB**.
+>
+> The practical lesson: **batch size and sequence length can change memory requirements dramatically.**
+
+#### Example 4-3. vLLM logs information about memory
+
+```text
+...
+INFO [model_runner.py:1097] Loading model weights took 14.9888 GB
+INFO [worker.py:241] Memory profiling takes 0.67 seconds
+INFO [worker.py:241] the current vLLM instance can use total_gpu_memory (79.14GiB)
+        x gpu_memory_utilization (0.90) = 71.22GiB
+INFO [worker.py:241] model weights take 14.99GiB; non_torch_memory takes 0.12GiB;
+        PyTorch activation peak memory takes 1.19GiB; the rest of the memory
+        reserved for KV Cache is 54.93GiB.
+...
+WARNING [scheduler.py:1057] Sequence group 0 is preempted by PreemptionMode.SWAP
+        mode because there is not enough KV cache space. This can affect the
+        end-to-end performance. Increase gpu_memory_utilization or
+        tensor_parallel_size to provide more KV cache memory.
+        total_cumulative_preemption_cnt=1
+```
+
+What to notice:
+
+- vLLM reports model weight size during startup
+- it calculates usable GPU memory from `gpu_memory_utilization`
+- it reports activation peak memory
+- it reserves the remaining memory for KV cache
+- preemption warnings indicate KV cache pressure
+
+#### Important parameters
+
+**`gpu-memory-utilization`**
+
+Default is commonly `0.9`.
+
+This controls how much available GPU memory vLLM can use. Raising it closer to `1.0` can make more space available for KV cache, but it also reduces safety margin.
+
+**`max-model-len`**
+
+Controls maximum context length.
+
+This is crucial because KV cache size tracks context size. Set it based on the real application need.
+
+Examples:
+
+- Short chat prompts can use smaller values
+- RAG workloads often need larger context
+- long-document analysis needs larger context again
+
+**`max-num-seqs` / `max-num-batched-tokens`**
+
+Controls batching behavior.
+
+Larger batches improve throughput but consume more KV cache memory. Reducing these values can reduce memory pressure at the cost of throughput.
+
+**`tensor-parallel-size`**
+
+Splits tensors across multiple GPUs.
+
+This can free more per-GPU memory for KV cache, but requires multiple GPUs and fast cross-GPU communication.
+
+**`pipeline-parallel-size`**
+
+Distributes model layers across GPUs.
+
+This is compatible with tensor parallelism, but tensor parallelism is more common for multi-GPU inference on one node.
+
+**`data-parallel-size`**
+
+Splits serving across parallel groups, including multi-node setups.
+
+This can increase serving capacity but introduces distributed networking and scheduling complexity.
+
+**`cpu-offload-gb`**
+
+Allows part of the model to live in CPU memory.
+
+This can make oversized models load, but it usually causes a large throughput penalty and is strongly discouraged for production serving unless there is no better option.
+
+#### Practical tuning loop
+
+```text
+benchmark workload
+  -> inspect vLLM logs and metrics
+  -> adjust memory/concurrency parameters
+  -> benchmark again
+  -> lock production defaults
+```
+
+The goal is not to maximize one metric. The goal is to satisfy the service-level objective with the lowest stable GPU cost.
+
+#### Encode this
+
+- **KV cache is often the real runtime bottleneck**
+- **context length and batch size drive memory pressure**
+- **vLLM logs expose useful memory allocation details**
+- **tuning should be guided by benchmark data, not guesses**
+
+#### Recall prompt
+
+*Why can increasing context length reduce serving throughput even when the model weights already fit in GPU memory?*
+
+### Autoscaling
+
+After tuning one replica, production introduces a harder question:
+
+**How many replicas should be running right now?**
+
+For real-time inference, the most important signals usually include:
+
+- **TTFT**
+- **ITL**
+- **queue depth**
+- **running requests**
+- **waiting requests**
+- **KV cache pressure**
+
+For offline inference, the focus often shifts toward:
+
+- batch size
+- total throughput
+- job completion time
+- GPU utilization
+
+The challenge is that LLM request cost varies dramatically:
+
+```text
+short prompt + short answer  -> cheap request
+long prompt + long answer    -> expensive request
+```
+
+So simple request counts can be misleading.
+
+#### Horizontal Pod Autoscaler (HPA)
+
+Kubernetes **HPA** is the native option.
+
+It works well for many workloads but is limited for LLM serving because its common signals are:
+
+- CPU
+- memory
+- custom metrics if configured
+
+LLM inference pressure is usually dominated by **GPU**, **tokens**, and **KV cache**, not CPU alone.
+
+#### Knative Pod Autoscaler (KPA)
+
+**KPA** is part of Knative Serving and can scale based on request concurrency.
+
+It has:
+
+- **stable mode** using a longer observation window
+- **panic mode** using a shorter window for rapid changes
+
+KPA is a better fit than basic CPU-based HPA for some inference workloads, and it integrates naturally with KServe in Knative deployment mode.
+
+But there are two LLM-specific problems:
+
+- LLM pods can take minutes to become ready because the model must load
+- request count does not equal token cost
+
+#### Kubernetes Event-driven Autoscaling (KEDA)
+
+[KEDA](https://keda.sh/) is often a better fit because it can scale from flexible metric queries.
+
+For vLLM, useful metrics include:
+
+- `vllm:num_requests_running`
+- `vllm:num_requests_waiting`
+- `vllm:time_to_first_token_seconds`
+- `vllm:time_per_output_token_seconds`
+
+KServe supports KEDA in **Standard** deployment mode.
+
+Metrics can come from:
+
+- **PodMetric**, querying the pod directly
+- **External**, querying systems such as Prometheus
+
+Direct pod metrics can reduce autoscaler latency. External metrics are more flexible because they can combine multiple sources and replicas.
+
+#### Example 4-4. Example of KServe and KEDA
+
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: Meta-Llama-3-8B
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+    serving.kserve.io/autoscalerClass: "keda"
+    sidecar.opentelemetry.io/inject: "Meta-Llama-3-8B"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+        - --model_name=llama3
+        - --model_id=meta-llama/meta-llama-3-8b
+    minReplicas: 1
+    maxReplicas: 5
+    autoScaling:
+      metrics:
+        - type: PodMetric
+          podmetric:
+            metric:
+              backend: "opentelemetry"
+              metricNames:
+                - vllm:num_requests_running
+              query: "vllm:num_requests_running"
+            target:
+              type: Value
+              value: "4"
+#        - type: External
+#          external:
+#            metric:
+#              backend: "prometheus"
+#              serverAddress: "http://prometheus.url:9092"
+#              query: "vllm:num_requests_running"
+```
+
+What to notice:
+
+- `serving.kserve.io/deploymentMode: Standard` is required for KEDA in this pattern
+- `serving.kserve.io/autoscalerClass: "keda"` enables KEDA autoscaling
+- OpenTelemetry sidecar injection can expose pod-local metrics
+- `PodMetric` queries metrics directly from the pod
+- the query can be a single metric or a PromQL-style expression
+- target value `4` means scaling should react when roughly four requests are already running
+- the commented `External` block shows how to query Prometheus instead
+
+#### Emerging LLM-specific autoscaling
+
+LLM serving is moving beyond generic autoscaling.
+
+Disaggregated serving and prefill/decode separation require controllers that understand runtime roles, not just pod count.
+
+[llm-d](https://llm-d.ai/) includes the **Workload Variant Autoscaler (WVA)**, which is designed for LLM workloads. WVA considers:
+
+- what each pod can handle
+- request shape and token cost
+- latency objectives
+- recent traffic mix
+- hardware capacity
+
+The goal is to run clusters at higher utilization while still meeting latency targets.
+
+#### Encode this
+
+- **LLM autoscaling should be token-aware, not only request-aware**
+- **HPA is simple but usually too generic**
+- **KPA helps with concurrency but startup time and token cost remain difficult**
+- **KEDA can scale from vLLM-specific metrics**
+- **WVA-style autoscaling is emerging for richer LLM-serving topologies**
+
+#### Recall prompt
+
+*Why can an autoscaler based only on request count make poor decisions for LLM inference?*
+
+### Optimize vLLM Startup Time
+
+Autoscaling is only useful if new replicas become ready quickly enough.
+
+LLMs make this hard because model artifacts can be huge. Some large models require hundreds of gigabytes or close to a terabyte of storage.
+
+The scale-up path has several phases:
+
+1. Runtime image provisioning
+2. Model retrieval and mounting
+3. Starting the runtime
+4. Loading the model
+5. Warming up the inference engine
+6. Exposing the model
+
+#### 1. Runtime image provisioning
+
+The vLLM runtime image can be several gigabytes because it includes GPU framework dependencies such as CUDA.
+
+Production guidance:
+
+- avoid `imagePullPolicy: Always`
+- prefer `IfNotPresent` when images can be cached on nodes
+- use `Never` only when images are deliberately pre-pulled
+- use specific image tags instead of `latest`
+- prefer digest pinning for fully reproducible deployments
+
+Example:
+
+```text
+vllm/vllm-openai:v0.12.0
+vllm/vllm-openai@sha256:...
+```
+
+#### 2. Model retrieval and mounting
+
+Model storage strategy has a major effect on startup time.
+
+Common options:
+
+- download from Hugging Face at startup
+- download from S3-compatible storage
+- copy into a PersistentVolumeClaim
+- mount a PVC directly
+- package the model as an OCI artifact/image
+
+Slowest pattern:
+
+```text
+remote download -> local copy -> runtime load
+```
+
+Faster patterns avoid repeated copying:
+
+- PVC direct mount
+- OCI-style delivery
+- node-local cache
+- KServe local model cache
+
+For Hugging Face or S3-backed models, KServe local model cache can reduce repeated download cost by caching based on `storageUri`.
+
+Fast local storage such as **NVMe SSDs** is especially valuable.
+
+#### 3. Starting the runtime
+
+The vLLM process itself usually starts quickly.
+
+This phase is rarely the bottleneck compared with:
+
+- image pull
+- model transfer
+- GPU weight loading
+- warmup
+
+#### 4. Loading the model
+
+Once the model files are available, vLLM must copy model weights into GPU memory.
+
+This is often one of the most expensive startup phases.
+
+There is a physical limit: the I/O bandwidth into GPU memory. But default loading can still be far from that limit.
+
+Infrastructure acceleration can help. For example, **NVIDIA GPUDirect Storage** can create a more direct path between NVMe storage and GPU memory.
+
+vLLM supports model-loading extensions such as:
+
+- **Run:ai Model Streamer**
+- **CoreWeave Tensorizer**
+- **fastsafetensor**
+
+> **OPTIMIZE MODEL LOADING**
+>
+> **Run:ai Model Streamer** is often the easiest to try because it can load common formats such as safetensors without requiring a different serialized model format.
+>
+> **Tensorizer** and **fastsafetensor** can be powerful, but usually require model preparation or a specific storage/loading setup.
+
+#### Example 4-5. vLLM usage of Run:ai Model Streamer
+
+```bash
+vllm serve \
+ --port=8080 \
+ --model=/mnt/models \
+ --served-model-name=meta-llama/Meta-Llama-3-8B \
+ --load-format runai_streamer \
+ --model-loader-extra-config '{"concurrency":16}'
+```
+
+What to notice:
+
+- `--load-format runai_streamer` enables Run:ai Model Streamer
+- `--model-loader-extra-config '{"concurrency":16}'` loads model data with 16 concurrent workers
+- `tensorizer` is another possible load format, but requires Tensorizer serialization
+
+#### 5. Warming up the inference engine
+
+After weights are in GPU memory, the runtime still performs warmup work:
+
+- pre-allocating KV cache memory
+- profiling operations
+- preparing optimized execution paths
+- capturing reusable CUDA or HIP graph sequences
+
+This warmup matters because repeatedly launching thousands of GPU kernels individually would create CPU overhead during inference.
+
+CUDA/HIP graphs reduce that overhead by reusing captured kernel launch sequences.
+
+#### 6. Exposing the model
+
+After the model is loaded and the runtime is warmed up, vLLM exposes an OpenAI-compatible API and health endpoints.
+
+The `/health` endpoint can be used for a Kubernetes readiness probe.
+
+#### Practical startup optimization summary
+
+The biggest startup wins usually come from:
+
+- keeping runtime images cached on nodes
+- avoiding remote model download during pod startup
+- using PVC, OCI, or local model cache strategies
+- using fast storage such as NVMe
+- optimizing model loading with Model Streamer, Tensorizer, or similar extensions
+- configuring readiness probes around actual runtime readiness
+
+Applied together, these techniques can reduce vLLM scale-up time from many minutes to tens of seconds, depending on model size and hardware.
+
+#### Encode this
+
+- **Autoscaling is limited by startup time**
+- **image pulls and model downloads should be removed from the hot path**
+- **loading weights into GPU memory is often the main bottleneck**
+- **fast storage and optimized loaders can materially reduce time-to-ready**
+- **readiness should mean the model is actually ready to serve**
+
+#### Recall prompt
+
+*Why does model startup time make naive autoscaling less effective for LLM deployments?*
+
+### Production Mental Model
+
+A production LLM serving stack is a chain:
+
+```text
+model choice
+  -> evaluation
+  -> compression
+  -> benchmark
+  -> runtime tuning
+  -> autoscaling
+  -> routing
+  -> startup optimization
+  -> distributed topology
+```
+
+Weakness in any link can waste GPU budget or degrade latency.
+
+The Kubernetes lesson is:
+
+**GenAI serving is still Kubernetes, but the workload semantics are different enough that ordinary container defaults are rarely sufficient.**
+
+### Encode this
+
+- **Production is consistency under load, not a successful first response**
+- **LLM workloads need token-aware, GPU-aware operational thinking**
+- **model selection, compression, tuning, benchmarking, and autoscaling are connected**
+- **startup optimization is part of scalability**
+- **Kubernetes provides the control plane, but LLM semantics must guide the configuration**
+
+### Recall prompt
+
+*What makes production LLM serving different from running a normal stateless application container on Kubernetes?*
+
+[Back to Contents](#contents)
+
 ## High-Value Recall Checklist
 
 Use these prompts for fast review:
@@ -2147,9 +3068,10 @@ Use these prompts for fast review:
 - **OCI Registry**: Why is storing full model artifacts there different from storing metadata in a model registry?
 - **OCI**: What are the four main OCI image components?
 - **Model access**: What is the difference between download-based storage initialization and direct PVC-backed mounting?
+- **Production serving**: Why do model evaluation, compression, benchmarking, runtime tuning, autoscaling, and startup time need to be treated as one connected system?
 
 ### One-sentence compression
 
-**KServe operationalizes model serving on Kubernetes, registries operationalize model discovery and governance, OCI-style artifacts improve model distribution, and storage access strategy determines how efficiently those models actually reach serving pods.**
+**KServe operationalizes model serving on Kubernetes, registries operationalize model discovery and governance, OCI-style artifacts improve model distribution, storage access strategy determines how efficiently models reach serving pods, and production LLM serving depends on token-aware evaluation, tuning, scaling, and startup optimization.**
 
 [Back to Contents](#contents)
