@@ -2209,6 +2209,8 @@ Examples:
 - A coding assistant may care about **program correctness**
 - A summarizer may care about **coverage** and **low hallucination**
 
+[Back to Contents](#contents)
+
 ### Language Model Evaluation
 
 **Language model evaluation** measures a model's ability against specific tasks or risks.
@@ -2323,6 +2325,8 @@ Compression can reduce model size dramatically and improve throughput on the sam
 
 *Why is manual prompt testing not enough for choosing a production LLM?*
 
+[Back to Contents](#contents)
+
 ### Language Model Compression
 
 An LLM such as **Meta-Llama-3.1-8B-Instruct** has roughly **8 billion parameters**.
@@ -2433,6 +2437,8 @@ What to notice:
 #### Recall prompt
 
 *Why can a quantized model fail to improve performance if the runtime does not support quantized execution natively?*
+
+[Back to Contents](#contents)
 
 ### Model Performance Benchmark
 
@@ -2554,6 +2560,8 @@ deploy model to production-like environment
 #### Recall prompt
 
 *Why is requests-per-second alone a weak metric for LLM-serving capacity?*
+
+[Back to Contents](#contents)
 
 ### vLLM Runtime Parameters Tuning
 
@@ -2701,6 +2709,8 @@ The goal is not to maximize one metric. The goal is to satisfy the service-level
 #### Recall prompt
 
 *Why can increasing context length reduce serving throughput even when the model weights already fit in GPU memory?*
+
+[Back to Contents](#contents)
 
 ### Autoscaling
 
@@ -2860,6 +2870,8 @@ The goal is to run clusters at higher utilization while still meeting latency ta
 
 *Why can an autoscaler based only on request count make poor decisions for LLM inference?*
 
+[Back to Contents](#contents)
+
 ### Optimize vLLM Startup Time
 
 Autoscaling is only useful if new replicas become ready quickly enough.
@@ -3016,6 +3028,8 @@ Applied together, these techniques can reduce vLLM scale-up time from many minut
 #### Recall prompt
 
 *Why does model startup time make naive autoscaling less effective for LLM deployments?*
+
+[Back to Contents](#contents)
 
 ### LLM-Aware Routing
 
@@ -3368,6 +3382,8 @@ KServe can hide much of this low-level gateway complexity through `LLMInferenceS
 
 *Why can cache-aware or prefix-aware routing reduce LLM serving cost and latency?*
 
+[Back to Contents](#contents)
+
 ### Disaggregated Serving
 
 LLM-aware routing is one optimization. At very large scale, the serving architecture itself can be split into specialized parts.
@@ -3523,6 +3539,8 @@ This pattern belongs to large-scale deployments where the savings and latency ga
 #### Recall prompt
 
 *Why does disaggregated prefill require fast KV cache transfer between prefill and decode workers?*
+
+[Back to Contents](#contents)
 
 ### Lessons Learned
 
