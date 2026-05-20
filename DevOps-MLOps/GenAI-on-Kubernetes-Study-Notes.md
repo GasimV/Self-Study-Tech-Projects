@@ -3033,6 +3033,8 @@ Applied together, these techniques can reduce vLLM scale-up time from many minut
 
 ### LLM-Aware Routing
 
+![AI Inference on Kubernetes](<assets\AI Inference on Kubernetes.png>)
+
 After scaling to multiple replicas, the next production question is:
 
 **Which replica should receive each request?**
@@ -3200,6 +3202,8 @@ Important AI gateway capabilities include:
 A single LLM request may generate 10 tokens or 10,000 tokens. Request-count rate limits do not reflect GPU cost.
 
 Projects such as [Envoy AI Gateway](https://aigateway.envoyproxy.io/) and [Kuadrant](https://kuadrant.io/) can help enforce quota and rate-limit policies closer to token consumption.
+- [Envoy AI Gateway - Usage-based Rate Limiting](https://aigateway.envoyproxy.io/docs/capabilities/traffic/usage-based-ratelimiting/)
+- [Kuadrant Token Rate Limiting](https://docs.kuadrant.io/1.3.x/kuadrant-operator/doc/overviews/token-rate-limiting/)
 
 **Semantic routing**
 
@@ -3504,7 +3508,7 @@ Projects in this space include:
 
 - **NVIDIA Dynamo**, focused on NVIDIA-optimized serving infrastructure
 - **llm-d**, focused on integrating open source components across the Kubernetes ecosystem
-- **Mooncake**, which helped popularize the disaggregated prefill topology
+- **[Mooncake](https://kvcache-ai.github.io/Mooncake/)**, which helped popularize the disaggregated prefill topology
 - **LMCache** and **NIXL**, focused on KV cache and transfer acceleration
 
 #### Operational trade-off
