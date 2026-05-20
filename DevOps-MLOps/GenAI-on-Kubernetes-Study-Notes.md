@@ -32,6 +32,9 @@
    - [vLLM Runtime Parameters Tuning](#vllm-runtime-parameters-tuning)
    - [Autoscaling](#autoscaling)
    - [Optimize vLLM Startup Time](#optimize-vllm-startup-time)
+   - [LLM-Aware Routing](#llm-aware-routing)
+   - [Disaggregated Serving](#disaggregated-serving)
+   - [Lessons Learned](#lessons-learned)
 8. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -3014,6 +3017,559 @@ Applied together, these techniques can reduce vLLM scale-up time from many minut
 
 *Why does model startup time make naive autoscaling less effective for LLM deployments?*
 
+### LLM-Aware Routing
+
+After scaling to multiple replicas, the next production question is:
+
+**Which replica should receive each request?**
+
+Kubernetes Services usually distribute traffic with a simple load-balancing strategy such as round robin. That works reasonably well for many stateless microservices because each request has roughly similar cost and CPU/memory are often enough to estimate load.
+
+LLM serving breaks those assumptions.
+
+An LLM request can vary by:
+
+- prompt token count
+- generated token count
+- current queue depth
+- KV cache reuse opportunity
+- LoRA adapter availability
+- real-time versus batch priority
+- prefill/decode cost profile
+
+So the router should understand inference-specific signals, not only endpoint availability.
+
+#### Why ordinary round robin is weak for LLMs
+
+Kubernetes has already needed smarter routing in other scenarios. In multi-zone cloud deployments, **topology-aware routing** helps keep traffic inside the zone where it originated.
+
+LLM serving stretches the routing problem further. The router may need to consider:
+
+**Each request is different**
+
+There is no reliable correlation between input prompt size and generated output size. A short prompt can generate a long answer, and a long prompt can generate a short one.
+
+Useful runtime signal:
+
+```text
+vllm:num_requests_waiting
+```
+
+This vLLM metric helps identify replicas that already have queued work.
+
+**Batching**
+
+vLLM batches requests to use GPU resources efficiently.
+
+An LLM-aware router can improve utilization by mixing workloads, such as using offline inference requests to fill unused batch capacity while still protecting real-time traffic.
+
+**Prefill and decode workload**
+
+The **prefill** phase is related to prompt size and is compute-heavy. The **decode** phase generates tokens one by one and is more memory-bandwidth-sensitive.
+
+This makes it possible to design specialized pools for large-prompt prefill and separate decode workers.
+
+**KV cache reuse**
+
+The model itself has no memory. Chatbots and agents often send the whole previous conversation back to the model with each new request.
+
+If a router knows which replica already has useful KV cache blocks, it can route related requests to that replica. This is often called **prefix-aware routing** or **cache-aware routing**.
+
+**Different service-level requirements**
+
+Real-time traffic usually deserves higher priority than batch traffic.
+
+A smarter scheduler can:
+
+- prefer high-priority requests
+- delay low-priority requests
+- reject noncritical requests when capacity is constrained
+- protect latency objectives during overload
+
+**LoRA adapters**
+
+**Low-Rank Adaptation (LoRA)** fine-tuning stores a small adapter layer that composes with a base model.
+
+This is efficient because multiple fine-tuned variants can share one base model runtime. But it breaks the simple idea that one model maps to one endpoint.
+
+The router needs to know:
+
+```text
+requested model or adapter -> runtime replica where that adapter is available
+```
+
+#### LLM-aware gateway
+
+The common goal is a gateway that understands LLM traffic and can optimize request placement.
+
+![LLM-aware Gateway API](<assets/LLM-aware Gateway API.png>)
+
+**Figure 4-3. LLM-aware Gateway API**
+
+At a high level, the gateway should be able to consider:
+
+- model name
+- adapter name
+- queue depth
+- runtime metrics
+- token cost
+- request priority
+- cache locality
+- rollout policy
+
+#### Example 4-6. Serving LoRA adapters with vLLM
+
+```bash
+vllm serve meta-llama/Meta-Llama-3-8B \
+    --enable-lora \
+    --lora-modules my-lora-model=$HOME/.cache/huggingface/
+
+curl localhost:8080/v1/models | jq
+{
+    "object": "list",
+    "data": [
+        {
+            "id": "meta-llama/Meta-Llama-3-8B",
+            "object": "model"
+        },
+        {
+            "id": "my-lora-model",
+            "object": "model"
+        }
+    ]
+}
+
+curl localhost:8000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "my-lora-model",
+        "prompt": "LoRA is a",
+        "max_tokens": 10,
+        "temperature": 0
+    }' | jq
+```
+
+What to notice:
+
+- the base model is served by vLLM
+- `--enable-lora` enables LoRA support
+- `--lora-modules` maps an adapter name to the adapter path inside the container
+- the base model and LoRA adapter both appear in `/v1/models`
+- the client selects the adapter by setting `"model": "my-lora-model"`
+
+From the user perspective, the LoRA adapter behaves like another model. From the platform perspective, it is a routing and service discovery problem.
+
+#### Gateway API
+
+> **GATEWAY API**
+>
+> [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) is the next-generation Kubernetes API for L4 and L7 routing, ingress, load balancing, and service mesh-style traffic management.
+>
+> It is role-oriented. Infrastructure providers, platform teams, and application teams can each own different parts of the network configuration.
+>
+> A route, such as an `HTTPRoute`, attaches to a `Gateway` and defines how traffic should be forwarded to services inside the cluster.
+
+Gateway API defines routing intent. Gateway implementations, such as Envoy-based systems, perform the actual traffic handling.
+
+#### From API Gateway to AI Gateway
+
+Traditional API gateways were designed for mostly stateless APIs where the request is the natural accounting unit.
+
+LLM gateways need different capabilities because the real compute unit is usually the **token**.
+
+AI gateways support **Model as a Service (MaaS)** patterns where many teams or users consume model inference through managed APIs.
+
+Important AI gateway capabilities include:
+
+**Token-based rate limiting and user management**
+
+A single LLM request may generate 10 tokens or 10,000 tokens. Request-count rate limits do not reflect GPU cost.
+
+Projects such as [Envoy AI Gateway](https://aigateway.envoyproxy.io/) and [Kuadrant](https://kuadrant.io/) can help enforce quota and rate-limit policies closer to token consumption.
+
+**Semantic routing**
+
+Semantic routing sends requests to models based on the meaning of the request.
+
+Examples:
+
+- code requests to a code-specialized model
+- general chat to a general-purpose model
+- safety-sensitive requests to a stricter model or policy path
+
+**Hybrid routing**
+
+Hybrid routing can choose between local and remote models based on:
+
+- current cluster load
+- model availability
+- latency objective
+- cost
+- data residency requirements
+
+Example:
+
+```text
+normal load -> local GPU cluster
+peak overflow -> cloud-hosted inference endpoint
+```
+
+**Model composition**
+
+Some gateways are evolving toward model orchestration, where several models or services are chained together.
+
+RAG is a common example:
+
+```text
+retriever -> reranker -> LLM -> response
+```
+
+This turns the gateway from a simple router into an inference orchestration layer.
+
+#### Gateway API Inference Extension
+
+[Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) extends Kubernetes Gateway API for AI inference workloads.
+
+It adds inference-aware concepts such as:
+
+- model-aware routing
+- serving priorities
+- incremental model rollout
+- traffic splitting
+- endpoint picking based on inference metrics
+
+The key resources are:
+
+**`InferencePool`**
+
+Represents a group of pods serving AI models with similar compute configuration, accelerator type, or base model.
+
+**`InferenceObjective`**
+
+Defines serving objectives and priorities for routing decisions.
+
+This resource is alpha and may evolve.
+
+**Endpoint Picker**
+
+An Endpoint Picker chooses the best endpoint from an `InferencePool`.
+
+It can use metrics such as:
+
+- queue length
+- KV cache state
+- adapter availability
+- latency
+- request priority
+
+#### Example 4-7. Example of Gateway API Inference Extension usage
+
+```yaml
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: vllm-llama3-8b-instruct
+spec:
+  targetPorts:
+    - number: 8000
+  selector:
+    app: vllm-llama3-8b-instruct
+  endpointPickerRef:
+    name: vllm-llama3-8b-epp
+    port: 9002
+    failureMode: FailClose
+---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: high-priority-inference
+spec:
+  priority: 1
+  poolRef:
+    group: inference.networking.k8s.io
+    name: vllm-llama3-8b-instruct
+---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: standard-inference
+spec:
+  priority: 2
+  poolRef:
+    group: inference.networking.k8s.io
+    name: vllm-llama3-8b-instruct
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-llama3-8b-epp
+spec:
+  selector:
+    app: vllm-llama3-8b-epp
+  ports:
+    - port: 9002
+      targetPort: 9002
+```
+
+What to notice:
+
+- `InferencePool` uses the stable `inference.networking.k8s.io/v1` API group
+- `targetPorts` lists ports exposed by the model-server pods
+- `selector` chooses the pods that belong to the pool
+- `endpointPickerRef` references the Endpoint Picker service
+- `InferenceObjective` defines serving priority
+- the Endpoint Picker is exposed as a Kubernetes `Service`
+
+#### Envoy External Processing and EPP
+
+Gateway API Inference Extension commonly uses **Envoy** as the proxy foundation.
+
+Envoy supports an **External Processing** filter, often called `ext_proc`, that lets an external gRPC service inspect or modify HTTP headers and request bodies.
+
+Gateway API Inference Extension uses this idea for the **Endpoint Picker Protocol (EPP)**.
+
+The flow is:
+
+```text
+client request
+  -> Envoy gateway
+  -> external processing / Endpoint Picker
+  -> selected model-server endpoint
+  -> vLLM replica
+```
+
+An Endpoint Picker can be deployed as its own Kubernetes Deployment, usually near the model-serving namespace. It must be reachable from the gateway and must be able to collect the metrics it needs from the vLLM pods.
+
+The communication path can be secured with mTLS or certificate-based controls.
+
+#### Related projects
+
+The inference gateway space is active.
+
+Important projects and patterns include:
+
+- [Gateway API Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension) for inference-aware Kubernetes routing APIs
+- [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway) for AI gateway capabilities built on Envoy Gateway
+- [vLLM Production Stack](https://github.com/vllm-project/production-stack) for production-serving patterns around vLLM
+- [llm-d](https://llm-d.ai/) for large-scale LLM serving with routing, KV cache, and disaggregated serving integrations
+- KServe `LLMInferenceService` for a higher-level abstraction over lower-level gateway and serving components
+
+KServe can hide much of this low-level gateway complexity through `LLMInferenceService` and `LLMInferenceServiceConfig`, while still allowing platform teams to customize advanced routing behavior when needed.
+
+#### Encode this
+
+- **LLM routing should consider runtime state, not only pod availability**
+- **round robin ignores token cost, queue depth, KV cache locality, and adapter placement**
+- **LoRA adapters make model-to-endpoint mapping more complex**
+- **Gateway API Inference Extension introduces inference-aware routing primitives**
+- **Endpoint Pickers can use vLLM metrics to select better replicas**
+
+#### Recall prompt
+
+*Why can cache-aware or prefix-aware routing reduce LLM serving cost and latency?*
+
+### Disaggregated Serving
+
+LLM-aware routing is one optimization. At very large scale, the serving architecture itself can be split into specialized parts.
+
+**Disaggregated serving** separates LLM serving responsibilities across multiple pools and components, usually combining:
+
+- LLM-aware routing
+- distributed KV cache
+- disaggregated prefill
+- high-bandwidth networking
+- specialized GPU placement
+
+This is no longer a simple stateless Kubernetes Deployment. It behaves more like a production appliance built from Kubernetes resources and high-performance infrastructure.
+
+Use it when:
+
+- model serving scale is very high
+- latency objectives are strict
+- prompt lengths are large
+- KV cache reuse is valuable
+- the cluster has fast interconnects and careful topology design
+
+#### Why networking becomes critical
+
+Once runtime state such as KV cache moves between replicas, network bandwidth becomes part of the serving path.
+
+Ordinary pod networking may be backed by Ethernet in the range of 10 to 20 Gbps.
+
+Distributed KV cache and disaggregated prefill can require much more, often hundreds of Gbps.
+
+Relevant technologies include:
+
+- **NVLink**
+- **NVSwitch**
+- **RDMA**
+- **RoCE**
+- **InfiniBand**
+
+The operational lesson is simple:
+
+**Disaggregated serving is not just a software setting. It requires infrastructure topology planning.**
+
+#### Distributed KV cache
+
+The KV cache makes repeated token generation efficient.
+
+The distributed KV cache idea is:
+
+```text
+store reusable KV blocks outside one runtime instance
+  -> share them across replicas
+  -> avoid repeated prefill work
+```
+
+Benefits:
+
+- KV cache capacity is no longer limited to one replica's GPU memory
+- cache blocks can be reused across replicas
+- long-prompt workloads can avoid repeated compute
+- RAG and agent workflows may improve significantly
+
+The hard requirement:
+
+**cache transfer must be extremely fast.**
+
+Otherwise, the time saved by avoiding prefill can be lost moving cache blocks around.
+
+Relevant projects:
+
+- [LMCache](https://github.com/LMCache/LMCache), which provides a KV cache layer for LLM inference
+- [NIXL](https://github.com/ai-dynamo/nixl), NVIDIA Inference Xfer Library, for accelerating point-to-point transfer across memory and storage types
+
+LMCache and NIXL can be used together. For example, LMCache can manage reusable KV blocks while NIXL accelerates transfer across GPU, CPU, or storage-backed memory.
+
+Routing still matters. Even if every replica can access distributed cache blocks, it is better to route a request to a replica that already has the needed blocks nearby.
+
+#### Disaggregated prefill
+
+LLM request processing has two major phases:
+
+**Prefill**
+
+- processes the input prompt
+- produces the first token
+- compute-bound
+- strongly affects **Time To First Token (TTFT)**
+
+**Decode**
+
+- produces tokens one by one
+- memory-bandwidth-sensitive
+- strongly affects **Inter-Token Latency (ITL)**
+
+Disaggregated prefill separates these into different pools:
+
+```text
+prefill pool -> KV cache transfer -> decode pool
+```
+
+This lets each phase scale independently.
+
+Example:
+
+- long-prompt workload -> add more prefill capacity
+- long-generation workload -> add more decode capacity
+
+The main challenge is that prefill initializes the KV cache. The decode worker needs that cache state to continue generation, so distributed KV cache or very fast transfer is required.
+
+#### llm-d architecture
+
+The following diagram shows an end-to-end disaggregated serving design using Gateway API, KServe `LLMInferenceService`, llm-d components, and vLLM.
+
+![llm-d disaggregated serving architecture](<assets/llm-d disaggregated serving architecture.png>)
+
+**Figure 4-4. llm-d disaggregated serving architecture**
+
+Projects in this space include:
+
+- **NVIDIA Dynamo**, focused on NVIDIA-optimized serving infrastructure
+- **llm-d**, focused on integrating open source components across the Kubernetes ecosystem
+- **Mooncake**, which helped popularize the disaggregated prefill topology
+- **LMCache** and **NIXL**, focused on KV cache and transfer acceleration
+
+#### Operational trade-off
+
+Disaggregated serving can improve:
+
+- throughput
+- cache reuse
+- TTFT for long prompts
+- hardware utilization
+- independent scaling of prefill and decode
+
+But it increases:
+
+- platform complexity
+- network requirements
+- scheduler requirements
+- observability needs
+- component coupling
+- failure-mode complexity
+
+This pattern belongs to large-scale deployments where the savings and latency gains justify the operational cost.
+
+#### Encode this
+
+- **Disaggregated serving separates runtime responsibilities across specialized pools**
+- **distributed KV cache helps reuse expensive prefill work**
+- **prefill is compute-bound; decode is memory-bandwidth-sensitive**
+- **cache movement makes high-bandwidth networking critical**
+- **advanced serving topologies look more like distributed systems than ordinary Deployments**
+
+#### Recall prompt
+
+*Why does disaggregated prefill require fast KV cache transfer between prefill and decode workers?*
+
+### Lessons Learned
+
+Production LLM inference is continuous optimization across model, runtime, and infrastructure.
+
+**Model selection**
+
+Model choice cannot rely only on parameter count or generic leaderboard position. Use task-specific evaluation with domain-relevant datasets.
+
+**Compression**
+
+Quantization and related compression techniques can reduce memory footprint and improve throughput, but they can also reduce quality. Benchmark and evaluate the compressed model before committing to it.
+
+**Autoscaling**
+
+LLM autoscaling differs from traditional application scaling. Token-aware metrics, TTFT, ITL, queue depth, and KV cache utilization are better signals than CPU or request rate alone.
+
+**Startup optimization**
+
+Scale-to-zero is often impractical for large LLMs because model loading time is measured in minutes, not milliseconds. Pre-warmed replicas and conservative minimum replica counts can protect user experience.
+
+**Routing**
+
+Routing affects both latency and cost. Cache-aware routing can reduce duplicate prefill work, and LoRA-aware routing can place requests where the requested adapter is already available.
+
+**Advanced topologies**
+
+Disaggregated serving introduces infrastructure requirements that look closer to distributed training than ordinary stateless web serving. GPU topology, network bandwidth, and scheduler behavior become first-class design concerns.
+
+With these optimizations in place, the next operational question becomes:
+
+**How do we know the system is actually behaving as expected?**
+
+That leads naturally into LLM observability: metrics, logs, traces, and alerts that reveal whether the production setup is meeting its latency, reliability, and cost goals.
+
+#### Encode this
+
+- **Production LLM serving is a system problem, not just a model problem**
+- **evaluation, compression, benchmarking, scaling, routing, and topology are connected**
+- **token-aware signals are more useful than generic request metrics**
+- **startup time and cache locality shape both autoscaling and routing**
+- **advanced serving gains usually come with advanced operational complexity**
+
+#### Recall prompt
+
+*Which production signal would you trust more for LLM scaling: CPU utilization, request count, or token/queue/cache metrics, and why?*
+
 ### Production Mental Model
 
 A production LLM serving stack is a chain:
@@ -3068,10 +3624,12 @@ Use these prompts for fast review:
 - **OCI Registry**: Why is storing full model artifacts there different from storing metadata in a model registry?
 - **OCI**: What are the four main OCI image components?
 - **Model access**: What is the difference between download-based storage initialization and direct PVC-backed mounting?
-- **Production serving**: Why do model evaluation, compression, benchmarking, runtime tuning, autoscaling, and startup time need to be treated as one connected system?
+- **Production serving**: Why do model evaluation, compression, benchmarking, runtime tuning, autoscaling, startup time, routing, and disaggregated topology need to be treated as one connected system?
+- **LLM-aware routing**: Why is round robin often weak for LLM replicas?
+- **Disaggregated serving**: Why do distributed KV cache and disaggregated prefill require high-bandwidth networking?
 
 ### One-sentence compression
 
-**KServe operationalizes model serving on Kubernetes, registries operationalize model discovery and governance, OCI-style artifacts improve model distribution, storage access strategy determines how efficiently models reach serving pods, and production LLM serving depends on token-aware evaluation, tuning, scaling, and startup optimization.**
+**KServe operationalizes model serving on Kubernetes, registries operationalize model discovery and governance, OCI-style artifacts improve model distribution, storage access strategy determines how efficiently models reach serving pods, and production LLM serving depends on token-aware evaluation, tuning, scaling, startup optimization, routing, and topology design.**
 
 [Back to Contents](#contents)
