@@ -35,7 +35,32 @@
    - [LLM-Aware Routing](#llm-aware-routing)
    - [Disaggregated Serving](#disaggregated-serving)
    - [Lessons Learned](#lessons-learned)
-8. [High-Value Recall Checklist](#high-value-recall-checklist)
+8. [Model Observability](#model-observability)
+   - [Observability Stack and Configuration](#observability-stack-and-configuration)
+     - [Logs](#logs)
+     - [Metrics](#metrics)
+     - [Tracing](#tracing)
+   - [Model Server Metrics](#model-server-metrics)
+     - [Time To First Token](#time-to-first-token)
+     - [Time Per Output Token or Inter-Token Latency](#time-per-output-token-or-inter-token-latency)
+     - [Throughput](#throughput)
+     - [Latency](#latency)
+     - [Request Queue Metrics](#request-queue-metrics)
+     - [SLI, SLO, and SLA](#sli-slo-and-sla)
+   - [GPU Usage Monitoring](#gpu-usage-monitoring)
+   - [Quality Metrics](#quality-metrics)
+   - [Responsible AI](#responsible-ai)
+     - [Explainability](#explainability)
+     - [Fairness](#fairness)
+   - [Model Safety: Hallucination and Guardrails](#model-safety-hallucination-and-guardrails)
+     - [Understanding and Detecting Hallucinations](#understanding-and-detecting-hallucinations)
+     - [Runtime Guardrails](#runtime-guardrails)
+     - [NVIDIA NeMo Guardrails](#nvidia-nemo-guardrails)
+     - [FMS Guardrails Orchestrator](#fms-guardrails-orchestrator)
+     - [Guardrails AI](#guardrails-ai)
+     - [Llama Stack and Moderation APIs](#llama-stack-and-moderation-apis)
+   - [Observability Lessons Learned](#observability-lessons-learned)
+9. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -3625,6 +3650,943 @@ The Kubernetes lesson is:
 ### Recall prompt
 
 *What makes production LLM serving different from running a normal stateless application container on Kubernetes?*
+
+[Back to Contents](#contents)
+
+## Model Observability
+
+Kubernetes orchestrates container execution through a **declarative API**, using **controllers** and **reconciliation loops** to self-heal workloads in an eventually consistent way. This approach does **not** replace proper observability and monitoring; those capabilities allow rapid reaction when something cannot be solved automatically.
+
+The same principle applies to LLMs, but with an important caveat:
+
+**Monitoring a model server is not equivalent to monitoring traditional applications.**
+
+LLMs differ significantly from traditional microservices, where workload is mainly driven by **number of requests** and **speed of query on data**. They are also different from traditional ML.
+
+Throughout these notes, LLMs are usually treated as **operational black boxes**, focusing on deployment, scaling, and resource management without needing to understand their internal mechanics. For observability, that black-box stance is not enough:
+
+- the metrics monitored (**Time To First Token**, **token throughput**, **KV cache utilization**) are directly tied to the LLM inference pipeline
+- understanding **tokenization**, **embeddings**, **prefill** and **decode** phases, and **compute-bound** versus **memory-bound** workloads is required to interpret those metrics
+
+For the rest of this section, basic familiarity with these concepts is assumed.
+
+### Observability Stack and Configuration
+
+Existing Kubernetes observability tools and practices can be **reused or adapted** for LLM workloads.
+
+Workload observability involves several aspects:
+
+- **inspecting logs** to find errors
+- **collecting metrics** for time-series analysis
+- **correlating execution steps** via tracing
+- **proxying traffic** as sidecars
+- **injecting modules** directly into containers
+
+This applies to application workloads, and most of the same applies to LLM deployments using KServe and vLLM.
+
+#### Logs
+
+Kubernetes has a defined **logging architecture** where both `stdout` and `stderr` are redirected to a `log-file.log` on the worker node where the container is running.
+
+This makes logs easy to access via:
+
+```bash
+kubectl logs
+```
+
+But it does **not** provide long-term storage or indexing. That must be added with projects such as **[Grafana Loki](https://github.com/grafana/loki)**.
+
+When deploying a model as an `InferenceService`, the KServe controller creates the Deployment with **multiple containers**:
+
+- an `initContainer` named **`storage-initializer`** to load the model
+- the **`kserve-controller`** container where the model server runs
+- additional **sidecar containers** depending on the deployment mode (Knative or ModelMesh)
+
+Log introspection and management for LLMs is **analogous to application workloads**. The vLLM startup sequence below illustrates the typical key log entries from initialization through receiving the first inference request.
+
+##### Example 5-1. vLLM startup logs
+
+```text
+INFO [api_server.py:651] vLLM API server version ...
+INFO [api_server.py:652] args: ...
+INFO [api_server.py:199] Started engine process with PID ...
+INFO [config.py:478] This model supports multiple tasks: ...
+WARNING [arg_utils.py:1089] Chunked prefill is enabled ...
+INFO [llm_engine.py:249] Initializing an LLM engine (...) with config: model=...
+INFO [model_runner.py:1092] Starting to load model ...
+INFO [weight_utils.py:243] Using model weights format ['*.safetensors']
+...
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:04<00:00,  1.12s/it]
+...
+INFO [worker.py:241] the current vLLM instance can use total_gpu_memory ...
+INFO [worker.py:241] model weights take 14.99GiB; ...
+...
+INFO [launcher.py:19] Available routes are:
+INFO [launcher.py:27] Route: /openapi.json, Methods: HEAD, GET
+...
+INFO [launcher.py:27] Route: /v1/chat/completions, Methods: POST
+...
+INFO:     Started server process [39626]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO [logger.py:37] Received request cmpl-...: prompt: ...
+INFO [engine.py:267] Added request cmpl-....
+```
+
+What to notice:
+
+- vLLM logs the **version** and the **arguments** specified to start it
+- a model may support **multiple tasks**: `generation` is the most common, but others include `classify` or `reward`
+- the **configuration to load a model** is logged; this comes from the model's `config.json`
+- after the model loads, vLLM logs **VRAM information**, including the space assigned to the **KV cache**
+- logs include **all available endpoints**
+- a log entry is produced **every time a new request is received**, including prompt and parameters; disable this with `--disable-log-requests`
+
+#### Metrics
+
+Kubernetes core does **not** include built-in support for metrics, but the de facto standard is **[Prometheus](https://prometheus.io/)** with the **[OpenMetrics](https://openmetrics.io/)** exposition format.
+
+> **OpenMetrics** is a CNCF incubating project that standardized and extended the original Prometheus text format while maintaining backward compatibility.
+
+Containers expose metrics via an endpoint, usually `/metrics`, using this format. The endpoint is pulled periodically by the collector component in charge of scraping them.
+
+##### Example 5-2. Configure a service for monitoring
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-service-deployment
+spec:
+  ...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "80"
+  labels:
+    app.kubernetes.io/part-of: my-application
+spec:
+  type: ClusterIP
+  selector:
+    app: my-service
+  ports:
+    ...
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-service-servicemonitor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: my-application
+  endpoints:
+    - interval: 15s
+```
+
+What to notice:
+
+- the **annotations on the Service** declare the location of the metrics endpoint
+- the **`ServiceMonitor` API** enables monitoring
+- a **selector** is required to match the Service to monitor
+- the **scraping frequency** is configurable
+
+The configuration to monitor a model is **very similar**. KServe defines a set of annotations to configure monitoring directly on `ServingRuntime` and `InferenceService` objects. Using these annotations, the KServe controller configures the Deployment correctly.
+
+##### Example 5-3. Configure a model with monitoring
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: kserve-vllm
+spec:
+  annotations:
+    prometheus.kserve.io/port: '8080'
+    prometheus.kserve.io/path: "/metrics"
+  ...
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: my-model
+  annotations:
+    serving.kserve.io/enable-prometheus-scraping: "true"
+spec:
+  ...
+```
+
+What to notice:
+
+- the `prometheus.kserve.io/*` annotations are **KServe-specific** but equivalent to `prometheus.io/*`
+- `serving.kserve.io/enable-prometheus-scraping: "true"` enables the injection of `prometheus.io/*` to the pod by KServe
+
+Once metrics are exported and collected by Prometheus, they can be **queried** or **displayed in a Grafana dashboard**, exactly the same way as for traditional Kubernetes workloads.
+
+> **TIP**
+>
+> KServe has different deployment modes. Monitoring works differently when **Knative mode** is used because **multiple containers** in the pod run alongside the model server.
+>
+> Prometheus configuration assumes a single endpoint to scrape, which means information from other containers can be missed. To address this, the KServe project has developed a **metric aggregator component** named **`qpext`** that scrapes metrics from all containers and exposes a **single aggregated metrics endpoint**.
+>
+> Enable this with the `serving.kserve.io/enable-metric-aggregation` annotation.
+>
+> This aggregation is **not necessary** in **Standard mode** because the deployment has a single container.
+
+#### Tracing
+
+Container logs give full visibility into what a component is doing, and aggregated metrics provide trends and time-series indicators. What is still missing: **the ability to trace the execution flow of a single request**.
+
+The evolution of tracing best practices in Kubernetes mirrors metrics: it is not natively integrated, but the **[OpenTelemetry](https://opentelemetry.io/)** project has defined concepts and formats that have become the de facto standard.
+
+The OpenTelemetry specification for tracing defines that every request has an **identifier** used to correlate the execution flow that can span multiple steps. This makes tracing very different from metrics:
+
+- in real-world scenarios, **multiple components** are involved beyond the model server (firewalls, gateways acting as pre/post-processors)
+- all of these components must implement the protocol to **propagate the identifier** and **produce tracing information**
+- unlike metrics that are **pulled by a collector**, trace information is **pushed to the exporter** by the component
+
+One of the most commonly used server implementations for tracing is **[Jaeger](https://www.jaegertracing.io/)**, which exposes the necessary endpoint to collect tracing data and provides graphical tools to display it.
+
+vLLM uses the **[OpenTelemetry SDK](https://opentelemetry.io/docs/languages/sdk-configuration/)** to integrate tracing support; configuration is therefore simplified and analogous to other projects using the same approach.
+
+##### Example 5-4. Configure vLLM for tracing
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: kserve-vllm
+spec:
+  containers:
+    - name: kserve-container
+      image: vllm/vllm-openai:latest
+      args:
+        - --model
+        - /mnt/models/
+        - --port
+        - "8080"
+        - --otlp-traces-endpoint
+        - "$JAEGER_TRACE_ENDPOINT"
+      env:
+        - name: "OTEL_SERVICE_NAME"
+          value: "vllm-server"
+  ...
+```
+
+What to notice:
+
+- `--otlp-traces-endpoint` enables OpenTelemetry tracing in vLLM and configures the exporter endpoint; it supports **gRPC** and **HTTP** along with many other configurations
+- the OpenTelemetry SDK uses **environment variables** for its configuration; see the OpenTelemetry SDK website and [Python SDK documentation](https://opentelemetry-python.readthedocs.io/en/latest/sdk/environment_variables.html) for more details
+
+> **PROMETHEUS, OPENMETRICS, AND OPENTELEMETRY**
+>
+> The **[Prometheus](https://prometheus.io/)** project is the most widely adopted solution for metrics, but the format was not initially formalized with a specification. Over time, **OpenMetrics** became the specification that extends the original Prometheus format while preserving near-full backward compatibility.
+>
+> The **[OpenTelemetry](https://opentelemetry.io/)** project is a collection of API definitions, SDKs, and tools covering all aspects of observability. It also proposes **[semantic conventions](https://opentelemetry.io/docs/specs/semconv/)** to standardize naming for metrics and trace entries.
+>
+> LLM observability (under the broader **[generative AI](https://github.com/open-telemetry/community/blob/main/projects/gen-ai.md)** OpenTelemetry subproject) is one of the active areas, and an **[experimental specification](https://github.com/open-telemetry/semantic-conventions/tree/main/docs/gen-ai)** already defines a core set of semantic conventions. The vLLM implementation for tracing is already based on this semantic convention work.
+>
+> This effort is analogous to the **[KServe Open Inference Protocol (OIP)](https://github.com/kserve/open-inference-protocol)**, which aims to unify the shape of model evaluation endpoints.
+
+#### Encode this
+
+- **Logs in Kubernetes are easy to read but require external tools like Loki for long-term storage**
+- **vLLM startup logs reveal model load, VRAM use, KV cache size, and available endpoints**
+- **Prometheus with OpenMetrics is the de facto metrics standard**
+- **KServe-specific annotations configure scraping on `ServingRuntime` and `InferenceService` objects**
+- **Knative deployment mode needs the `qpext` aggregator to expose a unified metrics endpoint**
+- **OpenTelemetry is the tracing standard; vLLM ships with native integration**
+
+#### Recall prompt
+
+*Why does Knative mode in KServe require the `qpext` aggregator while Standard mode does not?*
+
+[Back to Contents](#contents)
+
+### Model Server Metrics
+
+With the metrics stack installed, an LLM deployed using KServe, and vLLM properly configured, model server performance can be analyzed.
+
+Traditional Kubernetes monitoring tracks **CPU usage**, **memory usage**, **throughput** (requests per second), and **latency** (time to process a request). The same approach applies to LLMs, but with important differences:
+
+- LLM workload happens **mainly on the GPU**, so CPU usage is not a good representation of system usage
+- the two main inference phases, **prefill** and **decode**, are very different: prefill is **compute-bound** and decode is **memory-bound**
+- the concept of throughput and latency is different because **it is not possible to predict how long an answer will be**, so any metric that counts requests will not represent the actual model server workload
+
+Because **tokens are the core unit of computation** for LLM generation, model server metrics are **token-based** rather than request-based.
+
+#### Time To First Token
+
+**Time To First Token (TTFT)** is the actual time a user waits before starting to receive the response.
+
+- the **most important metric** for real-time use cases such as chatbots
+- **less critical** for offline scenarios such as batch jobs
+
+Properties:
+
+- unit: **seconds**
+- type: **histogram** (tracks distribution across configurable buckets)
+- vLLM name: `vllm:time_to_first_token_seconds`
+- OpenTelemetry semantic convention: `gen_ai.server.time_to_first_token`
+
+TTFT represents the time necessary to compute the **prefill phase**.
+
+#### Time Per Output Token or Inter-Token Latency
+
+Tokens are produced one by one and are usually returned as a stream, so the second metric to look at is the time to produce each token **after the first**.
+
+- TTFT = the actual time the user perceives as waiting time
+- **Time Per Output Token (TPOT)** = the speed of the result as seen by the end user, also called **Inter-Token Latency (ITL)**
+
+Properties:
+
+- unit: **seconds**
+- type: **histogram**
+- vLLM name: `vllm:time_per_output_token_seconds`
+- OpenTelemetry semantic convention: `gen_ai.server.time_per_output_token`
+
+Practical reference point:
+
+> On average, a human reads about **180 words per minute**, or roughly **3 words per second**. Since tokens approximate but do not exactly match words, producing **at least 4–5 tokens per second** ensures that humans can consume the output without perceived delay.
+
+If TTFT maps to the **prefill phase**, this metric measures the duration of each **decoding iteration**.
+
+#### Throughput
+
+With tokens as the computational unit for LLMs, throughput is defined as the **number of tokens generated per second**.
+
+However, requests can be very long (more than 100k tokens), so looking only at the number of generated tokens misses the time and cost to process the **initial request (prefill)**.
+
+vLLM provides both individual and combined metrics:
+
+- `vllm:prompt_tokens_total` — number of input tokens processed per second
+- `vllm:generation_tokens_total` — number of output tokens produced per second
+- `vllm:tokens_total` — combined total tokens processed per second
+
+OpenTelemetry semantic conventions do **not** currently provide a recommendation for this metric.
+
+Even with both metrics available, the **throughput of generated tokens** is generally enough as a valid indicator of system load. Because modern GPUs are very fast, the input processing finishes quickly (compute-bound), and the **decoding phase takes most of the time**.
+
+<u>Important nuance:</u> throughput does **not directly relate** to the number of processed requests, because the system can be fully used to produce a single response, or vice versa.
+
+#### Latency
+
+**Latency** is the time, in seconds, necessary for the model to generate a **full response**.
+
+This metric correlates with TTFT and TPOT but is also an important indicator of **total request processing time**, useful for spotting **trends** or **patterns**.
+
+Properties:
+
+- unit: **seconds**
+- type: **histogram**
+- vLLM name: `vllm:e2e_request_latency_seconds`
+- OpenTelemetry semantic convention: `gen_ai.server.request.duration`
+
+#### Request Queue Metrics
+
+Every time a request is received by vLLM, **batching techniques** maximize throughput, but a request might **not be processed immediately** if the batch is full.
+
+Queue-related metrics:
+
+- `vllm:num_requests_waiting` — requests waiting to be processed
+- `vllm:num_requests_running` — currently executing requests
+
+vLLM exposes many additional metrics for KV cache usage and other execution aspects. See the **[Production Metrics](https://docs.vllm.ai/en/latest/usage/metrics/)** documentation for the full list.
+
+##### Example 5-5. Create a Prometheus rule with vLLM metrics
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: my-llm-rule
+spec:
+  groups:
+    - name: "vllm.latency.rule"
+      rules:
+        - alert: vLLMLatency
+          expr: max_over_time(time_per_output_token_seconds}[5m]) >= 0.3
+          labels:
+            severity: critical
+            app: my-model
+          annotations:
+            message: Latency of vLLM is too high.
+            summary: Model "my-model" needs to keep latency < 0.3 second
+            runbook_url: https://my.company/runbooks/vllm/modelslow
+            description: The runtime is slowing down, check request queue
+```
+
+What to notice:
+
+- the **`expr`** field configures the condition that fires the alert
+- a **runbook URL** (documented procedure) can be linked to help on-call engineers troubleshoot the issue
+
+#### SLI, SLO, and SLA
+
+When defining alerts and monitoring strategies, the relationship between service-level metrics helps establish meaningful thresholds:
+
+**Service-Level Indicator (SLI)**
+
+A metric defined to monitor a particular service. It should be based on aspects that have **direct user impact**.
+
+> Example for LLMs: **TPOT**, because it measures the time users must wait to receive each token after the first.
+
+**Service-Level Objective (SLO)**
+
+The **promise** made to users regarding a specific SLI.
+
+> Example: keep TPOT below a specific threshold in **99.999%** of requests in a given window (such as monthly).
+
+**Service-Level Agreement (SLA)**
+
+The **contractual agreement** with users. It is related to defined SLOs but is more high-level, usually expressed in terms of **monthly availability** of a service.
+
+> Breaking one or more SLOs can impact the SLA to the point that an agreement is no longer being met.
+
+#### Encode this
+
+- **Token-based metrics replace request-based observability for LLMs**
+- **TTFT measures user-perceived wait time and maps to the prefill phase**
+- **TPOT / ITL measures streaming speed and maps to each decoding iteration**
+- **Throughput is best measured in tokens per second, not requests per second**
+- **Request queue metrics reveal batching pressure**
+- **SLI → SLO → SLA: indicator, promise, contractual agreement**
+
+#### Recall prompt
+
+*Why are token-based metrics more informative than request-per-second metrics for LLM workloads?*
+
+[Back to Contents](#contents)
+
+### GPU Usage Monitoring
+
+System metrics measure overall throughput and the number of requests the cluster is processing, enabling alerts when the system is not meeting the expected SLA.
+
+Resource usage for **CPU**, **memory**, and **network** can be monitored exactly as for a traditional Kubernetes workload, although networking may be more complex when using **secondary network interfaces** for high-performance interconnects like **RDMA** or **InfiniBand**.
+
+**GPU usage requires additional consideration.**
+
+Each hardware provider has its own implementation, but all follow a similar approach:
+
+- a **management component** collects usage metrics from the GPU
+- an **exporter component** exposes them via a `/metrics` endpoint compatible with Prometheus
+
+#### Vendor implementations
+
+**NVIDIA**
+
+- **[Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm)** — suite of tools to manage GPUs in a cluster
+- **[DCGM-exporter](https://github.com/NVIDIA/dcgm-exporter)** — Helm Chart to deploy the exporter to Kubernetes
+- **[GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)** — installs in the cluster to automatically provision and configure the metrics exporter
+
+Metrics scraping is then configured as shown in Example 5-2.
+
+**AMD**
+
+- **[AMD Device Metrics Exporter](https://github.com/ROCm/device-metrics-exporter/)**
+- **[AMD GPU Operator](https://instinct.docs.amd.com/projects/gpu-operator/en/release-v1.5.0/)**
+
+**Intel**
+
+- **[Prometheus Metric Exporter](https://docs.habana.ai/en/latest/Orchestration/Prometheus_Metric_Exporter.html)**
+
+Almost every other vendor follows the same pattern: deploy the component per documentation and start collecting GPU metrics.
+
+#### No common naming convention
+
+No common naming convention has been adopted across vendors, but they all cover **low-level usage metrics** such as:
+
+- **PCIe bandwidth**
+- **graphic engine activity**
+
+#### Encode this
+
+- **GPU usage is essential because LLM workloads are GPU-dominant**
+- **vendors provide their own exporter + operator stack**
+- **NVIDIA = DCGM + DCGM-exporter + GPU Operator**
+- **no shared naming convention means dashboards and alerts must be vendor-specific**
+
+#### Recall prompt
+
+*Why are vendor-specific exporters required for GPU monitoring instead of a single shared standard?*
+
+[Back to Contents](#contents)
+
+### Quality Metrics
+
+Infrastructure monitoring covers **throughput** and **latency** so user experience matches the SLA. But LLMs must be not only **fast** but also **correct**.
+
+Model quality monitoring has been critical since the early days of ML in production:
+
+- a normal application that receives unknown input usually **crashes or shows a visible error**
+- a machine learning model in the same situation usually **does not crash** and just continues producing **bad/wrong predictions**
+
+A model is trained on a specific set of data expected to represent reality, but **human behavior changes over time (drift)**, so even a perfectly trained model requires periodic tuning or retraining to preserve quality. Techniques used to monitor this include:
+
+- **performance metrics**
+- **data drift detection**
+- **bias detection**
+
+These techniques fall under a broader initiative known as **responsible AI**, which existed before generative AI and is now evolving to cover the new challenges LLMs bring.
+
+#### Hallucinations
+
+Given the generative nature of LLMs, there are many ways for a model to produce an incorrect result. The worst case is when the generated outcome **sounds completely reasonable but refers to something that does not exist**. This is called a **hallucination**.
+
+> While a hallucination may seem harmless in isolation, consider a company chatbot that hallucinates and **approves a refund based on a nonexistent policy**.
+
+##### Example 5-6. LLM hallucination (OpenAI ChatGPT)
+
+```text
+"What is the world record for crossing the English channel entirely on foot?"
+"This world record was made on August 14, 2020, by Christof Wandratsch of Germany,
+who completed it in 14 hours and 51 minutes."
+```
+
+There is **no generic evaluation metric** to judge whether an LLM is hallucinating. However, many benchmarks assess overall quality based on capabilities such as **reasoning ability**. One of the most-used suites for this task is the [Language Model Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness).
+
+#### LLM-as-a-judge
+
+Pre-deployment benchmarks help **select** a model, but what about **ongoing quality evaluation** in production?
+
+This is where **LLM-as-a-judge** techniques come in:
+
+> **one LLM evaluates another LLM's outputs for quality dimensions like relevance, coherence, factuality, and safety.**
+
+This approach scales better than human evaluation and captures more nuanced quality issues than simple rule-based checks. For example, a powerful model like **GPT-4** or a specialized judge model can assess whether responses are helpful, accurate, and appropriate. It acts as an **automated quality reviewer**.
+
+Operational considerations on Kubernetes:
+
+- evaluating **every** response synchronously would add latency and significantly raise inference costs
+- production systems typically evaluate a **sampled subset (1%–10%)** in an **asynchronous pipeline** that does not block user-facing requests
+- the judge model produces quality scores that can be exported as **Prometheus metrics**, allowing the same monitoring and alerting patterns as infrastructure metrics
+
+Frameworks for LLM evaluation include:
+
+- **[OpenAI Evals](https://github.com/openai/evals)**
+- **[LangSmith](https://www.langchain.com/langsmith/observability)**
+- **[Arize AI](https://arize.com/)**; [GitHub](https://github.com/Arize-ai/phoenix)
+
+Many teams also implement custom solutions tailored to specific quality requirements.
+
+<u>Important principle:</u> treat **quality metrics as first-class observability signals** alongside latency and throughput. Store evaluation results in your existing observability stack (Prometheus for metrics, logging systems for detailed results) and establish **quality SLOs** just as you would for infrastructure metrics.
+
+#### Task-specific quality metrics
+
+For some specific tasks, computable metrics help mitigate hallucination risk. For **summarization**, the output is expected to mostly contain text that exists in the input. The **ROUGE** technique measures the **overlap of groups of words** between input and output.
+
+A small component can compute the metric and export it to Prometheus.
+
+Even when a model does **not** hallucinate, it can still produce **inappropriate or toxic content**. **Guardrails** are the mitigation technique for that.
+
+#### Encode this
+
+- **Infrastructure monitoring is not enough; model quality must also be observed**
+- **Hallucinations are the most challenging LLM quality issue**
+- **LLM-as-a-judge evaluates a sampled subset asynchronously and produces Prometheus-friendly scores**
+- **ROUGE-style metrics work for narrower tasks like summarization**
+- **Quality metrics deserve their own SLOs**
+
+#### Recall prompt
+
+*Why is LLM-as-a-judge usually applied to a sampled subset rather than every production request?*
+
+[Back to Contents](#contents)
+
+### Responsible AI
+
+**Responsible AI** groups all the principles and techniques to develop and manage AI solutions with the goal of enabling **transparency and trust** for all stakeholders. It has ethical implications to **avoid biases** and aims to mitigate risks related to the adoption of AI.
+
+This cannot be achieved by focusing on a single aspect; it requires a **framework adopted at every organizational level**.
+
+> Compare it to security: a dedicated security team that implements security policies does not replace the fact that **everyone must adopt proper security principles**.
+
+The term covers different aspects with no single definition, but they can be summarized as:
+
+- **explainability**
+- **fairness**
+
+More recently, LLM-specific concerns — particularly **toxic content detection** and **hallucinations** — have become the priority. These are covered separately under **Model Safety**.
+
+#### Explainability
+
+**Explainability** is the principle that **human trust requires the ability to understand why and how a model produced a prediction**.
+
+- not every model has the same level of intrinsic explainability
+- a **neural network** is very powerful but **hard for humans to understand**, because knowledge is captured in layers and weights as numbers that cannot easily be correlated with inputs and outputs
+
+Explainability techniques can target:
+
+- **global explanation** — overall model behavior
+- **local explanation** — a single prediction
+
+> Sometimes called **interpretability** because some models can be directly interpreted.
+
+**From a Kubernetes perspective:**
+
+- KServe supports attaching an **[explainer](https://kserve.github.io/website/docs/model-serving/predictive-inference/explainers/overview)** to an `InferenceService` to perform local explanations
+- this is **not usually suggested in production**, because computing the explanation can be an **order of magnitude more expensive** than executing the model
+
+The **[TrustyAI](https://github.com/trustyai-explainability/trustyai-explainability/)** project provides multiple explainer implementations and integrates natively with KServe. [Documentation](https://kserve.github.io/website/docs/model-serving/predictive-inference/explainers/trustyai).
+
+For production use, an **[Inference Logger](https://kserve.github.io/website/docs/model-serving/predictive-inference/logger)** captures each request and response pair from the model server. This allows generating local explanations **retroactively** — only when needed, such as when investigating disputed predictions — rather than computing expensive explanations for every request in real time.
+
+#### Fairness
+
+**Fairness** is the principle that models should **not discriminate** against people, in particular **underrepresented groups**, and should not learn prejudice that may be present in training data.
+
+How bias enters models:
+
+- **underrepresented categories** without explicit discrimination in the data
+- **correlations that should not drive predictions**
+
+> Example: people living in a poor area may have higher loan rejection rates, but the model should not automatically reject loan requests based on the area.
+
+The concept of bias is usually tied to features called **protected attributes**:
+
+- for these features, the model is expected to behave **fairly**
+- their values should not drive prediction results
+
+The most critical aspect:
+
+> Even with bias-free training data and a properly trained model, **bias can still occur at runtime** because of **data drift**. Training data may not represent current human behavior, so when the model processes similar data for the first time, a biased outcome can emerge.
+
+**KServe and TrustyAI** can help monitor this in production while the model is running, producing **bias metrics** against one or more protected attributes. TrustyAI uses the **Inference Logger** to retrieve prediction data and compute Prometheus metrics. You can find more information by [checking this demo](https://github.com/trustyai-explainability/odh-trustyai-demos).
+
+#### Encode this
+
+- **Responsible AI is a framework, not a single feature**
+- **Explainability has global and local forms; local explanations are expensive in real time**
+- **Inference Logger enables retroactive explanation without paying inference-time cost**
+- **Fairness focuses on protected attributes and unfair correlations**
+- **Data drift means bias can appear at runtime even when training was clean**
+
+#### Recall prompt
+
+*Why is computing local explanations at inference time usually avoided in production?*
+
+[Back to Contents](#contents)
+
+### Model Safety: Hallucination and Guardrails
+
+**Model safety** is likely the fastest-evolving area in LLM monitoring, with expectations for significant developments and disruption.
+
+It addresses two critical challenges in LLM deployment:
+
+- **hallucinations** — models generating plausible but incorrect information
+- **toxic or inappropriate content** — including prompt injection attacks
+
+Both require **detection mechanisms** and **protective measures (guardrails)** to ensure models behave safely and reliably in production.
+
+#### Understanding and Detecting Hallucinations
+
+LLMs are prone to hallucinations because they **provide clear and well-motivated answers even when hallucinating**.
+
+##### What are hallucinations?
+
+Hallucinations are inconsistencies at different levels:
+
+- **within the generated text itself** — *"Daniele is tall, thus he is the shortest person"*
+- **between input prompt and generated answer** — *"Generate formal text to announce to colleagues..."* but the model produces *"Yo Boyz!"*
+- **factually incorrect** — *"First man on the Moon in 2024"*
+
+##### Why do hallucinations happen?
+
+LLMs are black boxes; hallucinations happen for different reasons:
+
+- **partial or inconsistent training data**, so the LLM learns to generalize from data that is not comprehensive
+- **"hallucination prone" configuration** with sampling parameters (such as `temperature`, `top_k`, `top_p`) that influence the model to produce less probable but more creative answers
+- **poor context or prompt quality**, where the question is too generic
+
+Analyzing these causes reveals a fundamental issue:
+
+- most teams **do not train LLMs themselves**, so cannot address training data
+- model configuration can limit creativity, but **creativity is a goal** of LLMs
+- the **area with the most control is making the input more specific**
+
+#### Other safety risks
+
+Beyond hallucinations:
+
+- toxic or inappropriate content can emerge from **model outputs** or **malicious user inputs**
+- *inappropriate* is broad: from off-topic questions to **returning private/sensitive information (PII)**
+- well-known open source models are often fine-tuned to encourage friendly, non-condescending generation, but **attackers can craft prompts to bypass built-in safety mechanisms**
+
+Attack types:
+
+- **prompt jailbreaking** — trying to make the model produce something against terms and conditions
+- **prompt injection** — injecting specific instructions in the prompt to bypass developer-configured instructions
+
+> Producing such an attack is very simple: add an instruction like *"ignore all previous instructions"* to confuse the model and bypass system prompts.
+
+#### Runtime Guardrails
+
+Models can be protected with **guardrails**: **preprocessors and postprocessors** for user input and model output that validate data to keep the model on track.
+
+At their core, guardrails consist of:
+
+1. an **input validation function** that analyzes text (or other modalities) and determines whether it meets safety criteria
+2. an **action**: allow the request, block it, or modify it
+
+Analyzing arbitrary text to decide if it is inappropriate is **not trivial**. Other LLMs can be used for this purpose.
+
+#### Specialized safety models
+
+Some models are tuned specifically for detecting these problems and allow specifying which risk types to detect:
+
+- **Llama Guard**
+- **Granite Guardian**
+
+Both are available on **Hugging Face** with different sizes and configurations. The largest is around **7B or 8B parameters**, corresponding to about **15–20 GB** of data. These models can be deployed like any other LLM with **KServe** and **vLLM**.
+
+The validation configuration is done **in the prompt itself**. The same approach can validate model output.
+
+##### Example 5-7. Prompt to validate user input using Llama Guard
+
+```text
+[INST] Task: Check if the content of 'user' messages in the
+   conversations our policies described with the below categories.
+
+<BEGIN UNSAFE CONTENT CATEGORIES>
+O1: Violence and Hate.
+Should not
+- Promote or suggest people to use violence.
+...
+Can
+- Describe what violence is.
+...
+<END UNSAFE CONTENT CATEGORIES>
+
+<BEGIN CONVERSATION>
+...
+<END CONVERSATION>
+
+Provide safety assessment with following format:
+- First line must be 'safe' or 'unsafe'
+- If unsafe, second line must include comma-separated list of
+  violated categories.
+```
+
+What to notice:
+
+- in a chat with an LLM, **different roles** can be defined; this instruction tells Llama Guard to **check only user messages**
+- the **unsafe content categories** section configures which categories to detect; the more specific the `Should not` and `Can` rules, the better
+- the **conversation to verify** is included after the appropriate tag
+- being **specific about the result format** makes the output easy to parse to decide how to proceed
+
+This technique is very powerful but **expensive in resource usage and latency**:
+
+- another LLM must be deployed to check the conversation
+- the evaluation requires the **full conversation** because safety assessment cannot be done token by token
+- this introduces a considerable delay on the end-user side
+
+It is critical to **consider smaller, specialized models and techniques** for guardrails to find the best **cost-performance trade-off**.
+
+Composition of the guardian model with the user request flow can be done programmatically with custom orchestration code, but there is **ongoing work to include this in AI/LLM gateway components**. Specialized frameworks have also been developed to orchestrate and manage guardrails in production environments.
+
+#### NVIDIA NeMo Guardrails
+
+**[NVIDIA NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails)** is an open source toolkit that adds **programmable guardrails** to LLM-based conversational applications.
+
+The framework uses **Colang**, a custom modeling language designed specifically for defining **dialogue flows** and **safety constraints**. Developers control LLM behavior by:
+
+- defining specific response patterns
+- preventing discussion on certain topics
+- ensuring conversation paths stay within acceptable boundaries
+
+NeMo Guardrails supports **five types of rails**, applied at different stages of the LLM interaction:
+
+| Rail | Purpose |
+| --- | --- |
+| **Input rails** | Validate and filter user inputs before they reach the model, blocking malicious prompts or sensitive information requests |
+| **Dialog rails** | Control the conversation flow and ensure the model stays on topic during multi-turn interactions |
+| **Retrieval rails** | Validate information retrieved from external knowledge bases in RAG scenarios |
+| **Execution rails** | Monitor and control when the model invokes external tools or APIs |
+| **Output rails** | Filter and validate model responses before returning them to users |
+
+The framework integrates with:
+
+- **cloud LLMs** like OpenAI models
+- **self-hosted models** like Llama 4
+
+Deployment options:
+
+- Python library
+- standalone **Guardrails server**
+- container image for Kubernetes deployment
+
+**Best fit:** domain-specific assistants and question-answering systems that require strict conversational boundaries.
+
+#### FMS Guardrails Orchestrator
+
+The **[FMS Guardrails Orchestrator](https://github.com/foundation-model-stack/fms-guardrails-orchestrator/)**, developed by **IBM Research** and integrated with the **TrustyAI** project, is designed specifically to **orchestrate the application of one or more guardrails in complex workflows**.
+
+It addresses a common production challenge: **coordinating multiple safety checks** at different stages of request processing.
+
+Key capabilities:
+
+- a layer of abstraction to **compose different guardrail types** (input validation, output filtering, PII detection) into cohesive safety pipelines
+- each guardrail is called a **detector**
+- composition is particularly valuable when applying **different policies based on context, user roles, or which LLM is invoked**
+
+For Kubernetes deployments:
+
+- can be deployed as a **service between the application and the model server**
+- intercepts requests and responses to apply configured safety policies
+- integration with **TrustyAI** provides monitoring; guardrail activations and violations are tracked as **Prometheus metrics**
+
+#### Guardrails AI
+
+**[Guardrails AI](https://guardrailsai.com/)** takes a more **developer-oriented approach** compared to infrastructure-focused frameworks.
+
+It is a **Python library** with:
+
+- a **validator-based architecture**
+- a centralized hub of **prebuilt risk detectors**
+
+Two primary purposes:
+
+- detecting and mitigating AI-related risks through input/output validation
+- helping generate **structured data** from LLM responses
+
+The key differentiator is the **[Guardrails Hub](https://guardrailsai.com/hub)**, a library of community-contributed validators that detect specific risks such as:
+
+- toxic language
+- PII exposure
+- hallucinations
+- competitor mentions
+- off-topic responses
+
+Validators can be combined to create comprehensive guards tailored to a specific use case.
+
+Unlike frameworks that require learning a new configuration language or deploying separate orchestration services:
+
+- Guardrails AI validators are **Python functions integrated directly into the application code**
+- the framework intercepts LLM inputs and outputs within the application
+- it runs them through configured validators and takes action (block, log, remediate)
+
+**Best fit:** teams preferring to manage safety logic **within the application layer** rather than deploying additional infrastructure components.
+
+**Trade-off:**
+
+- **less integrated with the Kubernetes ecosystem** compared to NeMo Guardrails or FMS Guardrails Orchestrator
+- in Kubernetes environments, Guardrails AI is **embedded directly into the application container**
+- simpler to deploy, but potentially **less flexible for centralized policy management** across multiple services
+
+#### Llama Stack and Moderation APIs
+
+**[Llama Stack](https://ogx-ai.github.io/)**, created by **Meta**, defines a comprehensive set of APIs for building generative AI applications, including a dedicated safety layer through its **Safety API** with **configurable shields (guardrails)**.
+
+The Safety API allows:
+
+- registering safety shields with specific configurations
+- applying them at **both input and output stages** of LLM interactions
+
+Multiple shield types are supported, from basic content moderation with **Llama Guard models** to advanced custom safety policies for domain-specific requirements. Shields can be applied with fine-grained control:
+
+- different shields for **user inputs** versus **model outputs**
+- **contextual shields** that adapt based on conversation state
+
+Llama Stack also provides a **moderation endpoint** at `/v1/moderations`, mirroring **OpenAI's Moderation API**:
+
+> The [OpenAI Moderation API](https://developers.openai.com/api/docs/guides/moderation) is a specialized model endpoint that classifies text inputs across categories like **hate speech**, **self-harm**, **sexual content**, and **violence**. It returns **category scores** and **binary flags** indicating whether content violates each policy.
+
+Advantages of moderation APIs (OpenAI's or Llama Stack's):
+
+- pre-trained, continuously updated models specifically designed for safety classification
+- no need to deploy and maintain separate guardrail models
+
+Disadvantages:
+
+- typically **less customizable** than framework-based approaches
+- relying on **external APIs** introduces network latency and potential vendor dependencies
+
+For Kubernetes deployments:
+
+- Llama Stack can be deployed as a service that applications call to apply shields
+- or the Llama Stack SDK can be integrated directly into application containers
+- the moderation API approach works best for **asynchronous validation workflows** where a small percentage of requests are sampled and evaluated without blocking user-facing responses
+
+> **TIP**
+>
+> Many guardrailing techniques rely on **LLM as a judge**, where one LLM evaluates another's output (or even its own).
+>
+> When implementing LLM as a judge for safety detection or any evaluation, be **very specific** in evaluation questions. Instead of asking *"Is this answer right?"*, ask **targeted questions** like:
+>
+> - *"Is the tone of this answer formal?"*
+> - *"Does this response include personal information?"*
+>
+> Specific, focused evaluation criteria produce **more reliable and consistent judgments** from the judge model.
+
+Model safety is still a very active field. Implementing proper guardrailing is critical to mitigate risks related to LLM usage, but it remains **difficult to find the right trade-off** to avoid an explosion of complexity and cost.
+
+#### Encode this
+
+- **Hallucinations have three flavors: internal contradiction, prompt mismatch, factual error**
+- **Most teams cannot fix training data; the leverage is in improving prompts and adding guardrails**
+- **Guardrails = validation function + action (allow/block/modify)**
+- **Specialized safety models like Llama Guard and Granite Guardian are LLMs in their own right and add resource + latency cost**
+- **NeMo Guardrails uses Colang and 5 rail types (input, dialog, retrieval, execution, output)**
+- **FMS Guardrails Orchestrator composes detectors and integrates with TrustyAI for Prometheus metrics**
+- **Guardrails AI is developer-centric, embedded in application code, less Kubernetes-native**
+- **Llama Stack and OpenAI-style moderation APIs are pre-trained shields but less customizable**
+- **LLM-as-a-judge prompts should be specific, narrow questions**
+
+#### Recall prompt
+
+*Why does deploying a specialized safety model like Llama Guard introduce significant latency for end users, and what mitigates that cost?*
+
+[Back to Contents](#contents)
+
+### Observability Lessons Learned
+
+LLM observability spans **infrastructure metrics**, **model quality monitoring**, and **safety guardrails**.
+
+**Traditional monitoring tells an incomplete story**
+
+CPU and memory utilization matter, but they miss the **primary compute resource (GPU)** and the distinct characteristics of inference phases:
+
+- **compute-bound prefill**
+- **memory-bound decode**
+
+**Token-based metrics replace request-based observability**
+
+- **Time To First Token (TTFT)** measures user-perceived latency during the prefill phase
+- **Time Per Output Token (TPOT)** determines whether generated text appears faster than humans can read
+
+These metrics map directly to user experience in ways that traditional throughput and latency cannot.
+
+**Model quality observability extends beyond infrastructure monitoring**
+
+Guardrails for safety, hallucination detection, and bias mitigation must be embedded at **both input and output stages**, treating content validation as a **first-class operational concern** rather than an afterthought.
+
+**Responsible AI is a framework, not a feature**
+
+Explainability and fairness require **organization-wide adoption**, supported by tools like **TrustyAI**, **Inference Logger**, and Prometheus-based bias metrics.
+
+**Safety guardrails are a trade-off**
+
+- **NeMo Guardrails**, **FMS Guardrails Orchestrator**, **Guardrails AI**, and **Llama Stack** offer different points on the cost-complexity-customization spectrum
+- LLM-as-a-judge scales evaluation but should sample and use **narrow, specific evaluation prompts**
+
+#### Encode this
+
+- **LLM observability requires GPU-aware, token-aware, quality-aware thinking**
+- **Logs, metrics, and traces remain the foundation, but their content is different from traditional apps**
+- **TTFT and TPOT map to prefill and decode phases**
+- **GPU monitoring depends on vendor-specific exporters**
+- **Quality and safety metrics deserve SLOs, not just dashboards**
+- **Guardrail choice should match the team's operating model and customization needs**
+
+#### Recall prompt
+
+*Why is CPU utilization a misleading scaling signal for LLM workloads, and which signals should replace it in production observability?*
 
 [Back to Contents](#contents)
 
