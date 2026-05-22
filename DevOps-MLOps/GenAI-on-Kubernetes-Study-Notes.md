@@ -2357,7 +2357,7 @@ A single operator deploys **device plug-ins**, **feature discovery**, **monitori
 
 ## Current State and Gaps in Model Portability
 
-![MLOps Portability Cover Image](assets\MLOps-Portability-Cover-Image.png)
+![MLOps Portability Cover Image](<assets\MLOps-Portability-Cover-Image.png>)
 
 Model portability is still **immature** for LLMs.
 
