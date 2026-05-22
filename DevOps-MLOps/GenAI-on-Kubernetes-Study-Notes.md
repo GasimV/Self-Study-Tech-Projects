@@ -79,7 +79,7 @@ Focus on:
 
 ## KServe
 
-**KServe** is a **CNCF project** for **model inference on Kubernetes**.
+**[KServe](https://kserve.github.io/website/)** is a **CNCF project** for **model inference on Kubernetes**.
 
 Its job is to help manage the **lifecycle**, **deployment**, and **exposure** of model-serving endpoints using Kubernetes-native patterns.
 
