@@ -3,11 +3,22 @@
 ## Contents
 
 1. [Purpose](#purpose)
-2. [KServe](#kserve)
-   - [Deployment Modes](#deployment-modes)
-   - [Core APIs](#core-apis)
-   - [From `InferenceService` to `LLMInferenceService`](#from-inferenceservice-to-llminferenceservice)
-   - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
+2. [Model Servers & Controllers](#model-servers--controllers)
+   - [Model Server](#model-server)
+   - [vLLM](#vllm)
+   - [Hugging Face Text Generation Inference (TGI)](#hugging-face-text-generation-inference-tgi)
+   - [Other Model Servers](#other-model-servers)
+     - [llama.cpp](#llamacpp)
+     - [NVIDIA NIM](#nvidia-nim)
+     - [SGLang](#sglang)
+   - [Model Server Controller](#model-server-controller)
+   - [KServe](#kserve)
+     - [Deployment Modes](#deployment-modes)
+     - [Core APIs](#core-apis)
+     - [From `InferenceService` to `LLMInferenceService`](#from-inferenceservice-to-llminferenceservice)
+     - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
+   - [Ray Serve and KubeRay](#ray-serve-and-kuberay)
+   - [Model Serving Lessons Learned](#model-serving-lessons-learned)
 3. [Kubernetes and GPUs](#kubernetes-and-gpus)
    - [GPU Discovery](#gpu-discovery)
      - [Node Feature Discovery](#node-feature-discovery)
@@ -96,13 +107,454 @@ Focus on:
 
 [Back to Contents](#contents)
 
-## KServe
+## Model Servers & Controllers
+
+Deploying a generative AI model on Kubernetes is not just running yet another container — it requires **two distinct layers**:
+
+- a **model server** (also called *serving runtime*) that loads the model into accelerators and exposes an API to clients
+- a **model server controller** that manages the lifecycle of the model server through declarative Kubernetes resources
+
+This section walks through both layers, starting with what a model server is and how the most common open source implementations differ, then moving to the controllers (**KServe**, **Ray Serve**) that orchestrate them on Kubernetes.
+
+[Back to Contents](#contents)
+
+### Model Server
+
+A **model server** (or **serving runtime**) is a component that includes one or more runtimes. It can be **distributed to use multiple GPUs simultaneously** and execute various types of models.
+
+Models are exposed via an **API (REST or gRPC)** and optimized to **maximize throughput** and **minimize latency**.
+
+![Model server architecture](<assets/Model server architecture.png>)
+
+**Figure 1-1. Model server architecture**
+
+#### Not new, but not the same as predictive AI
+
+The model-server concept is not new or specific to generative AI:
+
+- multiple existing model servers serve **traditional ML models** for tasks like classification and regression (collectively known as **predictive AI**)
+- some of them are also evolving to support generative AI
+- the **concept is the same**, but the **exposed API is very different**
+
+The API difference:
+
+- **Predictive AI** — endpoint is usually a generic `/predict` or `/infer` because the model acts as a **black-box function**
+- **Generative AI** — the API is **task-oriented** because similar models can perform different actions and modalities: text generation, summarization, classification, text-to-image, etc.
+
+> **NOTE**
+>
+> Model servers expose the AI model via an API that clients have to use. This API can be specific to a particular model server implementation, **breaking the abstraction** that the model server aims to provide because client applications should not be tied to a specific implementation.
+>
+> This problem is not new or specific to generative AI. For predictive AI, the **KServe open-inference-protocol (OIP)** defines a specification to standardize "infer" endpoints. Most model servers have adopted it, and it's now expanding to include generative AI.
+>
+> The API to invoke generative AI models is still **experimental overall** and very different based on the model type and task. **OpenAI's Chat Completions API** for chat completion is a **de facto standard** for text generation models.
+
+From a Kubernetes platform perspective, every model server is usually similar in terms of **deployment topology**. However, you should be aware of the **type of model and task** because the **scaling, hardware optimization, and metrics** to observe are **model-server specific**.
+
+> **MULTIMODAL MODELS**
+>
+> Many LLMs work with just one modality: input and output are text. **Multimodal models** can process a larger set of modalities — images, video, audio, mathematical equations, and so on.
+>
+> The main goal is to **mix modalities** to perform tasks like text-to-image (textual query → generated image). It's possible to do the opposite, or mix multiple modalities in the same query (image + text → new image or text).
+>
+> From an architecture perspective:
+>
+> - many popular image/audio generation models use **diffusion-based architectures** (like **Stable Diffusion**)
+> - others use **Transformer architectures** (like **DALL-E**, **Imagen**, and **AudioLM**)
+>
+> This category is part of generative AI but is **not LLMs**. They are widely adopted in healthcare, ecommerce, and content creation, but there is **less standardization** around them compared to text generation models. They're often integrated into specialized products like image editors and chat interfaces.
+>
+> These notes assume **LLM Transformer bases** applicable to a larger set of use cases. The model output is text, but inputs can include images and audio together with text, making them multimodal models.
+
+#### Encode this
+
+- **Model server = runtime + API + GPU optimization layer**
+- **Same concept for predictive and generative AI, different APIs**
+- **OIP standardizes `/infer`; OpenAI Chat Completions is the de facto generative-AI standard**
+- **Kubernetes deployment topology is similar across model servers; scaling and metrics are not**
+
+#### Recall prompt
+
+*Why do generative-AI APIs look different from predictive-AI APIs even though the underlying "model server" concept is the same?*
+
+[Back to Contents](#contents)
+
+### vLLM
+
+**[vLLM](https://github.com/vllm-project/vllm)** is a **Linux Foundation AI & Data project** for LLM inference and serving.
+
+The project is very active:
+
+- thousands of forks
+- hundreds of contributors
+- support for **more than fifty model architectures**
+- end-to-end optimization techniques
+- support for **multiple hardware vendors**
+
+vLLM is a library directly usable in Python, but the project also includes a **CLI** and an **OpenAI-compatible server**.
+
+#### Example 1-3. Load a model in vLLM and execute inference
+
+```python
+from vllm import LLM
+
+# Load the model
+llm = LLM(model="meta-llama/Meta-Llama-3-8B")
+# Invoke the model
+results = llm.generate("LLMs are great for")
+
+# Extract the result
+print(results[0].outputs[0].text)
+```
+
+For Kubernetes deployment, vLLM should be run in a container, making a **server** the best option. Starting the server requires **minimal configuration**, but a key difference in production is that you will likely use a **local copy of the model** rather than fetching it on the fly from Hugging Face.
+
+#### Example 1-4. Start vLLM server and invoke via `curl`
+
+```bash
+# start the server
+vllm serve \
+ --port=8080 \
+ --model=/mnt/models \
+ --served-model-name=meta-llama/Meta-Llama-3-8B
+
+# invoke the model
+curl http://localhost:8080/v1/completions \
+ -H "Content-Type: application/json" \
+ -d '{
+  "model": "meta-llama/Meta-Llama-3-8B",
+  "prompt": "LLMs are great for",
+  "max_tokens": 10,
+  "temperature": 0
+ }'
+```
+
+What to notice:
+
+- **`vllm serve`** starts the vLLM server
+- **`--model`** is the path to the directory containing the model (local to the container)
+- **`--served-model-name`** is the name of the model
+- **`max_tokens`** is the number of tokens the model should produce
+- **`temperature`** controls the randomness of the sampling; **`0` makes the generation deterministic**
+
+#### Kubernetes implications
+
+Many parameters configure how the runtime loads and executes the model, but this is **relatively transparent** from a deployment standpoint.
+
+Optimizations such as:
+
+- **PagedAttention**
+- **FlashAttention**
+- **speculative decoding**
+
+…focus on **efficient attention management** and **faster execution**. They don't impact deployment directly, but they affect **scalability and resource optimization**.
+
+> **LLM INFERENCE OPTIMIZATION**
+>
+> The optimization of LLM execution is a **rapidly evolving field** with continuous advancements. Academia and engine implementation are closely coupled in this domain.
+>
+> New optimization techniques emerge frequently, and proper evaluation requires time to assess their practical benefits.
+>
+> Key optimizations:
+>
+> - **PagedAttention** and **FlashAttention** — make self-attention faster given the **quadratic time and memory complexity** of this phase, optimizing memory management
+> - **Quantization** — reduces the floating-point size of the model weights, using multiple techniques aimed at minimizing performance loss
+> - **Model distillation** — trains a smaller **"student" model** to approximate a larger **"teacher" model's** behavior, reducing model size significantly while retaining much of the original capability
+> - **Speculative decoding** — leverages a two-model approach: a small, fast **"draft" model** predicts several tokens ahead, and the large model **verifies** those predictions in a single pass. By running the expensive large model less frequently while maintaining the same output quality, speculative decoding can improve throughput by **1.5× to 3×**, depending on how predictable the sequence is
+>
+> From an MLOps engineer perspective, **you don't need to be an expert in LLM optimization internals**. Use a model server that is actively developed with a large community so that every new optimization is included.
+>
+> The configuration of vLLM is usually limited to changing the **startup parameters** of the runtime, and the project is getting better at automatically detecting which configuration to apply based on the model — so the **default values will most likely work**.
+>
+> Some configuration (like **quantization**) affects model quality and requires tuning to find the right trade-off. This is part of model development and tuning, so at inference time you should already have the configuration as part of the deployment.
+
+<u>Important for MLOps:</u> be aware of parameters with larger implications on **parallelization and scaling**. Multinode distributed serving impacts overall topology, usually requires additional components to manage coordination, and makes the deployment **stateful**.
+
+#### Encode this
+
+- **vLLM = the most-active open source LLM server, with Python API + OpenAI-compatible server**
+- **`vllm serve --model --port --served-model-name` is the minimum to launch a production server**
+- **PagedAttention, FlashAttention, speculative decoding live inside vLLM — invisible to deployment manifests, visible in throughput**
+- **Multinode = stateful + coordinated**
+
+#### Recall prompt
+
+*Why can an MLOps engineer rely on vLLM defaults for most LLM optimizations rather than deeply tuning attention mechanisms?*
+
+[Back to Contents](#contents)
+
+### Hugging Face Text Generation Inference (TGI)
+
+The **[Hugging Face Text Generation Inference (TGI)](https://github.com/huggingface/text-generation-inference)** is an open source model server created to serve text generation models and used to power Hugging Face's product offering.
+
+Hugging Face is the most active community where you can share generative AI models (base or fine-tuned), datasets, and libraries. Many widely used libraries — **`transformers`**, **`peft`**, **`diffusers`** — are incubated in this community.
+
+#### Multi-backend support
+
+TGI supports **multiple inference backends**, allowing you to choose the most appropriate backend for your hardware and performance requirements while maintaining a **consistent API**. Supported backends:
+
+- **TGI's native CUDA backend** (optimized for NVIDIA GPUs)
+- **NVIDIA TensorRT-LLM**
+- **`llama.cpp`** (for CPU deployment)
+- **AWS Neuron** (for AWS **Trainium** and **Inferentia** chips)
+
+Multi-backend support is an **emerging trend** in model servers, with projects like **Triton** and **TGI** adopting this approach to provide flexibility in deployment options.
+
+<u>Trade-off:</u> while backends are exposed through a **unified API** (such as OpenAI-compatible endpoints), the **configuration parameters and tuning options vary significantly across backends**. This can complicate optimization and debugging when switching between backends or fine-tuning performance.
+
+#### Example 1-5. Start the TGI server with native and OpenAI APIs
+
+```bash
+# start the server
+text-generation-launcher \
+ --port 8080 \
+ --model-id /mnt/models
+
+# invoke the model using TGI API
+ curl localhost:8080/generate_stream \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d '{"inputs":"LLMs are great for",
+     "parameters":{"max_new_tokens":10}
+     }'
+
+# invoke the model using OpenAI-compatible API
+curl localhost:3000/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d '{
+  "model": "tgi",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "role": "user",
+      "content": "LLMs are great for"
+    }
+  ],
+  "max_tokens": 10
+}'
+```
+
+What to notice:
+
+- **`text-generation-launcher`** is the launcher command
+- **`--model-id`** points to the directory containing the model (local to the container)
+- **`/generate_stream`** is TGI's **original API** to invoke the model
+- **`/v1/chat/completions`** is TGI's **OpenAI-compatible API**
+- the **`system`** role defines the **role of the model** — one of the most common categories of fine-tuned models is **"instruct" models**, designed to follow human instructions
+
+The comments about parameters and their implications for Kubernetes apply to TGI as well.
+
+#### Encode this
+
+- **TGI = Hugging Face's model server, with multi-backend support (CUDA, TensorRT-LLM, llama.cpp, AWS Neuron)**
+- **Multi-backend = unified API + non-unified tuning**
+- **TGI exposes both its own `generate_stream` API and an OpenAI-compatible API**
+- **Instruct models use a `system` role to define model behavior**
+
+#### Recall prompt
+
+*What is the trade-off of TGI's multi-backend architecture compared with a single-backend model server like vLLM?*
+
+[Back to Contents](#contents)
+
+### Other Model Servers
+
+While vLLM and TGI are commonly used open source model servers for LLMs, other implementations deserve consideration for **specific deployment scenarios** and **hardware configurations**.
+
+#### `llama.cpp`
+
+**[`llama.cpp`](https://github.com/ggerganov/llama.cpp)** is a **C++ implementation** that runs Llama models.
+
+History and evolution:
+
+- originally created as a full **re-implementation of the Transformer architecture in C++** specifically for Llama models
+- evolved to support a variety of other models
+- focus has been on **efficiency**, making it the recommended option for running similar models **locally on a laptop**
+
+It still requires a powerful machine but is widely used by projects such as:
+
+- **Ollama**
+- **Ramalama**
+- **LM Studio**
+
+While it is not designed for large-scale production deployments with high concurrency, `llama.cpp` **excels in resource-constrained environments**. An active community continues to port optimizations and techniques from other model servers to C++, making `llama.cpp` increasingly powerful for **edge scenarios** such as on-device inference and local development.
+
+One result of `llama.cpp`'s development is the creation of the **GGUF file format**, which other libraries have now adopted.
+
+In addition to the core library, there is a Python server that exposes an **OpenAI-compatible API** similar to other model servers.
+
+##### Example 1-6. Start the `llama.cpp` Python server
+
+```bash
+python -m llama_cpp.server \
+ --model /mnt/models
+```
+
+What to notice:
+
+- **`python -m llama_cpp.server`** starts the `llama.cpp` server
+- **`--model`** is the location of the model (local to the container)
+
+> **TIP — Running quantized LLMs locally**
+>
+> Assuming you have a powerful machine with at least **24 GB of memory**, but **even without a GPU**, running quantized LLMs locally is remarkably straightforward using tools built on top of `llama.cpp`.
+>
+> **Ollama** provides a simple CLI interface to download and run models with a single command:
+>
+> ```bash
+> ollama run llama3.2:3b
+> ```
+>
+> **Ramalama** offers similar simplicity with support for multiple model registries and container runtimes:
+>
+> ```bash
+> ramalama run llama3.2:3b
+> ```
+>
+> Both tools use `llama.cpp` behind the scenes and expose an **OpenAI-compatible API** for inference.
+>
+> - **Ramalama** provides **stronger isolation** through container-based execution
+> - **Ollama** offers a **more polished developer experience** with easier model management
+>
+> Both are ideal for **local development, experimentation, and prototyping** before deploying to production Kubernetes clusters.
+
+#### NVIDIA NIM
+
+NVIDIA is the leading provider of GPUs for AI and also provides the necessary software to train and serve models. **NVIDIA NIM** is a solution designed for Kubernetes to **simplify the deployment and optimization** of an LLM on NVIDIA hardware.
+
+It takes a different approach with a **curated container image per model family**, where models are directly tested and published by NVIDIA. Supported models (like **Llama** and **Mistral**) are listed in the NVIDIA documentation.
+
+This approach aims to simplify the deployment configuration by providing **pre-optimized model profiles**.
+
+##### Multi-backend support and selection
+
+Similar to TGI, NVIDIA NIM supports multiple inference backends:
+
+- **TensorRT-LLM** (an open source library for optimizing LLM inference on NVIDIA GPUs)
+- **vLLM**
+- **SGLang**
+
+NIM **automatically selects** the optimal backend based on available model profiles for the detected GPU hardware, with a **preference order**:
+
+```text
+TensorRT-LLM > vLLM > SGLang
+```
+
+The selection is automatic based on the availability of pre-optimized TensorRT engines and other parameters. This **hardware-aware backend selection** allows users to benefit from the most suitable inference engine **without manual configuration**.
+
+##### Opinionated design features
+
+Beyond backend selection, NVIDIA NIM stands out due to its **opinionated design**:
+
+- **Local caching of the model** — supported by a **`PersistentVolume`**, aiming to simplify and speed up one of the major pain points of model serving for LLMs: **loading time**. The model is downloaded only once; subsequent replica creations or restarts **do not trigger another download**
+- **Hardware optimization** — NVIDIA NIM can **detect available accelerators**, select the most suitable **model variant** for the configuration, and **adjust the model server settings accordingly**
+
+![NVIDIA NIM architecture](<assets/NVIDIA NIM architecture.png>)
+
+**Figure 1-2. NVIDIA NIM architecture**
+
+#### SGLang
+
+**[SGLang](https://github.com/sgl-project/sglang)** is an open source **high-performance serving framework** for large language models and vision-language models, designed to deliver **low-latency, high-throughput inference**.
+
+The project has gained significant industry adoption and is notable for its **advanced optimization techniques**.
+
+Many performance improvements have been driven by the SGLang project, for example:
+
+- **RadixAttention** — a sophisticated caching mechanism that stores **key-value (KV) caches in a radix tree structure**. This enables **efficient prefix search and cache reuse** across requests, particularly beneficial for:
+  - workloads with **common prompt prefixes**
+  - **multiturn conversations** where previous context can be reused
+- **continuous batching**
+- **speculative decoding**
+- various **quantization techniques**
+
+Like vLLM and TGI, SGLang exposes an **OpenAI-compatible API** and supports most LLM model architectures.
+
+##### Example 1-7. Start an SGLang server
+
+```bash
+python -m sglang.launch_server \
+ --model-path /mnt/models \
+ --port 8080
+```
+
+What to notice:
+
+- **`python -m sglang.launch_server`** launches the SGLang server
+- **`--model-path`** is the path to the model directory (local to the container)
+
+**Best fit:** scenarios requiring **high cache hit rates**, such as **agents** making multiple calls with similar contexts, or applications with **structured prompts** where prefix reuse is common.
+
+#### Encode this
+
+- **`llama.cpp` = C++ efficiency, ideal for laptops and edge; the origin of the GGUF format**
+- **Ollama and Ramalama wrap `llama.cpp` for one-command local model running**
+- **NVIDIA NIM = curated container per model family, with auto-selected backend (TensorRT-LLM > vLLM > SGLang) and PV-backed model caching**
+- **SGLang = high-performance server known for RadixAttention prefix caching, great for agents and multiturn chats**
+
+#### Recall prompt
+
+*Which model server would you reach for first when serving an agent workflow that reuses long shared prompt prefixes, and why?*
+
+[Back to Contents](#contents)
+
+### Model Server Controller
+
+Deploying models to Kubernetes manually requires managing numerous resources:
+
+- **Deployments**
+- **`PersistentVolumeClaim`**s
+- **GPU configurations**
+- **tolerations**
+- **model-specific parameters**
+
+**Model server controllers** simplify this complexity by providing **higher-level abstractions** through **CustomResourceDefinitions (CRDs)**.
+
+Instead of manually crafting deployment manifests and coordinating multiple Kubernetes resources, controllers allow you to **declare your intent at a higher level**. The CRD approach also provides **centralized status information**, making it easier to **monitor the health and state** of model deployments.
+
+![Model server controller architecture](<assets/Model server controller architecture.png>)
+
+**Figure 1-3. Model server controller architecture**
+
+#### Container image gotcha
+
+Each model server usually provides container images so that you do not need to build them. At the same time, **picking the right container image is not straightforward**:
+
+- each accelerator has different drivers and frameworks (e.g., NVIDIA with **CUDA**, AMD with **ROCm**, etc.)
+- you must **pay attention to this aspect**
+
+This concern is similar to **multiarchitecture containers**, where you can easily select the architecture (e.g., **ARM64** or **i386**) and get the appropriate container version. However, for **accelerators**, the process is still **quite manual**.
+
+For more on how Kubernetes manages GPU and accelerator access through device plug-ins, see [Kubernetes and GPUs](#kubernetes-and-gpus).
+
+The two main controller approaches in this space:
+
+- **KServe** — Kubernetes-native
+- **Ray Serve** (via **KubeRay**) — Python-first
+
+#### Encode this
+
+- **Controllers = CRDs + Kubernetes controllers that orchestrate model servers declaratively**
+- **They turn "build a manifest for each piece" into "declare intent"**
+- **Accelerator-aware container image selection remains manual (no auto-architecture matrix yet)**
+
+#### Recall prompt
+
+*What problem does a model server controller solve that a vanilla Kubernetes Deployment cannot?*
+
+[Back to Contents](#contents)
+
+### KServe
 
 **[KServe](https://kserve.github.io/website/)** is a **CNCF project** for **model inference on Kubernetes**.
 
 Its job is to help manage the **lifecycle**, **deployment**, and **exposure** of model-serving endpoints using Kubernetes-native patterns.
 
-### What KServe gives you
+#### What KServe gives you
 
 - **Scalability**
 - **Routing**
@@ -110,7 +562,7 @@ Its job is to help manage the **lifecycle**, **deployment**, and **exposure** of
 - **Density packing**
 - **Declarative model serving**
 
-### Historical context
+#### Historical context
 
 - Originally created as **KfServing** in the **Kubeflow** community
 - Later became an **independent project**
@@ -118,25 +570,25 @@ Its job is to help manage the **lifecycle**, **deployment**, and **exposure** of
 - First focused on **predictive AI**
 - Later evolved to support **generative AI**
 
-### Key idea to remember
+#### Key idea to remember
 
 **KServe extends Kubernetes with custom APIs for model serving.**
 
 That means model serving becomes a **declarative Kubernetes problem**, not just an application container problem.
 
-### Encode this
+#### Encode this
 
 - **KServe = Kubernetes-native model inference platform**
 - **Predictive AI first, generative AI later**
 - **Uses CRDs to represent serving concepts declaratively**
 
-### Recall prompt
+#### Recall prompt
 
 *Why is KServe more than just "running a model in a container"?*
 
 [Back to Contents](#contents)
 
-### Deployment Modes
+#### Deployment Modes
 
 KServe supports **three deployment modes**:
 
@@ -144,7 +596,31 @@ KServe supports **three deployment modes**:
 2. **Standard**
 3. **ModelMesh**
 
-#### 1. Knative
+![KServe Standard, Knative, and LLMInferenceService deployment architecture](<assets/KServe Standard, Knative, and LLMInferenceService deployment architecture.png>)
+
+**Figure 1-4. KServe Standard, Knative, and LLMInferenceService deployment architecture**
+
+> **TIP — Renamed in KServe 0.16**
+>
+> The deployment modes have been renamed for clarity:
+>
+> - **Serverless** is now **Knative**, which reflects the underlying technology (Knative Serving)
+> - **RawDeployment** is now **Standard**, a more intuitive name for standard Kubernetes deployments
+> - **ModelMesh** remains unchanged
+>
+> Throughout these notes the new terminology is used. If you're using older KServe versions (pre 0.16), substitute "Knative" for "Serverless" and "Standard" for "RawDeployment."
+
+The **ModelMesh** deployment mode is not really applicable to generative AI: the **size and complexity** of similar models doesn't give you the option to deploy multiples of them on the same node.
+
+The **Knative** and **Standard** deployment modes are generally applicable to generative AI. However:
+
+- smaller models such as **Phi**, **Gemma**, and Llama's compact variants (sub-30B parameters) can run on consumer hardware and may benefit from **dynamic scaling**
+- larger production LLMs typically require **dedicated GPU resources** that are managed statically
+- this makes it challenging to fully use the **dynamic autoscaling advantages** of Knative mode
+
+For LLM workloads, **Standard** is the assumed default deployment mode in the rest of this section.
+
+##### 1. Knative
 
 **Knative** is the most feature-rich mode.
 
@@ -159,7 +635,7 @@ In this mode, each model becomes a **KnativeService**.
 
 **Best mental model:** KServe delegates much of the dynamic serving behavior to the Knative ecosystem.
 
-#### 2. Standard
+##### 2. Standard
 
 **Standard** is the simplest and most Kubernetes-direct mode.
 
@@ -172,7 +648,7 @@ This is usually the most practical choice for **LLM serving**, especially when G
 - `RawDeployment` was renamed to **Standard**
 - `Serverless` was renamed to **Knative**
 
-#### 3. ModelMesh
+##### 3. ModelMesh
 
 **ModelMesh** is optimized for **high-density serving** where **many models** must share cluster resources.
 
@@ -185,7 +661,7 @@ This is useful when:
 
 This is **generally not a fit for large generative AI models**, because large LLMs are too heavy to pack densely on the same nodes.
 
-#### Best practical takeaway
+##### Best practical takeaway
 
 For **modern LLM workloads**:
 
@@ -193,26 +669,26 @@ For **modern LLM workloads**:
 - **Knative** can help for smaller models and elastic patterns
 - **ModelMesh** is usually not the right match for large LLMs
 
-#### Encode this
+##### Encode this
 
 - **Knative = dynamic, feature-rich, extra stack**
 - **Standard = simple, direct, deployment-per-model**
 - **ModelMesh = many models, dense sharing**
 
-#### Recall prompt
+##### Recall prompt
 
 *Why does Standard often make more sense than Knative for production LLMs on GPUs?*
 
 [Back to Contents](#contents)
 
-### Core APIs
+#### Core APIs
 
 The two main APIs to remember are:
 
 1. **`ServingRuntime`**
 2. **`InferenceService`**
 
-#### `ServingRuntime`
+##### `ServingRuntime`
 
 A **`ServingRuntime`** is basically a **model server template**.
 
@@ -227,13 +703,13 @@ This separates **runtime configuration** from **model configuration**.
 
 There is also **`ClusterServingRuntime`**, which makes a runtime available cluster-wide.
 
-#### What to remember
+##### What to remember
 
 **`ServingRuntime` describes how to serve.**
 
 Not the specific model itself, but the **runtime environment** that can serve models.
 
-#### Example idea
+##### Example idea
 
 For vLLM, a `ServingRuntime` can define:
 
@@ -242,7 +718,40 @@ For vLLM, a `ServingRuntime` can define:
 - startup arguments like `--model` and `--port`
 - support for `pytorch` models
 
-#### `InferenceService`
+##### Example 1-10. KServe `ServingRuntime` for vLLM
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm
+spec:
+  containers:
+    - args:
+        - --model
+        - /mnt/models/
+        - --port
+        - "8080"
+      name: kserve-container
+      image: vllm/vllm-openai:latest
+      ports:
+        - containerPort: 8080
+          name: http1
+          protocol: TCP
+  multiModel: false
+  supportedModelFormats:
+    - autoSelect: true
+      name: pytorch
+```
+
+What to notice:
+
+- **`metadata.name: vllm`** — the name of this custom `ServingRuntime`. KServe includes pre-configured `ServingRuntimes` (including one named **"HuggingFace Runtime"** that uses vLLM) that can be used directly. This example defines a custom vLLM `ServingRuntime` to have **full control** over configuration and parameters
+- **`spec.containers`** — the `podSpec` where all parameters necessary to run the model server are configured
+- **`image: vllm/vllm-openai:latest`** — applying this resource will **not deploy** the model server immediately; it will make it **available within the namespace** for use
+- **`supportedModelFormats: pytorch`** — vLLM, like most model servers, uses **PyTorch** as the actual runtime, so this configuration declares that this runtime is able to serve PyTorch models
+
+##### `InferenceService`
 
 An **`InferenceService`** represents the **actual model deployment** the user wants to serve.
 
@@ -256,18 +765,54 @@ It defines:
 
 When this resource is created, KServe deploys the model server and wires the model to it.
 
-#### What to remember
+##### What to remember
 
 **`InferenceService` describes what to serve.**
 
 This is the object that points to the model and triggers actual serving.
 
-#### Useful mapping
+##### Example 1-11. `InferenceService` with Standard deployment mode
+
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: Meta-Llama-3-8B
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+      runtime: vllm
+      storageUri: pvc://llama/model
+    containers:
+      resources:
+        limits:
+          cpu: "4"
+          memory: 50Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "1"
+          memory: 50Gi
+          nvidia.com/gpu: "1"
+```
+
+What to notice:
+
+- **`serving.kserve.io/deploymentMode: Standard`** — the annotation selects the deployment mode
+- **`modelFormat.name: pytorch`** — declaring the model type allows KServe to automatically find a matching `ServingRuntime`
+- **`runtime: vllm`** — explicitly references the `ServingRuntime` by name, providing the container image and configuration for the `InferenceService`
+- **`storageUri: pvc://llama/model`** — specifies where to get the model, in this case from a **PVC local to the cluster**
+- **`containers.resources`** — for each model, it is possible to **override the resources** to match the requirements of the model
+
+##### Useful mapping
 
 - **`ServingRuntime` = server template**
 - **`InferenceService` = model serving instance**
 
-#### Minimal mental model
+##### Minimal mental model
 
 Platform team:
 
@@ -277,7 +822,7 @@ Model or application team:
 
 - Owns **which model gets deployed**, where it lives, and model-specific resources
 
-#### Other useful KServe concepts
+##### Other useful KServe concepts
 
 KServe also supports:
 
@@ -287,25 +832,25 @@ KServe also supports:
 - **Storage initializer** for downloading model files into the serving container
 - **ClusterStorageContainer** for custom storage-loading behavior
 
-#### Encode this
+##### Encode this
 
 - **`ServingRuntime` = how**
 - **`InferenceService` = what**
 - **Storage initializer = fetches model artifacts before serving**
 
-#### Recall prompt
+##### Recall prompt
 
 *If you want to upgrade the model server image without changing the model itself, which resource concept matters most?*
 
 [Back to Contents](#contents)
 
-### From `InferenceService` to `LLMInferenceService`
+#### From `InferenceService` to `LLMInferenceService`
 
 KServe 0.16 introduced **`LLMInferenceService`**, a new CRD designed specifically for **large-scale LLM deployments**.
 
 This exists because traditional `InferenceService` is sufficient for **basic serving**, but not ideal for **advanced LLM production topologies**.
 
-#### Why `LLMInferenceService` exists
+##### Why `LLMInferenceService` exists
 
 Large LLM systems often need:
 
@@ -317,7 +862,7 @@ Large LLM systems often need:
 
 These needs go beyond basic model serving.
 
-#### Related config object
+##### Related config object
 
 KServe also adds **`LLMInferenceServiceConfig`**, which acts like a **base configuration template**.
 
@@ -331,7 +876,7 @@ It can define shared settings such as:
 
 Then **`LLMInferenceService`** references that config and can override selected values.
 
-#### Important implementation detail
+##### Important implementation detail
 
 `LLMInferenceService` uses **Standard deployment mode** under the hood.
 
@@ -339,7 +884,7 @@ That reflects an important shift:
 
 **LLM workloads prioritize stability, predictability, and intelligent routing over fast scale-to-zero style elasticity.**
 
-#### Key capabilities
+##### Key capabilities
 
 - **Gateway / router / scheduler**
 - **KV cache-aware scheduling**
@@ -348,7 +893,75 @@ That reflects an important shift:
 - **Expert parallelism**
 - **Horizontal replicas**
 
-#### Simple comparison
+##### Example 1-12. `LLMInferenceService` with distributed inference and base configuration
+
+```yaml
+# Base configuration template
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceServiceConfig
+metadata:
+  name: vllm-llama-config
+spec:
+  template:
+    containers:
+      - name: kserve-container
+        image: vllm/vllm-openai:latest
+        args:
+          - --port=8080
+          - --model=/mnt/models
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+            cpu: "4"
+            memory: 50Gi
+  router:
+    gateway: {}
+    route: {}
+    scheduler: {}
+  parallelism:
+    tensorParallelism: 2
+---
+# Actual LLM deployment
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: llama-3-8b
+spec:
+  baseRefs:
+    - vllm-llama-config
+  model:
+    uri: pvc://llama/model
+    name: meta-llama/Llama-3.1-8B-Instruct
+  replicas: 3
+  # Optionally override base configuration here
+  ...
+```
+
+What to notice:
+
+- **`image: vllm/vllm-openai:latest`** + `args` — vLLM container image and startup parameters for serving the model
+- **`router`** — specification with **gateway**, **route**, and **scheduler** for **intelligent routing** with **KV cache-aware scheduling**
+- **`parallelism`** — strategies for distributed inference: **tensor**, **data**, and **expert** parallelism
+- **`baseRefs`** — reference to the base configuration template; **multiple configs can be referenced**, with the **last one taking precedence**
+- **`model`** — model specification defining the source and characteristics
+- **`replicas: 3`** — number of replicas for horizontal scaling; can override the base configuration
+
+##### Comparison: predictive-AI vs generative-AI KServe APIs
+
+**Table 1-1. Comparison of KServe APIs for predictive AI and generative AI**
+
+| Aspect | `InferenceService` + `ServingRuntime` | `LLMInferenceService` + `LLMInferenceServiceConfig` |
+| --- | --- | --- |
+| **Primary use case** | Predictive AI (classification, regression) | Generative AI (LLMs, text generation) |
+| **Deployment patterns** | Single-node, simple scaling | Multinode distributed inference, disaggregated serving |
+| **Configuration template** | `ServingRuntime` defines model server template | `LLMInferenceServiceConfig` defines base LLM configuration with **inheritance** |
+| **Routing and scheduling** | Basic load balancing | Advanced routing with **gateway**, **scheduler**, and **KV cache-aware scheduling** |
+| **Parallelism support** | Limited | Native support for **tensor**, **data**, and **expert** parallelism |
+| **Typical model size** | Small to medium models | Large models (**7B–405B+ parameters**) |
+
+These features are particularly important for deploying **very large models (70B+ parameters)** that require multiple GPUs or sophisticated serving architectures. For more details on distributed inference patterns, see the [llm-d project](https://llm-d.ai/) and [Disaggregated Serving](#disaggregated-serving).
+
+##### Simple comparison
 
 **Traditional path**
 
@@ -360,44 +973,44 @@ That reflects an important shift:
 - `LLMInferenceServiceConfig` + `LLMInferenceService`
 - Better for advanced generative AI serving
 
-#### Encode this
+##### Encode this
 
 - **`InferenceService` works for basic LLM serving**
 - **`LLMInferenceService` exists for complex LLM production patterns**
 - **The new API is about routing, scheduling, and distributed inference**
 
-#### Recall prompt
+##### Recall prompt
 
 *What production problems does `LLMInferenceService` solve that `InferenceService` does not solve well enough?*
 
 [Back to Contents](#contents)
 
-### Why Runtime and Model Separation Matters
+#### Why Runtime and Model Separation Matters
 
 One of the most important operational ideas in these notes is the separation between:
 
 - **Runtime lifecycle**
 - **Model lifecycle**
 
-#### Why this matters
+##### Why this matters
 
 These two things change on **different schedules** and are owned by **different teams**.
 
-#### Runtime lifecycle examples
+##### Runtime lifecycle examples
 
 - Upgrading vLLM or TGI versions
 - Changing container images
 - Adjusting default server startup parameters
 - Updating infrastructure assumptions
 
-#### Model lifecycle examples
+##### Model lifecycle examples
 
 - Releasing a new model version
 - Changing quantization
 - Updating weights
 - Rolling back to a previous validated model
 
-#### Operational benefit
+##### Operational benefit
 
 This separation allows:
 
@@ -406,7 +1019,7 @@ This separation allows:
 - Fewer ownership conflicts
 - Cleaner production workflows
 
-#### Broader serving context
+##### Broader serving context
 
 Model servers such as **vLLM**, **TGI**, and **SGLang** matter because they provide performance-critical optimizations like:
 
@@ -416,7 +1029,7 @@ Model servers such as **vLLM**, **TGI**, and **SGLang** matter because they prov
 
 These are essential for real throughput and latency, especially on GPUs.
 
-#### KServe versus Ray
+##### KServe versus Ray
 
 The trade-off is philosophical as much as technical:
 
@@ -427,15 +1040,228 @@ KServe feels more familiar to platform operators because it maps closely to Kube
 
 Ray offers stronger built-in distributed serving ergonomics, but introduces its own orchestration layer, which can complicate operations and debugging.
 
-#### Encode this
+##### Encode this
 
 - **Separation of runtime and model reflects real ownership boundaries**
 - **Specialized model servers are required for production efficiency**
 - **KServe vs Ray = Kubernetes-native vs Python-first orchestration**
 
-#### Recall prompt
+##### Recall prompt
 
 *Why is separating runtime management from model management an operational advantage rather than just a design preference?*
+
+[Back to Contents](#contents)
+
+### Ray Serve and KubeRay
+
+The **[Ray project](https://www.ray.io/)**, compared to KServe, is a **newer project** with a **broader scope**. It is an **open source framework** designed to **build and scale ML applications easily**.
+
+Ray is very **Pythonic**, making it user-friendly for those with Python experience, and it allows you to configure all activities **directly within your Python codebase**.
+
+#### Core concepts
+
+Ray is **not specific** for model serving but instead defines a set of **generic core concepts**:
+
+- **Task**
+- **Actor**
+- **Object**
+- **Placement Group**
+- **Environment Dependency**
+
+These core concepts, in addition to the **Ray Cluster**, define the execution model used to build and scale all the other features.
+
+![Ray Cluster topology](<assets/Ray Cluster topology.png>)
+
+**Figure 1-5. Ray Cluster topology**
+
+A Ray Cluster wasn't designed with Kubernetes in mind. It has a **standalone infrastructure** to manage the scheduling and orchestration of jobs that you can usually do with the Kubernetes API:
+
+- **head node** — acts as the entry point for the jobs
+- **worker nodes** — where execution happens; jobs are dispatched here from the head
+
+For a more comprehensive foundation on Ray, see the book **"Learning Ray"** by Max Pumperla et al. (O'Reilly, 2023).
+
+#### Ray Serve
+
+The set of features that Ray offers covers most of the ML use cases:
+
+- **Ray Train**
+- **Ray Tune**
+- **Ray Serve**
+
+…are just a subset of them.
+
+**Ray Serve** is the component used to **serve a model**. The deployment is **defined in Python**, and is the same for each endpoint to expose or model initialization.
+
+##### Example 1-13. Ray Serve with a Transformer-based model
+
+```python
+from starlette.requests import Request
+from typing import Dict
+
+from transformers import pipeline
+
+from ray import serve
+
+@serve.deployment
+class TransformerModelDeployment:
+    def __init__(self):
+        self._model = pipeline(
+            "my-transformer-model")
+
+    def __call__(self, request: Request) -> Dict:
+        return self._model(
+            request.query_params["text"])[0]
+
+
+serve.run(
+    TransformerModelDeployment.bind(),
+    route_prefix="/my-model/")
+```
+
+What to notice:
+
+- **`@serve.deployment`** — decorator function where it is possible to configure most of the deployment aspects, like **autoscaling**
+- **`__init__`** — should be used to load a model; in this case it is a **Transformer-based pipeline**
+- **`serve.run`** — deploys the model with a given prefix
+
+Given that it is configured directly in code, Ray Serve is **very flexible**. You can easily find examples integrated with **FastAPI** to expose the endpoint, or using a library like **vLLM** to deploy a full model server.
+
+#### KubeRay
+
+Ray has an API that is very friendly to a **data scientist or Python developer** in general, but deploying a Ray Cluster on Kubernetes still requires help to **wire all the components together** with Kubernetes concepts like **Deployment** and **Ingress**.
+
+The **[KubeRay project](https://github.com/ray-project/kuberay)** has been created to **streamline the transition from local Ray execution to Kubernetes**. This is necessary because Ray Clusters and Ray applications are not natively designed to use Kubernetes — in particular, a Ray Cluster has a **head node** and **worker nodes** that need to be deployed with multiple Deployments properly configured to interact with each other.
+
+KubeRay provides multiple Ray APIs as Kubernetes **CustomResourceDefinitions**. In particular, the **`RayService`** object is a single concept that represents:
+
+- a **multinode Ray Cluster**, and
+- a **Ray Serve application** that uses that cluster
+
+##### Example 1-14. `RayService` CR snippet
+
+```yaml
+apiVersion: ray.io/v1alpha1
+kind: RayService
+metadata:
+  name: my-transformer-model
+spec:
+  serveConfigV2: |
+    applications:
+      - name: my-transformer-model
+        import_path: my-transformer-model:deployment
+        runtime_env:
+          working_dir: "https://my-git-repo.com/main.zip"
+  rayClusterConfig:
+    rayVersion: %VERSION%
+    headGroupSpec:
+      ...
+      template:
+        spec:
+          containers:
+          - name: ray-head
+            image: rayproject/ray-ml:%VERSION%
+            ports:
+            ...
+            - containerPort: 8000
+              name: serve
+    workerGroupSpecs:
+    - replicas: 1
+      groupName: gpu-group
+      template:
+        spec:
+          containers:
+          - name: ray-worker
+            image: rayproject/ray-ml:%VERSION%
+          tolerations:
+            - key: "ray.io/node-type"
+              operator: "Equal"
+              value: "worker"
+              effect: "NoSchedule"
+```
+
+What to notice:
+
+- **`serveConfigV2`** — contains all the configuration of the **Ray Serve application**
+- **`working_dir`** — the code of the application is **downloaded** from this location
+- **`rayClusterConfig`** — configures the **head and worker nodes** of the Ray Cluster
+- **`rayVersion: %VERSION%`** — the version of Ray should be specified here and in the images to use
+- **`containerPort: 8000`** — the head node exposes multiple components in addition to the serving aspect, like the **dashboard** or **client**
+- **`tolerations`** — as in previous examples, it is possible to configure **tolerations and taints** to match node requirements (such as GPUs or dedicated Ray nodes)
+
+#### KServe vs Ray: trade-off
+
+From a Kubernetes platform perspective:
+
+- **Ray is less familiar** in terms of API and management when compared to KServe
+- but it enables **data scientists and Python developers to have full control** over deployment
+- this flexibility brings a lot of value, especially when you need to configure **more complex serving topologies**, like distributed serving or training on multiple hosts
+
+#### Encode this
+
+- **Ray = Python-first ML framework with a standalone Cluster model (head + workers)**
+- **Ray Serve = the inference component, configured directly in Python via `@serve.deployment`**
+- **KubeRay = Kubernetes Operator that bridges Ray Clusters to Kubernetes via `RayService` CRD**
+- **`RayService` packages a Ray Cluster + Ray Serve application into one declarative resource**
+- **Ray brings flexibility for complex topologies at the cost of additional orchestration on top of Kubernetes**
+
+#### Recall prompt
+
+*Why does Ray Serve introduce its own orchestration layer rather than relying solely on Kubernetes primitives like KServe does?*
+
+[Back to Contents](#contents)
+
+### Model Serving Lessons Learned
+
+This section explored the components necessary to deploy LLMs on Kubernetes, from basic model serving to production-ready orchestration.
+
+**Specialized model servers are essential**
+
+Model servers like **vLLM**, **TGI**, and **SGLang** provide essential optimizations (**PagedAttention**, **FlashAttention**, **continuous batching**) that directly impact **throughput and latency**.
+
+While you can containerize inference code with **FastAPI**, production workloads demand specialized runtimes that:
+
+- maximize **GPU utilization**
+- efficiently manage **memory-bound decode phases**
+
+**Separation of runtime and model lifecycle reflects operational reality**
+
+KServe provides:
+
+- **`InferenceService`** with **`ServingRuntime`** for general model serving
+- **`LLMInferenceService`** with **`LLMInferenceServiceConfig`** for complex LLM deployments requiring **distributed inference** and **advanced routing**
+
+This separation acknowledges that **runtime upgrades**, **model deployments**, and **infrastructure changes** operate on **different schedules** with **different ownership**:
+
+- **platform teams** can manage runtime versions and container images
+- **data science teams** deploy and iterate on models independently
+- preventing conflicts and enabling **parallel workflows**
+
+**Deployment controller choice involves fundamental trade-offs**
+
+- **KServe** integrates natively with Kubernetes primitives (Deployments, Services, Ingress), making it familiar to **platform operators** but requiring **additional components** for features like autoscaling
+- **Ray** provides a **Python-first development experience** with built-in distributed serving capabilities, but introduces its **own orchestration layer** that partially overlaps with Kubernetes, creating **operational complexity** when debugging or managing resources
+
+**Manual deployments remain valuable as a learning path**
+
+Starting with manual deployments before adopting controllers remains **valid for early-stage projects**:
+
+- understanding the underlying **Deployment**, **`PersistentVolumeClaim`**, and **GPU resource configurations** clarifies **what controllers automate**
+- helps diagnose issues when **abstractions leak**
+
+With the inference infrastructure in place, one critical piece remains: **the model itself**. The next section tackles the challenge of **managing model data** and the strategies for getting it into your cluster efficiently.
+
+#### Encode this
+
+- **Production LLM serving is a 2-layer problem: model server + controller**
+- **Pick a model server based on runtime needs (vLLM for OSS LLMs, TGI for HF stack, NIM for NVIDIA hardware, SGLang for prefix-cache workloads, llama.cpp for edge)**
+- **Pick a controller based on team profile (KServe for Kubernetes-native platforms, Ray Serve for Python-first ML teams)**
+- **Separation of `ServingRuntime` and `InferenceService` mirrors team ownership boundaries**
+- **`LLMInferenceService` exists because basic InferenceService cannot model routing, KV cache, or distributed inference**
+
+#### Recall prompt
+
+*What is the operational rationale for separating `ServingRuntime` from `InferenceService` instead of bundling them into one resource?*
 
 [Back to Contents](#contents)
 
@@ -5974,11 +6800,18 @@ Explainability and fairness require **organization-wide adoption**, supported by
 
 Use these prompts for fast review:
 
+- **Model server**: What does a model server do, and how is its API different for predictive vs generative AI?
+- **vLLM vs TGI**: When do you pick **vLLM**, and when do you pick **TGI**? What does multi-backend support buy and cost?
+- **Edge serving**: Why is **`llama.cpp`** the go-to for laptop/edge inference, and what is **GGUF**?
+- **NVIDIA NIM**: What does NIM's curated container + auto backend selection (TensorRT-LLM > vLLM > SGLang) get you?
+- **SGLang**: What workloads make **RadixAttention** especially valuable?
+- **Controllers**: What problem does a **Model Server Controller** solve that a vanilla Deployment cannot?
 - **KServe**: What problem does it solve on Kubernetes?
 - **Deployment modes**: When do you choose **Knative**, **Standard**, or **ModelMesh**?
 - **Core APIs**: What is the difference between **`ServingRuntime`** and **`InferenceService`**?
-- **LLM APIs**: Why was **`LLMInferenceService`** introduced?
+- **LLM APIs**: Why was **`LLMInferenceService`** introduced, and how does it compare with `InferenceService` in routing, parallelism, and model size?
 - **Operations**: Why should runtime lifecycle and model lifecycle be separated?
+- **Ray Serve / KubeRay**: When does the Python-first orchestration of Ray beat Kubernetes-native KServe?
 - **GPU discovery**: Why is **GFD** needed alongside **NFD** for Kubernetes GPU clusters?
 - **Device plug-ins**: What four functions does the Kubernetes device plug-in framework provide?
 - **GPU scheduling**: When do you reach for **`nodeSelector`**, **node affinity**, **taints**, **resource requests**, or **DRA**?
