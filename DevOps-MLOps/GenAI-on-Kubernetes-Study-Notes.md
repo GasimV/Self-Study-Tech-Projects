@@ -8,10 +8,23 @@
    - [Core APIs](#core-apis)
    - [From `InferenceService` to `LLMInferenceService`](#from-inferenceservice-to-llminferenceservice)
    - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
-3. [GPU Sharing and Sub-GPU Allocation](#gpu-sharing-and-sub-gpu-allocation)
-   - [Time Slicing](#time-slicing)
-   - [MPS](#mps)
-   - [MIG](#mig)
+3. [Kubernetes and GPUs](#kubernetes-and-gpus)
+   - [GPU Discovery](#gpu-discovery)
+     - [Node Feature Discovery](#node-feature-discovery)
+     - [GPU Feature Discovery](#gpu-feature-discovery)
+   - [Kubernetes GPU Device Plug-Ins](#kubernetes-gpu-device-plug-ins)
+   - [GPU Workload Scheduling](#gpu-workload-scheduling)
+     - [Label-Based Scheduling](#label-based-scheduling)
+     - [Resource-Based Scheduling](#resource-based-scheduling)
+     - [Dynamic Resource Allocation](#dynamic-resource-allocation)
+   - [NVIDIA GPU Operator](#nvidia-gpu-operator)
+     - [Operator Configuration with ClusterPolicy](#operator-configuration-with-clusterpolicy)
+   - [GPU Sharing and Sub-GPU Allocation](#gpu-sharing-and-sub-gpu-allocation)
+     - [Time Slicing](#time-slicing)
+     - [MPS](#mps)
+     - [MIG (Multi-Instance GPU)](#mig-multi-instance-gpu)
+     - [Model-Serving Example: One GPU, Three Small Models](#model-serving-example-one-gpu-three-small-models)
+   - [GPU Diagnostics with nvidia-smi](#gpu-diagnostics-with-nvidia-smi)
 4. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
 5. [Model Registry](#model-registry)
    - [Hugging Face Model Hub](#hugging-face-model-hub)
@@ -420,7 +433,661 @@ Ray offers stronger built-in distributed serving ergonomics, but introduces its 
 
 [Back to Contents](#contents)
 
-## GPU Sharing and Sub-GPU Allocation
+## Kubernetes and GPUs
+
+At its core, generative AI involves **intensive mathematical computations**, particularly **linear algebra operations** such as **tensor multiplications**. These operations demand significant computational power and memory capacity to process large datasets and models ranging from **tens to hundreds of billions of parameters**. Specialized hardware called **Graphics Processing Units (GPUs)** has emerged to optimize and accelerate these workloads.
+
+Initially designed for **rendering graphics** and creating immersive gaming experiences, GPUs quickly moved into the AI domain because of their **massively parallel architecture**. That capability fits naturally with the linear-algebra-heavy tasks of AI and machine learning.
+
+### The GPU and accelerator landscape
+
+- **NVIDIA** leads the market by a large margin
+- **AMD** and **Intel** are the primary competitors
+- **Google Tensor Processing Units (TPUs)** offer compelling performance but are typically restricted to the Google ecosystem
+- **AI-specific Application-Specific Integrated Circuits (ASICs)** such as those from **Cerebras** and **Graphcore** are emerging but still niche
+- **Field Programmable Gate Arrays (FPGAs)** represent another niche option
+
+The primary reason GPUs remain the standard choice is their **mature ecosystem**, **broad availability**, and **proven scalability**. When deploying LLMs in production, GPUs have become indispensable due to substantial memory and computational demands.
+
+### Why Kubernetes needs a special mechanism for GPUs
+
+By default, Kubernetes includes built-in support for standard computing resources like **CPU** and **memory**. Leveraging specialized hardware like GPUs requires additional mechanisms.
+
+Kubernetes addresses this through **device plug-ins**, a pluggable extension framework that allows Kubernetes to:
+
+- integrate external hardware resources
+- manage their lifecycle
+- effectively expand the Kubernetes API to include these specialized devices
+
+GPUs require special attention because they need:
+
+- **specific discovery mechanisms** within Kubernetes
+- **dedicated scheduling criteria**
+- **dedicated software stacks** such as NVIDIA's **CUDA libraries**
+
+This section focuses on NVIDIA GPUs due to their market dominance, and covers:
+
+- discovery via **Node Feature Discovery** and **GPU Feature Discovery**
+- the **Kubernetes device plug-in framework**
+- the emerging **Dynamic Resource Allocation (DRA)** feature
+- **resource-based** and **label-based** scheduling strategies
+- advanced management with the **NVIDIA GPU Operator**
+- GPU partitioning via **time slicing** and **Multi-Instance GPU (MIG)**
+- diagnostics with **nvidia-smi**
+
+[Back to Contents](#contents)
+
+### GPU Discovery
+
+Before Kubernetes can effectively manage GPUs, it must reliably **identify which nodes have GPUs** and **determine their capabilities**. Accurate hardware detection ensures workloads match nodes offering suitable GPU resources.
+
+Two complementary tools handle this:
+
+- **Node Feature Discovery (NFD)** — general-purpose hardware discovery for Kubernetes
+- **GPU Feature Discovery (GFD)** — NVIDIA-specific tool that builds on NFD with detailed GPU labels
+
+#### Node Feature Discovery
+
+Kubernetes clusters are rarely identical. Hardware capabilities vary, especially when GPUs are involved. **Effective scheduling in heterogeneous environments** — cloud, hybrid, or bare-metal — depends on accurately identifying these capabilities.
+
+**Node Feature Discovery (NFD)** is the project that provides this capability:
+
+- detects hardware features on each node
+- automatically labels the corresponding node resources
+- provides essential information for the Kubernetes scheduler
+
+How NFD works:
+
+- deploys a **DaemonSet** so an agent runs on every node
+- the agent examines hardware and software configuration of each node
+- identifies attributes such as **CPU details**, **network interfaces**, and **available PCI devices** like GPUs
+- applies **descriptive labels** to the Node objects in the Kubernetes API
+
+##### Example 3-1. Installing NFD with Kustomize
+
+```bash
+NFD_REPO=https://github.com/kubernetes-sigs/node-feature-discovery
+kubectl apply -k $NFD_REPO/deployment/overlays/default
+```
+
+Alternatively, the **NFD operator** offers a more integrated lifecycle management experience, especially valuable in production environments.
+
+##### Example 3-2. Inspecting node labels added by NFD
+
+```bash
+kubectl get node <node-name> -o yaml | yq .metadata.labels
+
+feature.node.kubernetes.io/pci-0300_1d0f.present: "true"
+feature.node.kubernetes.io/pci-0302_10de.present: "true"
+feature.node.kubernetes.io/cpu-hardware_multithreading: "true"
+feature.node.kubernetes.io/cpu-model.family: "6"
+feature.node.kubernetes.io/cpu-model.id: "85"
+feature.node.kubernetes.io/cpu-model.vendor_id: Intel
+feature.node.kubernetes.io/kernel-selinux.enabled: "true"
+feature.node.kubernetes.io/kernel-version.full: 5.14.0-427.62.1.el9_4.x86_64
+...
+```
+
+What to notice:
+
+- `pci-0300_1d0f.present` — a PCI ID that indicates an **AWS VGA-compatible display controller** (vendor ID `1d0f`, device class `0300`), typical in AWS EC2 nodes
+- `pci-0302_10de.present` — indicates the presence of an **NVIDIA GPU** (vendor ID `10de`, device class `0302`)
+
+NFD labels follow the format:
+
+```text
+feature.node.kubernetes.io/<class>_<vendor>
+```
+
+PCI vendor IDs you will commonly see:
+
+- **`10de`** = NVIDIA
+- **`1002`** = AMD
+- **`8086`** = Intel
+
+PCI class code **`0302`** denotes **3D controllers** such as GPUs.
+
+<u>NFD limitation:</u> NFD labels indicate the **existence** of certain hardware, not detailed GPU specifications like model, memory size, or CUDA capabilities. That gap is filled by GFD.
+
+#### GPU Feature Discovery
+
+**GPU Feature Discovery (GFD)** is a lightweight utility from NVIDIA, specifically designed to **detect detailed GPU characteristics** and expose them as **node labels** for advanced scheduling.
+
+GFD is part of the **NVIDIA GPU Operator** and runs as a **DaemonSet** on GPU-equipped nodes. It uses utilities such as `nvidia-smi` to gather detailed information like:
+
+- GPU model
+- memory capacity
+- CUDA version
+- Multi-Instance GPU capabilities
+
+##### Table 3-1. Labels added by GFD
+
+| Label | Description | Example |
+| --- | --- | --- |
+| `nvidia.com/gpu.count` | Number of GPUs or MIG instances present on the node | `4` |
+| `nvidia.com/gpu.product` | Model name or MIG profile of the NVIDIA GPU. In MIG mode this may include the MIG profile; in time-slicing mode it may have a `-SHARED` suffix | `A100-SXM4-40GB` |
+| `nvidia.com/gpu.memory` | Total memory per GPU or MIG instance (in MiB) | `40537` |
+| `nvidia.com/gpu.family` | GPU architecture family (Ampere, Hopper, Turing, etc.) | `ampere` |
+| `nvidia.com/cuda.driver-version.full` | Full version of the installed NVIDIA GPU driver | `525.105.17` |
+| `nvidia.com/cuda.runtime.version.full` | Full version of the available CUDA runtime | `12.2` |
+| `nvidia.com/mig.capable` | Indicates whether the GPU supports MIG partitioning | `true` |
+| `nvidia.com/mig.strategy` | MIG partitioning strategy (`single`, `mixed`, or unset) | `single` |
+| `nvidia.com/gpu.replicas` | Number of virtual GPUs per physical GPU when time slicing is enabled | `8` |
+| `nvidia.com/mig-<profile>.count` | Number of MIG partitions of a specific MIG profile available (present if mixed strategy is used) | `2` (e.g., `nvidia.com/mig-1g.5gb.count`) |
+| `nvidia.com/gpu.machine` | Machine type or identifier of the GPU-equipped node | `dgx-a100` |
+| `nvidia.com/gpu.compute.major` | Major CUDA compute capability version of the GPU | `8` |
+| `nvidia.com/gpu.compute.minor` | Minor CUDA compute capability version of the GPU | `0` |
+
+These detailed labels enable scheduling decisions that basic NFD labels cannot:
+
+- **target shared GPUs**: `nvidia.com/gpu.product: A100-SXM4-40GB-SHARED`
+- **ensure exclusive GPU access**: avoid nodes with the `-SHARED` suffix
+
+In practice, these labels are often used **internally by NVIDIA GPU Operator components**, such as the NVIDIA device plug-in. Users typically just request GPU resources via resource requests in their pod specifications (see [Resource-Based Scheduling](#resource-based-scheduling)).
+
+#### Encode this
+
+- **NFD = generic hardware labeling for any Kubernetes cluster**
+- **GFD = NVIDIA-specific labels with model, memory, CUDA, MIG details**
+- **PCI class `0302` + vendor `10de` indicates an NVIDIA GPU**
+- **GFD labels enable both manual selection and internal Operator logic**
+
+#### Recall prompt
+
+*Why is GFD needed if NFD already labels nodes with PCI hardware information?*
+
+[Back to Contents](#contents)
+
+### Kubernetes GPU Device Plug-Ins
+
+Once GPU capabilities are labeled, the next step is to **expose GPUs as schedulable and allocatable resources** within Kubernetes. The **device plug-in framework** allows external hardware to integrate seamlessly into the Kubernetes resource model.
+
+Kubernetes was designed to be extensible:
+
+- **CPU** and **memory** are natively supported
+- **device plug-ins** integrate specialized hardware (GPUs, TPUs, other accelerators)
+
+Plug-ins register with the **Kubelet** on each node and advertise:
+
+- **device availability**
+- **health status**
+
+This enables **resource-aware scheduling** and **workload isolation**.
+
+The device plug-in interface supports a wide variety of specialized hardware including:
+
+- **FPGAs**
+- **networking accelerators**
+- **storage controllers**
+- **cryptographic modules**
+- **multimedia processors**
+- **robotics hardware**
+- **GPUs and AI accelerators**
+
+#### Four core device plug-in functions
+
+**1. Device discovery**
+
+Plug-ins detect hardware devices on nodes and report their inventory to the Kubelet.
+
+**2. Resource allocation**
+
+When a workload requires specific hardware (e.g., GPUs), the device plug-in handles **exclusive allocation**. It:
+
+- sets up the runtime environment
+- exposes necessary device files
+- injects environment variables
+
+**3. Health monitoring**
+
+Plug-ins continuously monitor device health, ensuring Kubernetes is aware of unhealthy hardware to inform scheduling decisions.
+
+**4. Scheduler integration**
+
+Device plug-ins expose hardware as **standard Kubernetes extended resources** (e.g., `nvidia.com/gpu`). Pods request these resources explicitly in their resource declarations.
+
+#### Well-known device plug-ins
+
+- **`nvidia-device-plugin`** — official NVIDIA plug-in exposing **CUDA-enabled GPUs**, essential for GPU-accelerated AI workloads
+- **`amd-device-plugin`** — official AMD plug-in integrating **ROCm-based GPUs** for HPC and AI workloads
+- **`intel-gpu-plugin`** — Intel's plug-in for integrated and discrete GPUs
+- **`google-cloud-tpu-device-plugin`** — Google's plug-in for **TPUs**, exclusively available in **GKE**
+
+#### Limitations
+
+The device plug-in model has structural limits:
+
+- devices are usually allocated **exclusively** to individual pods → can lead to **underutilized resources**
+- resource allocation is **static** and **determined at scheduling time** → less flexible for workloads with dynamic resource requirements
+
+These limitations motivated **Dynamic Resource Allocation (DRA)**, covered below.
+
+#### Encode this
+
+- **Device plug-ins extend Kubernetes to schedule non-CPU/non-memory hardware**
+- **Four functions: discovery, allocation, health monitoring, scheduler integration**
+- **`nvidia.com/gpu` is an extended resource exposed by the NVIDIA device plug-in**
+- **Allocation is exclusive and static; DRA aims to relax both constraints**
+
+#### Recall prompt
+
+*What are the two main limitations of the classic device plug-in model that DRA aims to solve?*
+
+[Back to Contents](#contents)
+
+### GPU Workload Scheduling
+
+Kubernetes offers three complementary approaches to placing GPU-bound workloads:
+
+1. **Label-based scheduling** — steer pods with node labels and affinity rules
+2. **Resource-based scheduling** — rely solely on numeric resource requests
+3. **Dynamic Resource Allocation (DRA)** — declarative, intent-driven device requests
+
+Each is covered separately so the strengths of each method remain clear.
+
+#### Label-Based Scheduling
+
+When a cluster contains several kinds of GPUs, or when operators want to **fence off GPU nodes from general workloads**, labels become the steering wheel. Kubernetes offers three closely related mechanisms:
+
+- **`nodeSelector`**
+- **node affinity**
+- **taints and tolerations**
+
+##### `nodeSelector`
+
+The most direct approach. You attach a fixed label to every node that matches a certain characteristic, then repeat that exact key-value pair in the pod spec's `nodeSelector` field.
+
+Instead of creating custom labels manually, you can leverage the GPU-specific labels NFD and GFD automatically attach.
+
+##### Example 3-3. Direct selection of a node with a node selector
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: t4-inference
+spec:
+  containers:
+  - name: server
+    image: myrepo/llm-server:latest
+  nodeSelector:
+    # Select only nodes that are labelled for a Tesla T4 GPU
+    nvidia.com/gpu.product: Tesla-T4
+```
+
+Strengths and limits:
+
+- **simplicity**: a single line pins the workload to the desired node pool
+- **no extra scheduler overhead**
+- the rule is **absolute**: if the label is missing or misspelled, the pod won't schedule
+- it **cannot express alternatives**; it is "T4 or nothing"
+
+##### Node affinity
+
+**Node affinity** builds on the same idea but allows richer expressions and **soft preferences**:
+
+- **required terms** act like an extended selector
+- **preferred terms** let you nudge the scheduler toward the best node when several satisfy the hard constraints
+
+##### Example 3-4. Node affinity for finer-grained selections
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: a100-preferred
+spec:
+  containers:
+  - name: llm
+    image: myrepo/mt-server:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 4
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: nvidia.com/gpu.memory
+            operator: Gt
+            values: ["40000"]
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: nvidia.com/gpu.family
+            operator: In
+            values: ["hopper"]
+```
+
+What to notice:
+
+- the **required** condition is that the GPU has at least **40 GB memory**
+- the **preferred** condition is **NVIDIA H100** (Hopper), but the workload still schedules on an Ampere (A100) if no Hopper is free
+- the downside is **verbosity**: long match expressions can clutter manifests, and too many hard clauses can starve the workload
+
+##### Taints and tolerations
+
+Sometimes operators want to flip the model and **mark certain nodes off-limits unless a pod explicitly opts in**:
+
+- a **taint** added by the administrator **repels all pods**
+- only pods carrying a matching **toleration** can schedule
+
+##### Example 3-5. Taint a node so it is not considered for scheduling by default
+
+```bash
+# cluster-admin permission required
+kubectl taint nodes -l nvidia.com/gpu.count nvidia.com/gpu=true:NoSchedule
+```
+
+This adds a taint `nvidia.com/gpu=true:NoSchedule` to all nodes carrying the label `nvidia.com/gpu.count`. Only pods that explicitly tolerate `nvidia.com/gpu` can be scheduled there.
+
+##### Example 3-6. Deployment with a toleration for `nvidia.com/gpu` taints
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-serving
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: tgi
+        image: ghcr.io/huggingface/tgi:latest
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+```
+
+What to notice:
+
+- the **`limits`** field requires an `nvidia.com/gpu` resource exposed by the NVIDIA device plug-in
+- the **toleration** ignores `nvidia.com/gpu` taints regardless of value, so this deployment can also be scheduled on tainted GPU nodes
+
+Taints are ideal for:
+
+- **dedicating costly GPU nodes** to GPU workloads
+- **cordoning nodes under maintenance**
+- working **in tandem** with affinity or selectors: the taint keeps general pods out, while affinity decides which GPU node fits best among those that remain
+
+##### When to use which
+
+- **`nodeSelector`** — shines in small, homogeneous GPU fleets where a single label is enough
+- **Node affinity** — the tool of choice once you mix generations, memory sizes, or availability zones
+- **Taints** — protect the GPU pool at cluster scope; pair naturally with the other two for fine placement
+
+All three approaches share one limitation: they rely on **static labels** that administrators maintain manually or that are added by discovery operators (NFD, GFD).
+
+#### Resource-Based Scheduling
+
+The simplest way to schedule a GPU workload in Kubernetes is to **declare the need for a GPU directly in the workload specification**.
+
+As soon as the NVIDIA device plug-in is running, it advertises every GPU as an extended resource — typically `nvidia.com/gpu`.
+
+##### Example 3-7. Require one NVIDIA GPU
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 1
+```
+
+The scheduler examines only the **numeric availability** from the device plug-in, then binds the pod to a qualifying node. The kubelet grants the container exclusive access to one of that node's GPUs.
+
+Strengths:
+
+- **no extra labels** to manage
+- **no node selectors** to remember
+- **no additional controllers** to install
+- completely integrated with the familiar `requests`/`limits` resource model
+- a single field is enough to isolate the GPU at the device-file level
+- prevents other pods from touching it
+- lets CUDA applications run without further configuration
+
+Limitations — **lack of precision**:
+
+- all GPUs look **identical** to the scheduler, even if the cluster mixes V100s, A100s, and consumer cards
+- a model that fits on an **80 GB A100** might not fit on a **16 GB T4**, yet `nvidia.com/gpu: 1` treats them the same
+- no built-in way to request:
+  - a specific **compute capability**
+  - GPUs in **MIG mode**
+  - multiple GPUs with a particular **interconnect topology**
+
+In practice teams work around this by **combining resource requests with `nodeSelector` or `nodeAffinity` rules** that steer workloads to compatible hardware. Powerful, but it requires extra coordination between node inventory and workload definitions.
+
+#### Dynamic Resource Allocation
+
+![NVIDIA GPU DRA](<assets/NVIDIA-GPU-DRA.png>)
+
+**Figure 3-1. NVIDIA GPU with Dynamic Resource Allocation**
+
+**Dynamic Resource Allocation (DRA)** is an effort to make device scheduling in Kubernetes **more flexible, composable, and dynamic**. DRA has been available as a **core, stable** Kubernetes feature since **version 1.34**.
+
+Instead of tying device allocation directly to resource fields in the pod spec, DRA introduces new resource types that shift the focus from **"how many" devices** to **"what kind"** of device a workload requires.
+
+The model is inspired by Kubernetes' **volume provisioning**: users describe a desired resource and let the platform resolve it.
+
+##### How DRA changes the model
+
+- workloads declare device needs via **`ResourceClaimTemplate`** resources
+- templates act as **intent declarations**
+- the Kubernetes control plane and the installed **DRA driver** resolve them at scheduling time
+- allocation happens **just-in-time**, allowing smarter decisions and more efficient usage
+
+A pod can request, for example, **"an A100 GPU with at least 40 GB of memory"** and the scheduler will only place the pod on a node that can fulfill the requirement.
+
+##### Example 3-8. `ResourceClaimTemplate` defining GPU requirements for deployment pods
+
+```yaml
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceClaimTemplate
+metadata:
+  name: a100-claim-template
+spec:
+  spec:
+    devices:
+      requests:
+        - name: high-memory-gpu
+          deviceClassName: gpu.nvidia.com/a100
+          allocationMode: ExactCount
+          count: 1
+          parameters:
+            minMemory: "40Gi"
+            migMode: "disabled"
+```
+
+What to notice:
+
+- `deviceClassName: gpu.nvidia.com/a100` — requests an **NVIDIA A100 GPU**
+- `count: 1` — one GPU required
+- `minMemory: "40Gi"` — the GPU must have at least 40 Gi of memory
+- `migMode: "disabled"` — Multi-Instance GPU mode must be disabled (full GPU access)
+
+##### Example 3-9. Deployment using `ResourceClaimTemplate` for GPU allocation
+
+```yaml
+apiVersion: batch/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+      - name: model-runner
+        image: myorg/llm-inference:latest
+        resources:
+          claims:
+          - name: high-memory-gpu
+      resourceClaims:
+      - name: high-memory-gpu
+        resourceClaimTemplateName: a100-claim-template
+```
+
+What to notice:
+
+- `resources.claims` references a **resource claim name** to use when the deployment creates pods
+- `resourceClaims` ties that name to the `ResourceClaimTemplate` defined in Example 3-8
+
+##### Why DRA matters
+
+- **separation between declaration and actual allocation** — opens the door for dynamic, demand-driven GPU provisioning
+- drivers can perform **more intelligent allocation strategies** (current usage, power consumption, memory pressure, node-level constraints)
+- replaces "pick the first available GPU" with **policy-driven** placement
+
+##### Current limitations
+
+- core DRA APIs are **generally available** since Kubernetes 1.34, but the ecosystem is still catching up
+- the **NVIDIA GPU DRA driver** exists but is marked as a **technical preview**, not yet supported for production
+- features like **partial GPU requests**, **fine-grained MIG partitioning**, or **topology-aware scheduling** are still maturing and remain driver- and platform-dependent
+- integration with **cluster autoscalers** or **quota enforcement** is limited
+
+Until DRA becomes production-grade, **resource requests combined with label-based scheduling remain the standard approach** for GPU scheduling.
+
+#### Encode this
+
+- **Label-based scheduling: `nodeSelector` (absolute), affinity (rich), taints (cluster-scope fences)**
+- **Resource-based scheduling: simplest, but treats every GPU identically**
+- **DRA: declarative, "what kind" instead of "how many", inspired by volume provisioning**
+- **DRA is GA in Kubernetes 1.34, but the NVIDIA driver is still technical preview**
+
+#### Recall prompt
+
+*Why does plain `nvidia.com/gpu: 1` resource scheduling break down when a cluster mixes A100 and T4 GPUs?*
+
+[Back to Contents](#contents)
+
+### NVIDIA GPU Operator
+
+The **NVIDIA GPU Operator** builds on the Kubernetes device plug-in and GFD, and adds everything needed to run NVIDIA GPU workloads reliably in production. It installs:
+
+- **drivers**
+- **container runtime hooks**
+- **monitoring agents**
+
+It also offers two sharing mechanisms for sub-GPU resource allocation in **one declarative interface**, automating installation and configuration of all necessary components.
+
+#### Components
+
+**NVIDIA drivers (kernel module and CUDA)**
+
+At the heart of GPU enablement are the NVIDIA drivers — kernel modules and user-space libraries that enable **CUDA** and GPU acceleration. The Operator can deploy the official NVIDIA driver into each GPU node by running a **privileged driver container**, which:
+
+- compiles the driver for the node's kernel
+- or retrieves a precompiled version when available
+
+By containerizing the driver, the Operator ensures all GPU nodes have the required driver version without manual intervention.
+
+> **NOTE**
+>
+> GPU nodes ideally should run the **same OS kernel version** if you want to rely on the Operator's driver container across all nodes. Mixed OS versions might require **pre-installing drivers manually**. The `ClusterPolicy` CR allows customizing the driver version or using precompiled binaries if needed.
+
+**GPU Feature Discovery**
+
+The Operator deploys **GFD** as a DaemonSet so you don't have to install it manually.
+
+**Kubernetes device plug-in for GPUs**
+
+The Operator deploys the **NVIDIA device plug-in** as a DaemonSet on GPU nodes. It introduces the extended resource `nvidia.com/gpu` used for resource-level scheduling and also enables **sub-GPU allocation**.
+
+<u>Critical caveat:</u> if the NVIDIA device plug-in is not running or not working, pods will be **stuck pending** because Kubernetes thinks no resources are available.
+
+**NVIDIA Container Toolkit (runtime)**
+
+For containers to actually use the GPU, they need the **NVIDIA Container Runtime** (part of the NVIDIA Container Toolkit). The Operator deploys this toolkit on the nodes. The runtime is an extension to **CRI-O** and **containerd** that knows how to inject GPU drivers and device files into containers when a GPU is requested.
+
+The result: any container that requests a GPU will have `/dev/nvidia0` and GPU drivers available. However, **the container image must still include the CUDA libraries** the application requires.
+
+**Multi-Instance GPU (MIG) Manager**
+
+On systems with **MIG-capable GPUs** (e.g., NVIDIA **A100** or **H100**), the Operator includes a **MIG Manager** component:
+
+- monitors the node's MIG configuration
+- reconfigures the GPU's MIG partitions according to a desired state
+- applies the MIG strategy configured in the `ClusterPolicy`
+
+Without the MIG Manager, an administrator would have to log in remotely to the node and use `nvidia-smi` to set up MIG partitions manually.
+
+**GPU monitoring with DCGM Exporter**
+
+The Operator also typically deploys the **Data Center GPU Manager (DCGM) Exporter** as a DaemonSet. DCGM polls every GPU for:
+
+- utilization
+- memory pressure
+- ECC errors
+- temperature
+- power draw
+- and a wealth of other counters
+
+It translates them into **Prometheus metrics**. Most users scrape the exporter with the cluster's Prometheus stack and surface graphs in **Grafana**. See [Model Observability](#model-observability) for the broader observability stack.
+
+#### Operator Configuration with ClusterPolicy
+
+The NVIDIA GPU Operator is available for **multiple Kubernetes distributions**, including **OpenShift**, where it ships out-of-the-box as part of the OperatorHub catalog. It can also be installed on standard Kubernetes clusters using **Helm charts** or custom manifests provided by NVIDIA.
+
+##### Example 3-10. Installing the GPU Operator with Helm
+
+```bash
+helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+helm repo update
+helm install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --create-namespace
+```
+
+The Operator is configured through the **`ClusterPolicy`** custom resource, which controls:
+
+- device plug-in configuration
+- enabling time slicing
+- configuring MIG strategies
+
+A `ClusterPolicy` can reference a custom **`ConfigMap`** to fine-tune device plug-in behavior — for example, to enable time slicing or other GPU sharing mechanisms. The policy can specify a default key from the ConfigMap that applies when a GPU-enabled node is not labeled with `nvidia.com/device-plugin.config=<key>`.
+
+##### Example 3-11. Example configuration for the NVIDIA GPU Operator
+
+```yaml
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+spec:
+  gfd:
+    enabled: true
+  devicePlugin:
+    config:
+      name: gpu-sharing-config
+      default: sharing
+  mig:
+    strategy: mixed
+```
+
+What to notice:
+
+- **`gfd.enabled: true`** — enables GPU Feature Discovery
+- **`devicePlugin.config.name`** — points to the `ConfigMap` `gpu-sharing-config` that holds extra configuration (such as time slicing settings)
+- **`devicePlugin.config.default`** — references a key in the ConfigMap; if set to empty string, no default applies and nodes must be labeled with `nvidia.com/device-plugin.config=<config map key>` to pick up the device plug-in config
+- **`mig.strategy: mixed`** — sets the MIG strategy to mixed (see [MIG](#mig-multi-instance-gpu))
+
+#### Encode this
+
+- **The NVIDIA GPU Operator bundles drivers, device plug-in, runtime hooks, GFD, MIG Manager, and DCGM exporter**
+- **`ClusterPolicy` is the single declarative entry point for GPU Operator configuration**
+- **Mixed-kernel clusters may require manual driver pre-installation**
+- **A broken NVIDIA device plug-in causes pods to stay pending forever**
+
+#### Recall prompt
+
+*Why is the NVIDIA GPU Operator considered an "out-of-the-box" solution for production GPU workloads compared with installing the device plug-in alone?*
+
+[Back to Contents](#contents)
+
+### GPU Sharing and Sub-GPU Allocation
 
 The **NVIDIA GPU Operator** supports advanced GPU features for **partitioning** or **slicing** a single GPU across multiple workloads.
 
@@ -432,7 +1099,12 @@ The core GPU sharing concepts to distinguish are:
 2. **MPS**
 3. **MIG**
 
-### Time Slicing
+The Operator supports two of these natively (time slicing and MIG) and they can also be **combined**:
+
+- **Time slicing** — allows multiple containers to share a GPU by allocating time-based slices
+- **MIG** — available on certain GPUs (such as A100 and H100) to partition a single GPU into **isolated instances**
+
+#### Time Slicing
 
 **Time slicing** allows multiple containers to share one physical GPU by allocating **time-based slices**.
 
@@ -493,7 +1165,7 @@ One physical GPU
 -> repeats quickly
 ```
 
-#### CPU comparison: cores, logical processors, and time slicing
+##### CPU comparison: cores, logical processors, and time slicing
 
 CPU scheduling is a related concept, but **CPU logical processors** and **time slicing** are not exactly the same thing.
 
@@ -536,7 +1208,7 @@ but those slots still share the same physical GPU.
 
 Think of a **physical CPU core** like **one cashier**.
 
-##### 1. Time slicing: one cashier, many customers taking turns
+###### 1. Time slicing: one cashier, many customers taking turns
 
 There is **one cashier** and **five customers**.
 
@@ -555,7 +1227,7 @@ Each customer feels like they are "being served," but actually they are **taking
 
 That is **time slicing**.
 
-##### 2. Multiple physical cores: many real cashiers
+###### 2. Multiple physical cores: many real cashiers
 
 Now there are **four cashiers**.
 
@@ -570,7 +1242,7 @@ This is real parallel work. More work can happen at the same time.
 
 That is like **four physical CPU cores**.
 
-##### 3. Logical processors / hyper-threading: one cashier with two order windows
+###### 3. Logical processors / hyper-threading: one cashier with two order windows
 
 Now imagine **one cashier has two windows**.
 
@@ -585,7 +1257,7 @@ The cashier can stay busier because when Customer A is waiting for payment appro
 
 That is like **one physical core with two logical processors**.
 
-##### Simple summary
+###### Simple summary
 
 ```text
 Physical core:
@@ -612,14 +1284,14 @@ gpu-slot-4
 
 But underneath, all four slots still use the **same physical GPU**, taking turns.
 
-#### What time slicing gives you
+##### What time slicing gives you
 
 - Better GPU utilization when workloads are **small**, **bursty**, or **idle** part of the time
 - Ability to run several lightweight inference workloads on one GPU
 - Sharing support for older GPUs that do **not** support MIG, such as some **T4** or **V100** environments
 - Higher overall throughput when individual workloads do not need full GPU capacity all the time
 
-#### Important trade-off
+##### Important trade-off
 
 Time-sliced workloads are **not getting full GPU power at the same time**.
 
@@ -636,7 +1308,7 @@ Unlike MIG, time slicing does **not** provide:
 
 All pods sharing the same physical GPU can access the same GPU memory pool. If one pod allocates most of the GPU memory, other pods may fail to allocate memory. If one process causes a GPU reset, the other workloads sharing that GPU can also be affected.
 
-#### Example configuration for time slicing
+##### Example configuration for time slicing
 
 To enable GPU time slicing, configure the NVIDIA device plug-in through a `ConfigMap` referenced by the GPU Operator configuration.
 
@@ -675,7 +1347,7 @@ gpu.replicas=8
 
 This marks the oversubscription level.
 
-#### Scheduling warning
+##### Scheduling warning
 
 A pod requesting multiple time-sliced GPUs does **not** get twice the performance of a single shared GPU.
 
@@ -695,7 +1367,7 @@ For this reason, the device plug-in can be configured to reject requests for mor
 
 For multi-GPU workloads, keep GPUs **exclusive** or use **MIG** where appropriate.
 
-#### Best fit
+##### Best fit
 
 Time slicing is useful when:
 
@@ -708,7 +1380,7 @@ Time slicing is useful when:
 
 Time slicing is often less useful for large LLMs because LLMs typically need most or all of a GPU's available memory.
 
-### MPS
+#### MPS
 
 **NVIDIA Multi-Process Service (MPS)** is **not the same as simple time slicing**.
 
@@ -728,7 +1400,7 @@ MPS coordinates their GPU work through an MPS server/control daemon.
 This allows kernels from different client processes to run concurrently when the GPU has available capacity.
 ```
 
-#### How MPS works
+##### How MPS works
 
 ```text
 1. An MPS control daemon runs on the node.
@@ -746,7 +1418,7 @@ NVIDIA explains that, without MPS, kernels from different CUDA contexts are sche
 
 Source: [NVIDIA Multi-Process Service architecture](https://docs.nvidia.com/deploy/mps/architecture.html) and [NVIDIA MPS introduction](https://docs.nvidia.com/deploy/mps/introduction.html).
 
-#### MPS clarification
+##### MPS clarification
 
 **MPS does not manually assign each tiny job to individual CUDA cores like a traffic officer.**
 
@@ -813,7 +1485,7 @@ And more like:
 daemon opens a shared highway so multiple CUDA applications can feed work to the GPU together
 ```
 
-#### Mental model
+##### Mental model
 
 ```text
 Time slicing = one cashier serving customers one by one very quickly.
@@ -832,7 +1504,7 @@ Time slicing = share one GPU by letting workloads take turns.
 MPS = share one GPU by allowing CUDA processes to run more concurrently through an MPS server/control daemon.
 ```
 
-#### Important nuance
+##### Important nuance
 
 ```text
 MPS improves GPU utilization, but it is not the same as hard isolation.
@@ -842,11 +1514,21 @@ but MIG is still the stronger isolation model.
 
 For Kubernetes and the NVIDIA GPU Operator, **time slicing** and **MPS** are both GPU sharing strategies. But MPS is more advanced than basic time slicing because it enables more concurrent CUDA execution instead of only rotating workloads in turns.
 
-### MIG
+#### MIG (Multi-Instance GPU)
 
 **MIG** stands for **Multi-Instance GPU**.
 
-It is available on certain NVIDIA GPUs, such as **A100** and **H100**, and allows one physical GPU to be partitioned into multiple **isolated GPU instances**.
+It is available on **NVIDIA Ampere and newer GPUs** (such as **A100**, **A30**, **H100**, and **Blackwell B100/B200**), and allows one physical GPU to be partitioned into several **hardware-isolated instances**.
+
+Each instance (or **MIG slice**) has its own:
+
+- **dedicated compute cores**
+- **memory carve-out**
+- **separate engine contexts**
+
+It is essentially like having multiple smaller GPUs in one card.
+
+> For example, an **A100 40-GB GPU** can be split into up to **seven MIG instances**. The smallest configuration is **`1g.5gb`** (one GPU slice with 5 GB memory each). Each MIG device acts like a mini GPU with **guaranteed memory** and **isolated Streaming Multiprocessor (SM) resources**.
 
 Where time slicing is mainly **temporal sharing**, MIG is **hardware partitioning**.
 
@@ -856,6 +1538,64 @@ Simple distinction:
 - **MPS**: CUDA processes run more concurrently through an MPS server/control daemon.
 - **MIG**: the GPU is split into isolated hardware-backed instances.
 
+##### MIG strategies in the device plug-in
+
+The NVIDIA device plug-in can expose MIG partitions as schedulable resources in **two ways**:
+
+###### Single MIG strategy
+
+All MIG instances on a node are advertised under the **generic `nvidia.com/gpu`** resource (just like normal GPUs). This strategy assumes **each GPU is identically partitioned**.
+
+Example:
+
+```text
+2 x A100 each split into 7 x 1g.5gb instances
+=> node reports: nvidia.com/gpu: 14
+```
+
+- when a pod requests one GPU, it actually gets one **MIG slice (5 GB)**
+- the node labels (`gpu.product`, `gpu.count`) are adjusted to reflect MIG (e.g., `gpu.product = ...-MIG-1g.5gb`, `gpu.count = 14`)
+- simple for users, but requires **homogeneous MIG setup** on all GPUs
+
+###### Mixed MIG strategy
+
+MIG instances are exposed as **distinct resource types**, named by their MIG profile:
+
+- `nvidia.com/mig-1g.5gb`
+- `nvidia.com/mig-4g.20gb`
+- ...
+
+A node may advertise **several different resources** if it has a mix of MIG sizes.
+
+```yaml
+resources:
+  limits:
+    nvidia.com/mig-2g.10gb: 1   # request a roughly 10-GB MIG instance
+```
+
+- more **flexible**: GPUs in a node could be split differently or even remain whole
+- a bit more **advanced to schedule**: users need to know which MIG type to ask for
+
+In both cases, the GPU Operator's **MIG Manager** creates the MIG partitions on the GPU as specified by `mig.strategy` in the `ClusterPolicy` (either `single` or `mixed`). If MIG mode is off (`none` strategy), GPUs are not partitioned at all.
+
+##### Why MIG provides strong isolation
+
+Unlike time slicing, MIG provides **strong isolation**:
+
+- each MIG instance has a **fixed fraction** of the GPU's memory; it cannot use more than its allocation
+- prevents one workload from stealing the memory of the others
+- **fault isolation** is also improved: if one MIG instance crashes or resets, the others continue unaffected
+
+This makes MIG attractive for **multitenant** or **production** scenarios where you safely run different applications on the same physical GPU. Ideal if each model service needs only a few GBs of GPU memory.
+
+##### MIG trade-offs
+
+The trade-off is **granularity and overhead**:
+
+- you are limited to the **MIG profiles defined by NVIDIA** (you can't create an arbitrary 6-GB slice, only the fixed sizes offered by the card)
+- if one job could have used the whole GPU at times, **MIG partitions hard-limit it to its share** — no concept of borrowing unused capacity from others
+- by contrast, **time slicing** could let one pod burst to use the whole GPU if the others are idle
+
 MIG is better when workloads need stronger guarantees around:
 
 - **Isolation**
@@ -863,9 +1603,43 @@ MIG is better when workloads need stronger guarantees around:
 - **Fault containment**
 - **More stable performance**
 
+For LLM and generative AI workloads:
+
+- MIG is particularly useful for **inference serving** scenarios or running **many smaller experiments**
+- if you have a **large model** (e.g., needs >40 GB), MIG won't help — you need the **full GPU** or **multiple GPUs**
+- if you're hosting **multiple smaller models** (e.g., seven different language models each requiring ~5 GB), MIG can be very helpful, effectively giving each model its own virtual GPU with guaranteed memory
+
+##### Combining MIG with time slicing
+
+Time slicing and MIG are **not mutually exclusive**. You can time slice MIG instances too.
+
+Example:
+
+```text
+Split a GPU into 2 MIG instances
+Oversubscribe each MIG instance 2x with time slicing
+=> 4 schedulable units per GPU
+```
+
+This is **advanced** and needed only in corner cases — but the Operator supports it (appending `-SHARED` to MIG device product labels when both are enabled).
+
+For most production setups, choose **either MIG or time-shared, not both simultaneously**, due to complexity in managing performance.
+
+##### MIG vs Time Slicing summary
+
+- **MIG** partitions a GPU into smaller dedicated slices, each with **fixed memory and compute capacity** → isolation and predictability
+- **Time slicing** treats the whole GPU as a single pool that multiple jobs take turns using, **sharing time but not memory** → flexibility and potentially higher utilization if not all jobs are busy at once
+
+For **LLM training** (often consumes entire GPUs or multiple GPUs), typically **neither MIG nor time slicing** is used — GPUs are allocated **exclusively**.
+
+For **LLM inference** and related workloads (fine-tuning smaller models, running many experiments, serving many models), both MIG and time slicing can be very useful:
+
+- **MIG** → strict multitenancy or production QA tests
+- **Time slicing** → dev environments or oversubscribing on less critical batch jobs where slowdowns are acceptable
+
 For scenarios requiring stronger isolation guarantees and fixed memory allocations per workload, MIG is the more appropriate NVIDIA sharing mechanism.
 
-### Model-Serving Example: One GPU, Three Small Models
+#### Model-Serving Example: One GPU, Three Small Models
 
 Imagine one Kubernetes node has **one NVIDIA GPU**, and we want to serve **three small AI models**:
 
@@ -875,7 +1649,7 @@ Model B: text embeddings
 Model C: small chatbot
 ```
 
-#### 1. Time slicing
+##### 1. Time slicing
 
 Kubernetes pretends the single GPU is several shareable GPU slots.
 
@@ -898,7 +1672,7 @@ then repeats
 
 This is good for light workloads, but if all three get busy, they slow each other down.
 
-#### 2. MPS
+##### 2. MPS
 
 The three model servers still share the same GPU, but instead of only taking turns, their CUDA work can run more concurrently.
 
@@ -922,7 +1696,7 @@ MPS:
 multiple small model jobs sharing the GPU more concurrently
 ```
 
-#### 3. MIG
+##### 3. MIG
 
 The physical GPU is split into real isolated GPU partitions.
 
@@ -959,7 +1733,7 @@ Use MPS when workloads are small but active, and you want better utilization.
 Use MIG when you need stronger isolation and predictable GPU slices.
 ```
 
-#### Encode this
+##### Encode this
 
 - **Sub-GPU allocation improves utilization by sharing one GPU across workloads**
 - **Time slicing = oversubscription and time-based sharing**
@@ -969,9 +1743,84 @@ Use MIG when you need stronger isolation and predictable GPU slices.
 - **MPS improves utilization but is still not hard isolation**
 - **Large LLMs often still need exclusive GPUs because memory is the real constraint**
 
-#### Recall prompt
+##### Recall prompt
 
 *Why can time slicing improve GPU utilization but still be risky for production workloads that need memory or fault isolation?*
+
+[Back to Contents](#contents)
+
+### GPU Diagnostics with nvidia-smi
+
+To verify that your GPU sharing configuration works as expected, **`nvidia-smi`** is the go-to diagnostic tool.
+
+> **`nvidia-smi`** is NVIDIA's **System Management Interface** tool, providing real-time monitoring and management of NVIDIA GPU devices.
+
+It offers insights into:
+
+- **GPU utilization**
+- **memory usage**
+- **temperature**
+- **power consumption**
+- **active processes**
+
+By executing `nvidia-smi`, users obtain a **snapshot** of the current state of all GPUs in the system.
+
+For **continuous monitoring**, the `-l` flag refreshes output at specified intervals:
+
+```bash
+nvidia-smi -l 5   # updates every 5 seconds
+```
+
+This tool is invaluable for:
+
+- diagnosing **performance issues**
+- ensuring GPUs are operating within **optimal parameters**
+- verifying that applications are **actually utilizing GPU resources** as intended
+- detecting anomalies such as **thermal throttling** or **unexpected memory consumption**
+- enabling **proactive troubleshooting** in GPU-accelerated environments
+
+You can run it directly inside a Kubernetes pod with `kubectl`, too.
+
+##### Example 3-13. Running `nvidia-smi` directly on a GPU-enabled Kubernetes node
+
+```bash
+patch=$(cat <<EOT
+[{
+  "op":"add",
+  "path":"/spec/containers/0/resources",
+  "value":{"limits":{"nvidia.com/gpu":1}}
+}]
+EOT
+)
+
+kubectl run nvidia-smi --rm -it --restart=Never \
+  --image=nvidia/cuda:12.2.0-base-ubuntu22.04 \
+  --overrides="$(jq -n --arg p "$patch" '{spec: {containers: [{name: "nvidia-smi", image: "nvidia/cuda:12.2.0-base-ubuntu22.04", command: ["nvidia-smi"]}]}}')" \
+  -- nvidia-smi
+```
+
+The idea is to:
+
+- launch a short-lived pod with a base CUDA image
+- patch the container to **request a GPU** (`nvidia.com/gpu: 1`)
+- run `nvidia-smi` inside it to inspect the GPU as the runtime sees it
+
+This is especially useful for confirming:
+
+- that the **NVIDIA device plug-in** correctly grants device access
+- that **MIG partitions** appear as expected when MIG is enabled
+- that **time-sliced replicas** are exposed under the right resource name (e.g., `nvidia.com/gpu.shared`)
+
+#### Encode this
+
+- **`nvidia-smi` is the primary diagnostic command for NVIDIA GPUs**
+- **`-l N` refreshes the snapshot every N seconds**
+- **Run it inside a GPU-requesting pod to verify the pod actually sees the GPU**
+- **Use it to confirm MIG and time-slicing configurations are visible to the workload**
+
+#### Recall prompt
+
+*Why is running `nvidia-smi` inside a pod a stronger verification than checking GPU labels on the node?*
 
 [Back to Contents](#contents)
 
@@ -4599,7 +5448,14 @@ Use these prompts for fast review:
 - **Core APIs**: What is the difference between **`ServingRuntime`** and **`InferenceService`**?
 - **LLM APIs**: Why was **`LLMInferenceService`** introduced?
 - **Operations**: Why should runtime lifecycle and model lifecycle be separated?
+- **GPU discovery**: Why is **GFD** needed alongside **NFD** for Kubernetes GPU clusters?
+- **Device plug-ins**: What four functions does the Kubernetes device plug-in framework provide?
+- **GPU scheduling**: When do you reach for **`nodeSelector`**, **node affinity**, **taints**, **resource requests**, or **DRA**?
+- **DRA**: How does Dynamic Resource Allocation change the model from "how many" to "what kind"?
+- **NVIDIA GPU Operator**: Which components does the **`ClusterPolicy`** orchestrate?
 - **GPU sharing**: What is the difference between **time slicing**, **MPS**, and **MIG**?
+- **MIG strategies**: When do you choose the **single** strategy versus the **mixed** strategy?
+- **Diagnostics**: How does running **`nvidia-smi`** inside a pod verify the GPU plumbing?
 - **Portability**: Why are ONNX, GGUF, and Safetensors each useful but incomplete?
 - **Registry**: Why does a model registry store metadata more often than weights?
 - **Hugging Face**: Why is it the default public discovery platform but not the full production answer?
