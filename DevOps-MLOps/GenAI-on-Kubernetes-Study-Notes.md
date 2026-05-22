@@ -25,6 +25,12 @@
      - [MIG (Multi-Instance GPU)](#mig-multi-instance-gpu)
      - [Model-Serving Example: One GPU, Three Small Models](#model-serving-example-one-gpu-three-small-models)
    - [GPU Diagnostics with nvidia-smi](#gpu-diagnostics-with-nvidia-smi)
+   - [Multi-GPU Inference](#multi-gpu-inference)
+     - [Data Parallelism](#data-parallelism)
+     - [Model Parallelism](#model-parallelism)
+     - [Single-Node Versus Multinode Inference](#single-node-versus-multinode-inference)
+   - [GPU Resource Optimizations](#gpu-resource-optimizations)
+   - [GPU Lessons Learned](#gpu-lessons-learned)
 4. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
 5. [Model Registry](#model-registry)
    - [Hugging Face Model Hub](#hugging-face-model-hub)
@@ -1793,10 +1799,10 @@ patch=$(cat <<EOT
 EOT
 )
 
-kubectl run nvidia-smi --rm -it --restart=Never \
-  --image=nvidia/cuda:12.2.0-base-ubuntu22.04 \
-  --overrides="$(jq -n --arg p "$patch" '{spec: {containers: [{name: "nvidia-smi", image: "nvidia/cuda:12.2.0-base-ubuntu22.04", command: ["nvidia-smi"]}]}}')" \
-  -- nvidia-smi
+kubectl run --rm -it gpu-pod \
+  --image=nvidia/cuda:12.8.1-base-ubi9 \
+  --restart=Never \
+  --overrides=$patch --override-type=json -- nvidia-smi
 ```
 
 The idea is to:
@@ -1821,6 +1827,531 @@ This is especially useful for confirming:
 #### Recall prompt
 
 *Why is running `nvidia-smi` inside a pod a stronger verification than checking GPU labels on the node?*
+
+[Back to Contents](#contents)
+
+### Multi-GPU Inference
+
+> Sub-GPU techniques like **time slicing** or **MIG** are useful for squeezing many **small or midsized models** onto the same card, but LLMs rarely fall into that category. In practice, the bottleneck is not how to split one GPU — it is that **even the biggest card is still too small**.
+>
+> This brings the inverse problem: instead of sharing one GPU across many workloads, we must **distribute a single workload across many GPUs**.
+
+**Multi-GPU inference** addresses this challenge by coordinating multiple GPUs, sometimes across several nodes, to serve a single large model.
+
+Running inference for LLMs often demands **more GPU memory and compute than a single GPU can provide**. When using multiple GPUs for LLM inference, there are **two fundamental approaches**, each serving different needs.
+
+![Multi-GPU parallelism taxonomy](<assets/Multi-GPU parallelism taxonomy.png>)
+
+**Figure 3-1. Multi-GPU parallelism taxonomy**
+
+- **Data parallelism** — uses multiple GPUs to host **replicas of the same model**, serving different requests in parallel to increase overall **queries per second (QPS)**
+- **Model parallelism** — required when a single model is **too large to fit into one GPU's memory**; the model is **split across GPUs** so that each GPU holds part of the model, and collectively they handle one inference request
+
+Model parallelism can be further divided into:
+
+- **Tensor parallelism** — splits individual model layers across GPUs on a single node
+- **Pipeline parallelism** — distributes entire model layers across multiple nodes
+
+#### Data Parallelism
+
+**Data parallelism** increases overall throughput by running **multiple complete copies of the model**:
+
+- each GPU holds the **full model**
+- each GPU serves **different requests concurrently**
+- when a model is too large for one GPU, each **group of GPUs working together via model parallelism** can also run an **independent replica**
+
+This approach **does not accelerate** any single query's latency, but it allows **more queries to be processed in parallel**, boosting QPS.
+
+> Example: four GPUs and a moderate-sized LLM that fits in one GPU → deploy **four separate model instances**, each running on one GPU, handling **4× the traffic**.
+
+The Kubernetes-native approach:
+
+- run **multiple replica pods**, each requesting one GPU
+- serve the model behind a **load balancer service** for automatic load distribution
+
+Alternatively, some inference frameworks use a **multithreaded server within a single pod** that dispatches requests to multiple GPUs, though this is less common for GPU workloads in Kubernetes.
+
+![Data parallelism: throughput scaling](<assets/Data parallelism - throughput scaling.png>)
+
+**Figure 3-2. Data parallelism: throughput scaling**
+
+##### When data parallelism fits
+
+Ideal when:
+
+- you need to serve **many simultaneous users or API requests**
+- the model fits in a **single GPU's memory**
+
+> Example: a 7B-parameter LLM can often be quantized to 8 GB, fitting on a 16 GB GPU — you might run **8 replicas on 8 GPUs** to handle many chats in parallel.
+
+##### Limitations
+
+- **does nothing to reduce the latency of a single query** — each query is still processed by one GPU end-to-end
+- if one GPU would take 10 seconds to handle a request, adding more GPUs for data parallelism **won't speed up that one request**
+- serving a single request on multiple model replicas would be wasteful — it consumes multiple GPUs to process the same input without reducing latency
+- to lower per-request latency, **model parallelism** is needed instead
+
+**Resource usage**: running N replicas means storing **N copies of the model weights** in memory. Inefficient if the model is large and memory is limited.
+
+Some frameworks support **multistream batching** on a single model instance to improve utilization (e.g., **vLLM** can dynamically batch multiple incoming queries on one GPU to improve throughput), which is an alternative to full replication.
+
+##### Operational considerations
+
+- straightforward — typically implemented as **horizontal scaling of pods**
+- memory footprint **grows linearly** with replica count
+- saturates overall GPU compute only if you have enough concurrent load
+- if request rate is low, extra GPUs may sit idle — in that case, consolidate work onto fewer GPUs or **share GPUs among multiple models via time slicing or MIG**
+- for dynamic workloads, leverage **Kubernetes autoscaling** to automatically adjust the number of replicas based on demand
+
+#### Model Parallelism
+
+The second motive for multi-GPU inference is to allow a **single large model** to be served by multiple GPUs in unison.
+
+Unlike data parallelism (which replicates the entire model), **model parallelism splits a single model across multiple GPUs** — necessary for modern LLMs with **tens or hundreds of billions of parameters** that exceed the memory of one GPU.
+
+This is possible because LLMs have a **layered architecture** composed of sequential transformer layers. This structure allows splitting the model in two ways:
+
+- **tensor parallelism** divides the computations **within each layer** across GPUs
+- **pipeline parallelism** assigns **different layers** to different GPUs
+
+Both approaches can be combined for very large deployments. Individual GPUs hold a portion of the neural network and compute part of the forward pass.
+
+**Trade-off**: reducing per-GPU memory usage and potentially latency for one inference comes at the cost of **added communication between GPUs**. High-bandwidth interconnects like **NVLink** or **NVSwitch** are often critical to handle the frequent data exchanges without bottlenecks.
+
+> **NVLINK AND NVSWITCH: NVIDIA GPU INTERCONNECTS**
+>
+> NVIDIA developed two complementary technologies to enable high-speed GPU-to-GPU communication for model parallelism: **NVLink** for direct connections and **NVSwitch** for fabric-based networking.
+>
+> **NVLink** is a high-speed, point-to-point interconnect that provides direct GPU-to-GPU communication within a server node.
+>
+> - the fifth-generation **NVLink 5.0** (introduced with the **Blackwell** architecture) delivers up to **1.8 TBps bidirectional bandwidth per GPU** using 18 links at 100 GBps each
+> - this represents a **2× improvement** over the previous **NVLink 4.0** generation (900 GBps on H100 GPUs)
+> - and over **14× the bandwidth of PCIe Gen5**
+> - early NVLink generations supported connecting **4 to 8 GPUs**
+> - modern implementations can scale to **576 GPUs**, though practical deployments typically use **8 GPUs per node**
+>
+> **NVSwitch** is a high-performance **switching fabric** (a switching network architecture) that extends NVLink connectivity into a **fully connected, nonblocking mesh** where any GPU can communicate with any other GPU at full NVLink bandwidth simultaneously.
+>
+> - **NVSwitch 4.0** (for Blackwell systems) features **72 NVLink 5.0 ports per chip**
+> - a dual-chip switch tray provides **144 ports** and **14.4 TBps switching capacity**
+> - **NVIDIA HGX H100 and H200** systems use **4 NVSwitch 3.0 chips** to interconnect 8 GPUs
+> - the **GB200 NVL72** rack-scale system connects 72 GPUs across multiple servers using NVLink Switch with 144 ports and **130 TBps of total GPU bandwidth**
+>
+> **The key distinction**: NVLink provides the **physical interconnect links**, while NVSwitch provides the **switching infrastructure** to scale these connections across many GPUs.
+>
+> For cross-node communication in multiserver clusters, systems combine NVLink/NVSwitch for intra-node communication with **InfiniBand** or **RoCE** networks for inter-node traffic. **GPUDirect RDMA** technology bridges these layers, enabling direct GPU-to-GPU data transfers across network boundaries **without CPU involvement**.
+>
+> Cost considerations: NVSwitch-based deployments can reach **multimillion-dollar price points** and require substantial **power and cooling infrastructure**. For training LLMs and running inference on models exceeding single-GPU memory capacity, the bandwidth and low-latency characteristics of NVLink and NVSwitch are often **essential to achieve acceptable performance**.
+
+##### Tensor parallelism
+
+**Tensor parallelism** slices the computations **within each layer** across multiple GPUs.
+
+How it works:
+
+- each GPU holds a **shard of the layer's weights** (for example, splitting a large weight matrix by columns or rows)
+- each GPU processes a **portion of the layer's input**
+- GPUs exchange **partial results** to construct the full output of the layer
+
+> For instance, if a fully connected layer has a weight matrix too large for one GPU, it can be divided into multiple slices. Each GPU performs matrix multiplication of the input by its weight slice. The partial outputs are concatenated or summed to form the complete output.
+
+This approach keeps **all GPUs busy on the same layer** (improving per-token latency) and effectively **multiplies the available memory bandwidth** by using several GPUs in parallel.
+
+![Tensor parallelism](<assets/Tensor parallelism.png>)
+
+**Figure 3-3. Tensor parallelism**
+
+**Advantages**:
+
+- directly reduces the **memory burden per GPU**, allowing extremely large models to load (e.g., splitting a **70B-parameter model** across 2 to 4 GPUs means each holds only 35B to 17.5B params)
+- **lower latency per token** since GPUs compute in parallel
+
+**Disadvantages**:
+
+- adds **frequent communication overhead** — GPUs must sync after processing each layer or attention head
+- if the interconnect is not fast enough, **communication can dominate runtime** (in poorly partitioned cases, **50–70%** of inference time)
+
+<u>Practical rule:</u> tensor parallelism is best confined to **single-node setups** with high-bandwidth links (PCIe with NVLink or NVSwitch). Fine-grained tensor parallelism across multiple nodes with standard networking is **not advisable** due to latency costs.
+
+The maximum tensor parallel degree is often **the number of GPUs in one server** (e.g., four-way tensor parallelism on a four-GPU node). Beyond that, use a machine with more GPUs or switch to **pipeline parallelism** between nodes.
+
+##### Pipeline parallelism
+
+**Pipeline parallelism** splits the model **vertically by layers**, assigning different consecutive layers to different GPUs.
+
+How it works:
+
+- the first few layers on GPU 0 process the input sequence
+- intermediate activations pass to GPU 1 for the subsequent layers
+- this continues through all pipeline stages, resembling an **assembly line**
+- pipeline parallelism stores and transfers **intermediate activations at pipeline stages**, but **not every layer's outputs** as in tensor parallelism
+- communications happen **only once per pipeline stage** (per forward pass) rather than at every layer operation
+
+![Pipeline parallelism](<assets/Pipeline parallelism.png>)
+
+**Figure 3-4. Pipeline parallelism**
+
+**Key advantage**: minimizes inter-GPU **communication frequency**. Each pipeline stage requires only one activation handoff per forward pass, making pipeline parallelism **more tolerant of slower interconnects**.
+
+This is **ideal when**:
+
+- GPUs span **different servers**
+- high-speed interconnects like NVLink **aren't available**
+
+It allows scaling to models that exceed even a multi-GPU node's total memory (e.g., sharding a 175B model across two nodes).
+
+**Disadvantages**:
+
+- **does not improve single-request latency** — in fact, it can **increase latency** due to sequential stage processing
+- introduces **idle time** because the next GPU in the pipeline cannot start processing the next token's data until the previous GPU has finished the previous token
+- without careful management, multiple GPUs in a naive pipeline might be **underutilized**
+
+**Mitigation — microbatching**:
+
+Frameworks use microbatching or scheduling techniques: splitting the incoming batch or sequence into **microbatches** that are fed in a staggered fashion so all pipeline stages stay busy in parallel.
+
+> Example: NVIDIA's **FasterTransformer** and **vLLM** implement pipelining with **automated microbatch scheduling** to avoid idle times.
+
+**Bottom line**: pipeline parallelism shines for **multinode scaling** and **high-throughput batch processing** where latency of individual queries is less critical.
+
+##### Hybrid parallelism
+
+While tensor and pipeline parallelism address different challenges, they can be **combined** for maximum scalability in production deployments.
+
+Many systems adopt a **hybrid parallelism** approach:
+
+- **tensor parallelism within each node**
+- **pipeline parallelism across nodes**
+
+This leverages **fast local links** for intra-node splitting and uses **pipeline stages** to span multiple machines without requiring excessive cross-node communication.
+
+<u>Rule of thumb:</u>
+
+- use **pipeline parallelism across nodes** and **tensor parallelism within a node** when network links are slow
+- if you have a **very fast interconnect between nodes**, tensor parallelism can extend across nodes as well
+
+##### Coordination and fault tolerance
+
+In all cases, distributed inference requires coordination — GPUs must communicate intermediate results using **collective operations**:
+
+- **all-reduce**
+- **all-gather**
+- **send/receive**
+
+These are typically performed using **NVIDIA's NCCL library** over high-speed links.
+
+> If one GPU and the node in a model-parallel group fails, the inference will **fail entirely**; there is **no graceful fault tolerance** for a partially missing model shard.
+
+Deploying model parallel inference in Kubernetes may benefit from:
+
+- **pod affinity/anti-affinity rules** (to colocate GPUs or separate failure domains)
+- **appropriate health checks** to restart the whole group if one part dies
+
+> **CONTROLLING POD PLACEMENT FOR MULTI-GPU WORKLOADS**
+>
+> Kubernetes **affinity** and **anti-affinity** rules let you control where pods land relative to each other, essential for multi-GPU deployments.
+>
+> **Affinity** colocates pods on the same node, rack, or zone. Use this for **model-parallel inference** where GPUs must communicate frequently. Keeping tensor-parallel pods together on the same node minimizes latency over fast local interconnects like NVLink.
+>
+> **Anti-affinity** spreads pods apart across nodes or zones. Use this for **throughput-scaling deployments** where independent model replicas should avoid single points of failure. If one node goes down, replicas on other nodes continue serving.
+>
+> Both mechanisms support:
+>
+> - **hard constraints** — a pod will not schedule unless the rule is satisfied
+> - **soft constraints** — scheduler prefers but does not require the placement
+>
+> Hard rules are critical for **correctness**, such as ensuring model shards land together. Soft rules **optimize performance** when possible but allow fallback placement.
+
+#### Single-Node Versus Multinode Inference
+
+When deploying model-parallel inference on Kubernetes, you face a fundamental topology choice:
+
+- **concentrate** your GPUs on a single node, or
+- **spread** them across multiple nodes
+
+Each approach has distinct trade-offs.
+
+##### Single-node multi-GPU inference
+
+All GPUs used for the model or replicas are in **the same server**. Advantages:
+
+- **high-speed local interconnects** — within one machine, GPUs often communicate via **PCIe** (and on high-end GPU servers, via **NVLink** or **NVSwitch** between GPUs)
+- for example, **NVIDIA DGX-class nodes** have NVSwitch connecting all eight GPUs with up to **900 GBps** bandwidth — far faster than typical network links
+- parallel strategies that involve frequent communication (like **tensor parallelism**) work **very well within a single node**
+
+In Kubernetes, utilizing multiple GPUs on one node is straightforward:
+
+- request the number of `nvidia.com/gpu` resources in the pod spec
+- the scheduler places the pod on a node that has that many free GPUs
+- the container can see all GPUs assigned to a pod (e.g., via the environment variable **`CUDA_VISIBLE_DEVICES`**)
+- your inference server or code can then initialize model parallelism across those devices
+
+![Multiple GPUs on a single node](<assets/Multiple GPUs on a single node.png>)
+
+**Figure 3-5. Multiple GPUs on a single node**
+
+##### Multinode multi-GPU inference
+
+Necessary when the model is so large that **no single node has enough GPU memory** (for example, some teams run **175B+ parameter models** across two or more nodes with eight **A100 80 GB** GPUs each).
+
+Communication goes over the **network interface** between nodes:
+
+- **InfiniBand**
+- **Ethernet**
+
+Network bandwidth between nodes (e.g., 100-Gbit Ethernet at **12.5 GBps**) is an **order of magnitude slower** than intra-node NVLink (up to **900 GBps**).
+
+This makes **pipeline parallelism** the preferred strategy across nodes, as it sends **larger chunks less frequently**:
+
+- each node processes a substantial portion of the workload before passing it to the next
+- the system becomes more **resilient to network latency**
+
+If multinode is used:
+
+- use the **fastest network available**
+- ensure **NCCL** is configured to use **RDMA** if possible
+
+> NCCL can operate over **sockets** or **InfiniBand**. In Kubernetes, you must also ensure the pods can **discover each other's addresses** for NCCL (sometimes using Kubernetes service IPs or host networking for performance).
+
+> **WHAT IS NCCL AND RDMA?**
+>
+> **NCCL** is a high-performance library designed for efficient **GPU-to-GPU communication** in multi-GPU and multinode environments. It provides optimized collective communication primitives such as **all-reduce**, **broadcast**, **reduce-scatter**, and **all-gather**, which are essential for synchronizing model parameters or intermediate results during tensor and pipeline parallelism.
+>
+> NCCL is typically not used directly by end users; it is leveraged under the hood by inference runtimes like **vLLM**, and frameworks such as **PyTorch**, which abstract its complexity behind higher-level APIs. However, in distributed Kubernetes deployments, advanced users may need to tune NCCL-related settings (e.g., **`NCCL_SOCKET_IFNAME`**) to ensure optimal performance over specific network interfaces.
+>
+> When available, **RDMA** can be used by NCCL to **bypass the CPU** and **directly access GPU memory on remote nodes**, significantly reducing latency and improving bandwidth in multinode inference setups. RDMA typically requires **specialized accelerated networking devices**, such as **InfiniBand** or **RoCE-capable network adapters**.
+>
+> Properly configured, NCCL with RDMA plays a crucial role in achieving **scalable, high-throughput inference** for LLMs across multiple GPUs and nodes.
+
+For multinode inference, the typical approach is to run **one pod per node** and coordinate them externally. Popular inference runtimes often leverage orchestration frameworks to simplify this process:
+
+- **vLLM** in multinode deployments uses **Ray**, a distributed computing framework with its own scheduler, to orchestrate inference across multiple nodes
+- on Kubernetes, **Ray runs inside pods managed by the KubeRay operator**
+- Kubernetes still schedules and restarts pods, while Ray's runtime coordinates distributed vLLM workers across nodes, handling task placement, node discovery, and some fault-tolerance concerns
+- other runtimes such as **Hugging Face's TGI** rely on Kubernetes-native constructs like **StatefulSets** or **Deployments**, where one pod acts as a coordinator (commonly referred to as **"rank-0"**) and manages communication between model partitions on different pods
+
+![Multiple GPUs on multiple nodes](<assets/Multiple GPUs on multiple nodes.png>)
+
+**Figure 3-6. Multiple GPUs on multiple nodes**
+
+Regardless of the orchestration method:
+
+- **pod affinity** ensures pods land on distinct GPU nodes or optimized locations
+- **service discovery** lets pods resolve each other by name or IP address
+- Kubernetes provides built-in mechanisms like **pod hostnames** and **subdomains** to facilitate pod discovery
+- **NCCL** can perform topology discovery automatically within a node but typically requires **explicit network interface configuration across nodes**
+
+##### Scaling efficiency
+
+Latency and bandwidth differences mean the **scaling efficiency** going from single-node to multinode may drop:
+
+- within one node: **near-linear speedup** (e.g., four GPUs deliver approximately 3.5× the throughput of one GPU for a well-optimized model)
+- multinode: **diminishing returns** if the network becomes a bottleneck
+- **collective operations** (like all-reduce) across nodes must be synchronized — if one node is slightly slower or has higher network latency, it can slow the others
+- performance becomes **less predictable**; the **slowest node dictates the pace**
+
+##### Failure handling
+
+- **Single-node**: failure of the node naturally leads to pod termination, which Kubernetes handles straightforwardly
+- **Multinode**: failure of any participating pod typically **disrupts the entire inference job** due to incomplete model partitions; recovery usually requires **restarting the full group of pods**
+
+Distributed inference jobs require **all-or-nothing semantics** both for initial scheduling and recovery (a pattern known as **gang scheduling**).
+
+Kubernetes concepts like **`PodDisruptionBudgets`** help minimize disruptions during planned maintenance. Some advanced setups consider **checkpointing strategies**, though these are less common for stateless inference workloads and more often used during training.
+
+##### Summary
+
+- **single-node deployments** remain preferable for model-parallel inference due to **lower complexity and higher efficiency**
+- **multinode deployments** become necessary due to model size, **pipeline parallelism**, **expert parallelism** (for Mixture-of-Experts models), or other network-efficient methods
+- combined with robust orchestration solutions like **Ray.io** or Kubernetes-native deployment patterns, this ensures **reliable and efficient large-scale inference operations**
+
+#### Encode this
+
+- **Data parallelism = many model replicas → throughput scaling, no latency reduction**
+- **Model parallelism = one model split across GPUs → memory savings and possibly lower latency, at communication cost**
+- **Tensor parallelism splits work inside each layer (frequent comms, best inside one node)**
+- **Pipeline parallelism splits layers across stages (rare comms, friendlier to slower networks)**
+- **Hybrid parallelism: tensor inside nodes, pipeline across nodes**
+- **NVLink/NVSwitch make intra-node communication 10–100× faster than typical Ethernet**
+- **Model-parallel pods need affinity + gang scheduling — partial failures collapse the whole inference job**
+- **Multinode coordination commonly uses Ray + KubeRay (vLLM) or rank-0 StatefulSets (TGI)**
+
+#### Recall prompt
+
+*Why is tensor parallelism usually confined to a single node while pipeline parallelism is the preferred strategy across nodes?*
+
+[Back to Contents](#contents)
+
+### GPU Resource Optimizations
+
+This subsection consolidates **key GPU optimization strategies** for production deployments. Some techniques (MIG, time slicing) were covered earlier in this section; the focus here is on putting them together with additional best practices.
+
+> **Maximizing GPU utilization and avoiding unused memory is key in production LLM inference, since GPUs are expensive resources.**
+
+#### GPU memory defragmentation
+
+As models load and unload, or as dynamic inference workloads allocate memory (for example, varying sequence lengths), the GPU's memory allocator can become **fragmented**:
+
+- free memory exists in **many small chunks** rather than one contiguous block
+- can **prevent large models from being loaded**
+- can lead to **out-of-memory errors** even when enough total memory is free but not contiguous
+
+Mitigations:
+
+- **pre-allocate large blocks** (e.g., load all model weights on startup, use memory pools for scratch space) to avoid heap fragmentation
+- **PyTorch's caching allocator** helps, but long-running pods might still suffer fragmentation over time
+- if GPU memory usage grows or OOMs occur after many requests, **periodically restart the pod** to clear fragmentation
+- PyTorch provides an **"expandable segments"** feature that reduces fragmentation by allowing the allocator to **expand existing memory segments** rather than create new ones
+- on the inference side, **vLLM's PagedAttention** is essentially a **defragmentation technique for the KV cache**
+
+> **Detection**: if available memory decreases after serving many requests, it's probably memory defragmentation. Proper monitoring is essential.
+
+#### GPU sharing and consolidation
+
+> **An idle GPU is wasted money.**
+
+If your LLM uses only **30% of a GPU's compute and memory**, consider running **multiple model instances** or other workloads on the same GPU:
+
+- **MIG** on supported hardware for clear separation (e.g., two 6B-parameter models on one 80 GB A100, each in a 40 GB MIG slice)
+- **time slicing** (see [Time Slicing](#time-slicing))
+
+Another approach: **multimodel servers** that load several models onto one GPU and route requests:
+
+- **NVIDIA Triton**
+- **AWS Multi-Model Server**
+
+These can support multiple models per GPU, dynamically unloading less-used models if needed.
+
+<u>Best practice:</u> **profile usage**. If a model uses only 50% of GPU memory, that remaining 50% could host another smaller model or a second copy to double throughput.
+
+<u>Caveat:</u> don't overload memory — leave some margin since **driver overhead** and **fragmentation** can eat a few percent.
+
+> Kubernetes doesn't natively know if a GPU is **"only half used"** — it's up to you to **bin-pack wisely** using MIG or by deploying multiple pods to the same node.
+
+#### Quantization and compilation
+
+Optimizing the model itself can reduce GPU needs:
+
+- **4-bit or 8-bit quantization** of weights dramatically cuts memory per model copy (at some accuracy cost)
+- if an LLM can be quantized from 16-bit to 8-bit with negligible quality loss, you potentially **halve the number of GPUs** needed
+- many open models have 8-bit or 4-bit quantized versions available
+
+> Example: a **70B model** in full precision needs 280 GB (70B × 4 bytes/param), but in **4-bit mode only ~35 GB** (70B × 0.5 byte/param) → can fit on a **single 48 GB GPU**.
+
+**vLLM** and **TGI** servers support loading such quantized models. Use **optimized runtimes** to improve inference speed per GPU — faster models handle more load with the same hardware.
+
+#### Autoscale
+
+Autoscaling multi-GPU deployments can be tricky if they are model-parallel:
+
+- when a model is split across **four GPUs**, you cannot scale down to two GPUs or scale up to six GPUs
+- you must scale in **whole replica units**: either remove all four GPUs or add another complete four-GPU group
+
+For **throughput scaling**, Kubernetes-based autoscaling is effective:
+
+- **KEDA**
+- **HPA**
+- **Knative**
+
+These can scale on **RPS**, **concurrency**, or **latency**.
+
+#### Placement and affinity
+
+For multi-GPU nodes it is important to know the **topology**:
+
+- on some eight-GPU servers, **not all GPUs are directly connected** — there may be NVLink links in a mesh or groups
+- example: an **NVIDIA DGX A100** has NVSwitch all-to-all, but other systems may have **two groups of four GPUs each**
+- if your model parallelism uses four GPUs, performance is better if those four are all within **one NVLink group**
+
+Tools and techniques:
+
+- use **`nvidia-smi topo -m`** to display the mesh grouping
+- Kubernetes won't automatically account for that
+- you can use the node's hardware knowledge and **assign specific GPU indices** by using the device plug-in capabilities to pick specific GPUs by index
+
+> Manually selecting GPU indices is an **advanced optimization**. For most cases, Kubernetes will just assign any four GPUs. But if you care about intra-node latency, you may want to pin to, say, **GPU 0–3** if they're within the same NVSwitch cluster on that node.
+
+#### Optimize I/O and initialization
+
+Large models take time to load from disk or network into GPU memory:
+
+- if you scale pods up and down, you **pay that cost each time**
+- amortize it by **keeping pods warm** if possible
+- see [Optimize vLLM Startup Time](#optimize-vllm-startup-time) for detailed loading optimization techniques
+
+#### Monitor GPU health
+
+GPUs can encounter issues like:
+
+- **ECC memory errors**
+- **high temperature throttling**
+
+Operational guidance:
+
+- ensure **node-level monitoring** and **alerts** for such events
+- Kubernetes won't automatically reschedule a pod if the GPU starts erroring but hasn't crashed
+- you may need a daemon that checks with **`nvidia-smi`** for errors and then **taints the node** or **restarts pods**
+- running **NVIDIA DCGM** and integrating with Kubernetes node health can help
+- a **flaky GPU** in a model-parallel group can cause **wrong results or crashes**, so catching hardware issues early is important
+
+#### Encode this
+
+- **Memory fragmentation is real for long-running pods; pre-allocation + PagedAttention + periodic restarts mitigate it**
+- **Idle GPU = wasted money; combine MIG/time-slicing, multimodel servers, and bin-packing to keep GPUs busy**
+- **Quantization (4-bit/8-bit) is one of the cheapest ways to cut GPU count**
+- **Model-parallel groups must scale in whole-replica units**
+- **NVLink topology matters — `nvidia-smi topo -m` reveals which GPUs are close to each other**
+- **DCGM + node-level monitoring catches GPU faults before they corrupt model-parallel inference**
+
+#### Recall prompt
+
+*Why must autoscaling a model-parallel deployment work in whole-replica units rather than per-GPU increments?*
+
+[Back to Contents](#contents)
+
+### GPU Lessons Learned
+
+This section explored how Kubernetes integrates GPU resources through **device plug-ins**, **feature discovery**, and **advanced management capabilities** for AI workloads.
+
+**Kubernetes extends beyond its native CPU/memory scheduling**
+
+The **device plug-in framework**, combined with **Node Feature Discovery (NFD)** and **GPU Feature Discovery (GFD)**, enables automatic detection and labeling of GPU capabilities. This allows workload-specific scheduling based on GPU model, driver version, and hardware features — the foundation for both simple resource-based scheduling and sophisticated **topology-aware placement**.
+
+**GPU scheduling requires different strategies than traditional workloads**
+
+- **resource-based scheduling** allocates GPUs as countable units
+- **label-based scheduling** with `nodeSelector`, affinity rules, and taints enables precise placement based on GPU characteristics
+- the emerging **Dynamic Resource Allocation (DRA) API** promises more flexible resource handling, although device plug-ins remain the production-ready standard for most deployments
+
+**Sub-GPU allocation maximizes hardware utilization**
+
+- **Time slicing** enables **temporal sharing** — suitable for inference workloads with intermittent GPU usage
+- **Multi-Instance GPU (MIG)** provides **hardware-level partitioning** with memory isolation, creating dedicated GPU slices with guaranteed resources and performance isolation
+- each approach involves trade-offs among **isolation**, **overhead**, and **scheduling complexity**
+
+**Multi-GPU inference is necessary when models exceed single-GPU memory**
+
+- **Tensor parallelism** distributes individual operations across GPUs, requiring high-bandwidth interconnects and tight synchronization
+- **Pipeline parallelism** splits model layers across GPUs, balancing computation distribution with bubble overhead from sequential dependencies
+- **Data parallelism** replicates the entire model across GPUs, processing different batches simultaneously
+- these strategies demand careful orchestration across pods and nodes, with Kubernetes providing scheduling primitives, while runtime frameworks handle the coordination logic
+
+**The NVIDIA GPU Operator consolidates GPU management**
+
+A single operator deploys **device plug-ins**, **feature discovery**, **monitoring (DCGM)**, and **runtime components**. The declarative approach via **`ClusterPolicy`** resources simplifies GPU cluster configuration and ensures consistent GPU stack deployment across nodes, reducing operational complexity compared to manual component installation.
+
+#### Encode this
+
+- **Discovery → scheduling → sharing → multi-GPU → operator-managed: the operational arc of GPUs on Kubernetes**
+- **GPU choice on Kubernetes is a topology decision, not just a resource decision**
+- **Multi-GPU LLM inference is fundamentally a distributed system, not just a "request more GPUs" problem**
+- **The GPU Operator is the production glue that keeps drivers, runtime, monitoring, and sharing consistent**
+
+#### Recall prompt
+
+*What is the operational arc of running GPU workloads on Kubernetes, from a fresh cluster to a production multinode LLM deployment?*
+
+> **Note on memory units**: GPU manufacturers like NVIDIA typically advertise memory in **decimal gigabytes** (GB, base-10), while Kubernetes often uses **binary gibibytes** (GiB, base-2). The difference is small but notable: **40 GB ≈ 37.25 GiB** and **80 GB ≈ 74.5 GiB**. These notes use GB to match industry practice.
 
 [Back to Contents](#contents)
 
@@ -5456,6 +5987,11 @@ Use these prompts for fast review:
 - **GPU sharing**: What is the difference between **time slicing**, **MPS**, and **MIG**?
 - **MIG strategies**: When do you choose the **single** strategy versus the **mixed** strategy?
 - **Diagnostics**: How does running **`nvidia-smi`** inside a pod verify the GPU plumbing?
+- **Multi-GPU**: When do you reach for **data parallelism** vs **tensor parallelism** vs **pipeline parallelism**?
+- **Interconnect**: Why do **NVLink** and **NVSwitch** matter for tensor parallelism but less for pipeline parallelism?
+- **Topology**: When is **multinode multi-GPU** inference unavoidable, and what coordination problems does it bring?
+- **NCCL/RDMA**: Why is **RDMA-backed NCCL** important for multinode LLM inference?
+- **Optimization**: Which **GPU resource optimizations** matter most for production LLM serving?
 - **Portability**: Why are ONNX, GGUF, and Safetensors each useful but incomplete?
 - **Registry**: Why does a model registry store metadata more often than weights?
 - **Hugging Face**: Why is it the default public discovery platform but not the full production answer?
