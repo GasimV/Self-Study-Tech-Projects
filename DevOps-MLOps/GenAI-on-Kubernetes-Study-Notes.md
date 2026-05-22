@@ -2357,7 +2357,7 @@ A single operator deploys **device plug-ins**, **feature discovery**, **monitori
 
 ## Current State and Gaps in Model Portability
 
-![MLOps Portability Cover Image](<assets\MLOps-Portability-Cover-Image.png>)
+![MLOps Portability Cover Image](<assets/MLOps-Portability-Cover-Image.png>)
 
 Model portability is still **immature** for LLMs.
 
@@ -4438,7 +4438,7 @@ Applied together, these techniques can reduce vLLM scale-up time from many minut
 
 ### LLM-Aware Routing
 
-![AI Inference on Kubernetes](<assets\AI Inference on Kubernetes.png>)
+![AI Inference on Kubernetes](<assets/AI Inference on Kubernetes.png>)
 
 After scaling to multiple replicas, the next production question is:
 
