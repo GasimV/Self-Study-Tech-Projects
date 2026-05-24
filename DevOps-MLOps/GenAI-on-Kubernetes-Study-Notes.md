@@ -8787,7 +8787,7 @@ While **not designed for large-scale infrastructure on Kubernetes**, it is **ver
 pip install unsloth
 ```
 
-In this respect, it can be seen as the **fine-tuning equivalent of local inference projects** like **Ollama** or **`llama.cpp`**. Although designed as a local library, it is possible to deploy it on Kubernetes using the **[AIKit project](https://github.com/sozercan/aikit)**.
+In this respect, it can be seen as the **fine-tuning equivalent of local inference projects** like **[Ollama](https://ollama.com/)** or [**`llama.cpp`**](https://github.com/ggml-org/llama.cpp). Although designed as a local library, it is possible to deploy it on Kubernetes using the **[AIKit project](https://github.com/sozercan/aikit)** - [see documentation](https://kaito-project.github.io/aikit/docs/).
 
 #### Encode this
 
