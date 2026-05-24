@@ -111,6 +111,10 @@
    - [Running Tuning Jobs on Kubernetes](#running-tuning-jobs-on-kubernetes)
      - [Kubeflow Trainer](#kubeflow-trainer)
      - [Other Frameworks](#other-frameworks)
+       - [DeepSpeed](#deepspeed)
+       - [Ray](#ray)
+         - [Ray vs Kubeflow Trainer — code delivery differences](#ray-vs-kubeflow-trainer--code-delivery-differences)
+       - [Unsloth](#unsloth)
    - [Customization Lessons Learned](#customization-lessons-learned)
 8. [High-Value Recall Checklist](#high-value-recall-checklist)
 
