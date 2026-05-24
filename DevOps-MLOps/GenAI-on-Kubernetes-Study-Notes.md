@@ -4106,19 +4106,19 @@ It was initially developed by **Google** and is now an open source project under
 ##### Major Kubeflow components
 
 - **Kubeflow Dashboard**  
-  A central dashboard and hub that connects the authenticated web interfaces of Kubeflow and other ecosystem components.
+  A [central dashboard](https://www.kubeflow.org/docs/components/central-dash/overview/) and hub that connects the authenticated web interfaces of Kubeflow and other ecosystem components.
 
 - **Kubeflow Notebooks**  
-  A component for running web-based development environments like Jupyter Notebooks inside your Kubernetes cluster by running them in pods. No local installation is needed.
+  A component for running [web-based development environments](https://www.kubeflow.org/docs/components/notebooks/) like Jupyter Notebooks inside your Kubernetes cluster by running them in pods. No local installation is needed.
 
 - **Kubeflow Pipelines**  
-  Kubeflow Pipelines (KFP) is a platform for building and deploying portable and scalable machine learning workflows using Kubernetes.
+  [Kubeflow Pipelines](https://www.kubeflow.org/docs/components/pipelines/) (KFP) is a platform for building and deploying portable and scalable machine learning workflows using Kubernetes.
 
 - **Kubeflow Trainer**  
-  Kubeflow Trainer is a unified interface for model training and fine-tuning on Kubernetes. It runs scalable and distributed training jobs for popular frameworks like PyTorch or TensorFlow.
+  [Kubeflow Trainer](https://www.kubeflow.org/docs/components/trainer/) is a unified interface for model training and fine-tuning on Kubernetes. It runs scalable and distributed training jobs for popular frameworks like PyTorch or TensorFlow.
 
 - **Kubeflow Katib**  
-  Katib is a Kubernetes-native project for automated machine learning (**AutoML**) with support for **hyperparameter tuning**, **early stopping**, and **neural architecture search**.
+  [Katib](https://www.kubeflow.org/docs/components/katib/) is a Kubernetes-native project for automated machine learning (**AutoML**) with support for **hyperparameter tuning**, **early stopping**, and **neural architecture search**.
 
 - **Model serving (KServe)**  
   **KServe** (previously **KFServing**) solves production model serving on Kubernetes. It started in Kubeflow but has been moved to a **separate CNCF project**. We cover KServe in detail in [KServe](#kserve).
@@ -5019,7 +5019,7 @@ As we have seen in Example 2-14, you can easily access models stored in OCI imag
 - for LLM models that benefit from the **layered nature of OCI images** (like **LoRA fine-tuned** models), the overall storage space needed for specialized models that share a foundational model is reduced
 - the image layers of the foundation model can be **shared among the specialized models**, reducing required disk space considerably
 
-Kubernetes has **long lacked support** for this use case. Although the feature request was already recorded more than **10 years ago** in **GitHub issue 831**, it was not considered for implementation for many years.
+Kubernetes has **long lacked support** for this use case. Although the feature request was already recorded more than **10 years ago** in **[GitHub issue 831](https://github.com/kubernetes/kubernetes/issues/831)**, it was not considered for implementation for many years.
 
 However, things have changed with the advent of LLMs and the desire to ship model data in OCI images. **Starting with Kubernetes 1.35**, you can use **image volume mounts directly in your pod specs**. However, it might take some time until image volume mounts move out of the experimental stage and are considered stable.
 
@@ -5205,31 +5205,31 @@ While the modelcar technique proved to be very valuable for optimizing the initi
 
 **Startup order**
 
-Serving runtimes typically assume the model data is **already present** when they start up. However, with modelcars, the **modelcar container and runtime container start in parallel**. This can lead to the **runtime starting before the model is available**.
+- Serving runtimes typically assume the model data is **already present** when they start up. However, with modelcars, the **modelcar container and runtime container start in parallel**. This can lead to the **runtime starting before the model is available**.
 
-Despite modelcar containers starting quickly, startup is slower when the modelcar image still needs to be pulled from an OCI Registry. This can be mitigated by using the **Kubernetes sidecar support** (available since **Kubernetes 1.28** as an optional feature), so that the runtime starts only when the modelcar is initialized.
+- Despite modelcar containers starting quickly, startup is slower when the modelcar image still needs to be pulled from an OCI Registry. This can be mitigated by using the **Kubernetes sidecar support** (available since **Kubernetes 1.28** as an optional feature), so that the runtime starts only when the modelcar is initialized.
 
-For setups where sidecars are not enabled, you can still **minimize the risk of a race condition** by **pre-pulling the modelcar image** in an init-container.
+- For setups where sidecars are not enabled, you can still **minimize the risk of a race condition** by **pre-pulling the modelcar image** in an init-container.
 
 **Security**
 
-Enabling `shareProcessNamespace` **allows access to the process namespace and filesystems of all containers** defined for a pod. This is especially important to remember when other sidecars are included.
+- Enabling `shareProcessNamespace` **allows access to the process namespace and filesystems of all containers** defined for a pod. This is especially important to remember when other sidecars are included.
 
-A prominent example is the service mesh **Istio**, which uses sidecars to provide its functionality. Istio sidecars **assume they are fully isolated**, so they don't implement any precautions to hide sensitive information like the access configuration to their upstream Istio daemon.
+- A prominent example is the service mesh **Istio**, which uses sidecars to provide its functionality. Istio sidecars **assume they are fully isolated**, so they don't implement any precautions to hide sensitive information like the access configuration to their upstream Istio daemon.
 
-The lack of additional encryption of the local Istio configuration can be **easily exploited**. Understanding the consequences when using tools and platforms like **Istio** or **Knative** that perform sidecar injections is therefore **critical**.
+- The lack of additional encryption of the local Istio configuration can be **easily exploited**. Understanding the consequences when using tools and platforms like **Istio** or **Knative** that perform sidecar injections is therefore **critical**.
 
 **Nonuniform startup times**
 
-Depending on whether the model OCI image has already been loaded in the Kubernetes node's OCI runtime, the actual serving runtime can either start quickly or might **take several minutes** until a potentially large model OCI image is downloaded from a registry.
+- Depending on whether the model OCI image has already been loaded in the Kubernetes node's OCI runtime, the actual serving runtime can either start quickly or might **take several minutes** until a potentially large model OCI image is downloaded from a registry.
 
-To make the startup times more predictable — especially important in **scale-to-zero scenarios** — optimization techniques like **image prefetching** can be leveraged.
+- To make the startup times more predictable — especially important in **scale-to-zero scenarios** — optimization techniques like **image prefetching** can be leveraged.
 
 **Multiarchitecture support**
 
-Modelcars require an **active process** to keep the sidecar alive. This process is **specific to a certain CPU architecture**, so if you want to use modelcar images in a **multiarchitecture setup**, you need to create **copies of modelcars, one for each supported CPU architecture**.
+- Modelcars require an **active process** to keep the sidecar alive. This process is **specific to a certain CPU architecture**, so if you want to use modelcar images in a **multiarchitecture setup**, you need to create **copies of modelcars, one for each supported CPU architecture**.
 
-Those images contain the same ML model, **wasting resources**. However, tools like **BuildKit**, **umoci**, or **skopeo** can mitigate this duplication by creating **multiarchitecture images** with **manifest lists** that **share architecture-independent layers** (like model data) across platforms, while duplicating only the architecture-specific executable layers. This approach leverages **OCI's content-addressable storage** to deduplicate shared layers automatically when pushed to registries.
+- Those images contain the same ML model, **wasting resources**. However, tools like **BuildKit**, **umoci**, or **skopeo** can mitigate this duplication by creating **multiarchitecture images** with **manifest lists** that **share architecture-independent layers** (like model data) across platforms, while duplicating only the architecture-specific executable layers. This approach leverages **OCI's content-addressable storage** to deduplicate shared layers automatically when pushed to registries.
 
 All of these drawbacks can be overcome by **real OCI image volume mounts**. Luckily, **Kubernetes 1.35 offers OCI image sources for volumes as a beta feature**. It will still take some time until this mount type is generally available; in the meantime, **modelcars are a good bridging technology** with a smooth upgrade path until OCI image volume mounts arrive for everyone.
 
