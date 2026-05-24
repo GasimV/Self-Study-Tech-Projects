@@ -6753,6 +6753,31 @@ For Kubernetes deployments:
 - or the Llama Stack SDK can be integrated directly into application containers
 - the moderation API approach works best for **asynchronous validation workflows** where a small percentage of requests are sampled and evaluated without blocking user-facing responses
 
+> **Clarification on Llama Stack deployment model**
+>
+> Llama Stack is an **open-source API server/framework** for building GenAI applications. The Llama Stack server can be **downloaded, installed, and deployed inside an organization's own environment**, including an **on-prem Kubernetes cluster**.
+>
+> Llama Stack being "API-based" does **not** mean it must be cloud-hosted. It can expose APIs **locally inside Kubernetes**, for example as an **internal cluster service**.
+>
+> In Kubernetes, the main components are:
+>
+> - **Llama Stack server** — the running service/pod that exposes GenAI APIs, safety APIs, moderation endpoints, tool APIs, RAG APIs, etc.
+> - **Llama Stack API** — the HTTP interface exposed by the server, such as `/v1/moderations` or other OpenAI-compatible endpoints
+> - **Llama Stack SDK/client** — the library used by application code to call the Llama Stack server APIs more easily
+>
+> A **fully on-prem setup** is possible when **all configured providers are also local/on-prem**, for example:
+>
+> - local inference provider such as **vLLM** or **Ollama**
+> - local safety/guardrail model such as **Llama Guard**
+> - local embedding model
+> - local vector database or storage
+>
+> However, Llama Stack can also be configured to use **cloud providers**. In that case, the Llama Stack server may still run in your Kubernetes cluster, but it **forwards some requests to external cloud APIs**.
+>
+> Therefore, the key point is:
+>
+> **Llama Stack itself can be self-hosted and on-prem. Whether the full solution is truly on-prem depends on the providers configured behind Llama Stack.**
+
 > **TIP**
 >
 > Many guardrailing techniques rely on **LLM as a judge**, where one LLM evaluates another's output (or even its own).
