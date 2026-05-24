@@ -42,19 +42,26 @@
      - [Single-Node Versus Multinode Inference](#single-node-versus-multinode-inference)
    - [GPU Resource Optimizations](#gpu-resource-optimizations)
    - [GPU Lessons Learned](#gpu-lessons-learned)
-4. [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
-5. [Model Registry](#model-registry)
-   - [Hugging Face Model Hub](#hugging-face-model-hub)
-   - [MLflow Model Registry](#mlflow-model-registry)
-   - [Kubeflow Model Registry](#kubeflow-model-registry)
-   - [OCI](#oci)
-     - [Registry](#registry)
-     - [Images](#images)
-6. [Accessing Model Data in Kubernetes](#accessing-model-data-in-kubernetes)
-   - [KServe `storageUri` and Storage Initializers](#kserve-storageuri-and-storage-initializers)
-   - [Built-in KServe Storage Initializers](#built-in-kserve-storage-initializers)
-   - [Shared Storage with PersistentVolumes](#shared-storage-with-persistentvolumes)
-7. [Running in Production](#running-in-production)
+4. [Model Data Storage, Access & Registry in K8s](#model-data-storage-access--registry-in-k8s)
+   - [Model Data Storage Formats](#model-data-storage-formats)
+     - [Weight-Only Formats](#weight-only-formats)
+     - [Self-Contained Formats](#self-contained-formats)
+     - [ONNX](#onnx)
+     - [Safetensors](#safetensors)
+     - [GGUF and GGML](#gguf-and-ggml)
+     - [Current State and Gaps in Model Portability](#current-state-and-gaps-in-model-portability)
+   - [Model Registry](#model-registry)
+     - [Hugging Face Model Hub](#hugging-face-model-hub)
+     - [MLflow Model Registry](#mlflow-model-registry)
+     - [Kubeflow Model Registry](#kubeflow-model-registry)
+     - [OCI Registry](#oci-registry)
+     - [OCI Images](#oci-images)
+   - [Accessing Model Data in Kubernetes](#accessing-model-data-in-kubernetes)
+     - [KServe `storageUri` and Storage Initializers](#kserve-storageuri-and-storage-initializers)
+     - [Built-in KServe Storage Initializers](#built-in-kserve-storage-initializers)
+     - [Shared Storage with PersistentVolumes](#shared-storage-with-persistentvolumes)
+   - [Model Data Lessons Learned](#model-data-lessons-learned)
+5. [Running in Production](#running-in-production)
    - [Model and Runtime Tuning](#model-and-runtime-tuning)
    - [Language Model Evaluation](#language-model-evaluation)
    - [Language Model Compression](#language-model-compression)
@@ -65,7 +72,7 @@
    - [LLM-Aware Routing](#llm-aware-routing)
    - [Disaggregated Serving](#disaggregated-serving)
    - [Lessons Learned](#lessons-learned)
-8. [Model Observability](#model-observability)
+6. [Model Observability](#model-observability)
    - [Observability Stack and Configuration](#observability-stack-and-configuration)
      - [Logs](#logs)
      - [Metrics](#metrics)
@@ -90,7 +97,7 @@
      - [Guardrails AI](#guardrails-ai)
      - [Llama Stack and Moderation APIs](#llama-stack-and-moderation-apis)
    - [Observability Lessons Learned](#observability-lessons-learned)
-9. [High-Value Recall Checklist](#high-value-recall-checklist)
+7. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -3181,31 +3188,369 @@ A single operator deploys **device plug-ins**, **feature discovery**, **monitori
 
 [Back to Contents](#contents)
 
-## Current State and Gaps in Model Portability
+## Model Data Storage, Access & Registry in K8s
 
 ![MLOps Portability Cover Image](<assets/MLOps-Portability-Cover-Image.png>)
 
+One of the most fundamental challenges when running LLMs on Kubernetes is managing the **sheer size of the model data**. LLMs can range from a **few gigabytes to nearly a terabyte** in size, and efficiently bringing this data into a cluster where runtimes can access it requires careful consideration.
+
+The main portion of these models consists of the **model parameters** and can be extremely large. There is a wide range of variations, from large models that are likely impractical for on-demand use to more lightweight models that can be run on your own cluster and easily downloaded when needed.
+
+**Table 2-1. Open source models and their sizes**
+
+| Name | Vendor | Parameters | Size |
+| --- | --- | --- | --- |
+| **Llama 4 Maverick** | Meta | 400 billion (MoE, 17B active) | ~800 GB |
+| **DeepSeek-V3** | DeepSeek | 671 billion (MoE, 37B active) | ~700 GB |
+| **Llama 3.1 405B** | Meta | 405 billion | ~750 GB |
+| **Qwen3-235B** | Alibaba | 235 billion (MoE, 22B active) | ~118 GB |
+| **Mixtral 8x22B** | Mistral | 141 billion (MoE, 39B active) | ~88 GB |
+| **GPT-OSS 120B** | OpenAI | 117 billion (MoE, 5B active) | ~70 GB |
+| **Gemma 2 27B** | Google | 27 billion | ~54 GB |
+| **Granite 13B** | IBM | 13 billion | ~26 GB |
+| **Falcon 2 11B** | TII | 11 billion | ~22 GB |
+| **Mistral 7B** | Mistral | 7 billion | ~14 GB |
+
+Even smaller models can pose significant challenges for Kubernetes administrators when managing them efficiently within a cluster. Understanding how to **store and organize these large datasets** effectively is critical for a successful LLM operation.
+
+This section explores how to manage data-heavy artifacts efficiently within a Kubernetes cluster:
+
+- **Model Data Storage Formats** — how LLM data is packaged (Weight-Only, Self-Contained, ONNX, Safetensors, GGUF/GGML)
+- **Model Registry** — where to find and how to retrieve model data (Hugging Face, MLflow, Kubeflow, OCI)
+- **Accessing Model Data in Kubernetes** — Kubernetes-native methods for fetching and accessing model data (`storageUri`, storage initializers, PVCs)
+
+Most of the time, ML models can be treated as **opaque boxes**, accessed by the inference services described in [Model Servers & Controllers](#model-servers--controllers). However, **understanding the package formats** used to distribute these models is still valuable for successful integration.
+
+[Back to Contents](#contents)
+
+### Model Data Storage Formats
+
+When working with LLMs, their **massive size** (measured in billions of parameters) is the first thing we notice. However, models shared on platforms like Hugging Face contain **more than just the raw weight parameters**. These distributed models also include **metadata** and, in some cases, the **model's architecture**, which defines how the neural network layers and transformers are wired together.
+
+For operators, such distributed models often feel like **black boxes**. Yet, understanding **which format they are stored in is critical** because not every packaged model can run with every runtime. Some formats are **highly flexible** and can be operated by multiple runtimes; others are **closely tied to specific runtime platforms**.
+
+At a high level, model storage formats can be grouped into **two categories**:
+
+- **Weights-only formats** — store only the learned parameters (weights and biases). Architecture, hyperparameters, and metadata are excluded, so the runtime must **already know** how to reconstruct the network before applying the weights
+- **Self-contained formats** — store both the weights and the model architecture, along with hyperparameters and other metadata. Allow the model to be loaded and run **without prior knowledge** of the network structure, making them easier to deploy as standalone artifacts
+
+The boundary between both categories is **gradual**. Some formats that seem self-contained may still require external components, such as **tokenizer files** for language models.
+
+For LLMs, the trend is moving toward **mostly self-contained formats** like **GGUF** and **Safetensors**. These formats simplify distribution but remain tightly coupled to specialized runtimes. **True runtime independence** — where a model could be loaded and run in any compatible environment, regardless of the model's training framework — remains a **work in progress**. The **CNCF ModelPack** specification is a standardization attempt in this direction, where model data is packed in **Open Container Initiative (OCI) container images**.
+
+In an ideal world, much like OCI container images abstract application internals, model storage formats would draw a clear boundary between:
+
+- **model data** — produced by data scientists
+- **model execution** — managed by MLOps/DevOps engineers in production
+
+However, today's landscape **prioritizes getting models operational quickly** rather than standardizing runtime compatibility. As the field matures, expect **stronger separation** between model creation and deployment concerns.
+
+#### Weight-Only Formats
+
+**Weight-only model formats** store the **numerical parameters (weights and biases)** of a trained neural network **without** including the model's architecture or preprocessing components.
+
+These formats are commonly used during the **development and experimentation** phases, where flexibility and minimal overhead matter more.
+
+Since weight-only formats lack architectural details:
+
+- the runtime must **already know** the network structure
+- this knowledge allows the runtime to correctly **reconstruct the model** and apply the stored weights
+- weight-only formats are **tightly coupled** to their respective machine learning frameworks
+
+The most commonly used weight-only formats correspond to the two dominant ML frameworks: **PyTorch** and **TensorFlow**. While both provide their own serialization formats, **PyTorch** has become the **de facto standard** for LLM development.
+
+##### Common weight-only formats
+
+- **PyTorch State Dict (`.pt`, `.pth`)** — PyTorch's native format for serializing weight tensors using the `state_dict` method of `torch.nn.Module`. Widely used for LLMs such as **Llama**, **GPT**, and **BLOOM** during development and fine-tuning stages
+- **TensorFlow checkpoints (`.ckpt`)** — primarily used in TensorFlow's ecosystem for storing model weights. While it was historically used for models like **BERT**, its relevance for modern LLMs has **declined** as PyTorch gained dominance in the GenAI space
+- **NumPy arrays (`.npy`, `.npz`)** — NumPy's native serialization format for numerical arrays. Useful for storing **smaller models** or **individual weight matrices**, but lacks the structure and metadata needed for modern LLM deployments
+
+These formats primarily store **raw tensor data** with **minimal metadata**, making them **highly compact** but **dependent on external runtime code**.
+
+![Example of a model stored in a weight-only format](<assets/Example of a model stored in a weight-only format.png>)
+
+**Figure 2-1. Example of a model stored in a weight-only format**
+
+A model stored in a weight-only format requires **the same network architecture to be reconstructed during inference**. You must manually replicate the training architecture in the inference environment, ensuring both sides can correctly interpret the stored weight tensors.
+
+While weight-only storage formats are **well suited during development and experimentation**, they are **very closely coupled** to the ML code that evaluates those parameters.
+
+#### Self-Contained Formats
+
+A better fit for **production deployments** are models stored and distributed in **self-contained formats**, which bundle more than just the raw weights.
+
+These formats include critical **metadata and structural information**, making models easier to share and run across multiple runtime environments without requiring the original codebase used during training.
+
+##### What self-contained models can carry
+
+- **Weights and biases** — the numerical parameters of the neural network, the bulk of the model size
+- **Model architecture** — either as a reference to a well-known architecture or described explicitly as a connected graph of layers
+- **Tokenizer and vocabulary data** — often included in language models to preprocess text before inference
+- **Hyperparameters** — learning rate, batch size, number of epochs used during training
+- **Other metadata** — descriptive information such as model origin, authorship, and additional context for model discovery and reproducibility
+
+Some self-contained formats also support **pre- and post-processing scripts** for transforming inputs before inference and converting outputs into a usable form afterward.
+
+![Example of a self-contained model where the runtime is independent of the training code](<assets/Example of a self-contained model where the runtime is independent of the training code.png>)
+
+**Figure 2-2. Example of a self-contained model where the runtime is independent of the training code**
+
+##### Reality check: "mostly self-contained"
+
+While fully self-contained formats aim to encapsulate everything needed for inference, in practice **as of 2026, no such format exists**. No widely used format today includes **all components** required for inference — the model weights, tokenizer, vocabulary data, and complete architecture — in a single artifact.
+
+As a result, even formats often described as "self-contained" are better categorized as **mostly self-contained** because they still rely on **external components and runtime dependencies**.
+
+These mostly self-contained formats may bundle the model weights and partial metadata but typically omit critical components like the **tokenizer** or **detailed model architecture**, remaining tied to specific inference runtimes or frameworks that "understand" how to interpret the stored data correctly. For example, popular formats like **Safetensors** and **GGUF** include model weights and some metadata but still require external components for complete model inference.
+
+##### Common mostly self-contained formats for LLMs
+
+- **Safetensors (`.safetensors`)** — a mostly self-contained format designed for secure and efficient weight storage, frequently used for LLMs on platforms like Hugging Face. Improves safety and performance over standard PyTorch weight files, but **tokenizer information** (e.g., `tokenizer.json`) and **model architecture definitions** are not embedded, requiring additional files or runtime knowledge to fully reconstruct the model during inference
+- **GGUF/GGML (`.gguf`, `.ggml`)** — specialized self-contained formats optimized for **efficient inference with quantized weights**, supporting both CPU and GPU execution. Include the model's weights and basic architecture metadata but remain closely tied to runtimes like **`llama.cpp`** and **vLLM**. GGUF can also store **tokenizer data** (vocabulary, special tokens)
+- **ONNX (`.onnx`)** — a versatile, self-contained format for **model interoperability**. Often described as self-contained, ONNX stores the model's weights, architecture, and metadata but lacks critical components like the **tokenizer and vocabulary data**, which are essential for LLMs. This makes it **mostly self-contained**, requiring additional files for complete language model inference
+- **TensorFlow SavedModel** — a fully self-contained, directory-based format that stores weights, architecture, and auxiliary files. Common in TensorFlow ecosystems but **rarely used for modern LLMs**
+- **Hugging Face Transformers** — best described as a **packaging convention** rather than a standalone model format. It organizes models into a directory containing multiple files essential for running language models. The convention typically includes model weights stored in **Safetensors** (`.safetensors`) or PyTorch's `state_dict` (`.bin`), along with two key files: **`tokenizer.json`** and **`config.json`**
+
+> **`TOKENIZER.JSON` AND `CONFIG.JSON`**
+>
+> The **`tokenizer.json`** and **`config.json`** files are critical components for running LLMs effectively in the Hugging Face ecosystem and beyond.
+>
+> **`tokenizer.json`** stores the **tokenization rules and vocabulary mapping** for converting raw text into token IDs:
+>
+> - defines how input text is split into tokens, using techniques like **Byte-Pair Encoding (BPE)**
+> - includes **special tokens** used for padding, start-of-sequence, and end-of-sequence markers
+>
+> **`config.json`** describes the **model architecture and hyperparameters**:
+>
+> - number of layers
+> - attention heads
+> - hidden sizes
+> - feed-forward dimensions
+> - the **model type** (e.g., `llama`), influencing how the runtime reconstructs the model graph
+>
+> Together, these files ensure the model can:
+>
+> - **preprocess input correctly** (`tokenizer.json`)
+> - **build the required network structure** (`config.json`)
+>
+> Without them, the runtime **cannot properly tokenize input text or load the model architecture** for inference.
+>
+> These files have become **de facto standards** in the machine learning community, extending utility beyond the Hugging Face ecosystem. Frameworks and tools outside of Hugging Face often adopt these conventions for model interoperability and consistency.
+
+Most current model formats for LLMs fall into the category of **mostly self-contained**, often omitting key components such as tokenizers, vocabulary data, and preprocessing logic. Despite these gaps, some formats have gained significant traction due to their **balance between portability and efficiency**:
+
+- **Safetensors** and **GGUF/GGML** are the most commonly used today, both optimized for efficient weight storage with metadata
+- **ONNX** is less frequently used for LLMs but serves as a useful reference for a **more fully self-contained format**
+
+> **THE QUEST FOR TRUE MODEL PORTABILITY**
+>
+> The following sections dive into the technical details of specific model formats. While these details may seem tangential to Kubernetes operations, they address a fundamental operational concern: **achieving clear separation between model data and runtime execution**.
+>
+> The goal is to achieve **true model portability**, where models can be distributed and executed as **self-contained artifacts**, much like how Docker revolutionized the deployment of arbitrary software workloads across diverse environments. Reaching this level would require broader standardization across both the **model file structure** and the **runtimes capable of executing them**.
+>
+> Ideally, a model stored in a standardized format could be loaded by any compliant runtime. This would eliminate manual adjustments for tokenization, quantization, or architecture specifics. Such a shift would empower a more diverse set of tools and frameworks, **reducing lock-in** to specific ecosystems while making model distribution as seamless as containerized applications.
+>
+> This separation is **the holy grail** that would let operators treat models as **interchangeable artifacts**, independent of the runtimes that execute them. We haven't reached this ideal yet, but examining existing formats reveals **how close we are** to achieving true runtime-model independence.
+
+#### ONNX
+
+The **[Open Neural Network Exchange (ONNX)](https://onnx.ai/)**, codeveloped by **Microsoft** and **Facebook** in **2017**, was designed as a **framework-independent format** for representing machine learning models.
+
+ONNX aims to **standardize how models are shared between tools**, allowing developers to train a model in one framework and deploy it in another without requiring framework-specific conversions.
+
+##### File structure
+
+ONNX models are stored in a **single `.onnx` file** using **Protocol Buffers (Protobuf)** for compactness and platform neutrality. Each file contains **three main components**:
+
+- **Computational graph** — defines the network's structure and data flow
+- **Learned parameters** — weights and biases
+- **Metadata** — input/output specifications, operator sets, and versioning details
+
+This structure makes ONNX a **promising example of a self-contained format**, combining architecture, weights, and operational metadata in a single artifact.
+
+##### Why ONNX falls short for LLMs
+
+ONNX falls short for LLMs because it lacks essential components such as:
+
+- **tokenizers**
+- **vocabulary data**
+- **preprocessing logic**
+
+For tasks like natural language generation, this missing information makes supplying **additional files alongside the `.onnx` model necessary**. Without these components, an ONNX model alone cannot transform raw text into tokenized inputs, **limiting its suitability for modern LLM deployments**.
+
+##### Op set compatibility
+
+ONNX has **broad support across runtimes**:
+
+- **ONNX Runtime**
+- **TensorRT**
+- **OpenVINO**
+- **Triton Inference Server**
+
+…making it highly portable, but compatibility depends on the **set of operations** (such as matrix multiplication, convolution, and attention mechanisms) that a model uses.
+
+Each runtime supports a defined **operator set (op set)**, which specifies the available operations a model can use. If a model relies on operations **outside a runtime's supported set**, it may fail to load unless extended with **plug-ins or custom runtime extensions**. This challenge further complicates its adoption for complex architectures like those used in LLMs.
+
+##### Outlook for ONNX
+
+Despite these limitations, ONNX provides a **conceptual blueprint** for what a fully self-contained model format for LLMs could look like. If expanded with richer metadata and native support for **tokenizer definitions**, it could offer a more complete solution for the LLM use case.
+
+As of 2026, ONNX remains better suited for models in domains like **computer vision**, where preprocessing is often simpler and less tightly coupled with the model.
+
+#### Safetensors
+
+**[Safetensors](https://github.com/huggingface/safetensors)**, developed by **Hugging Face in 2021**, is a modern model serialization format designed to **securely store and share** machine learning model weights while addressing security vulnerabilities and performance limitations of earlier formats like PyTorch's `.pt` and `pickle`.
+
+##### Why Safetensors exists
+
+The **`pickle` format**, often used in PyTorch, can **execute arbitrary Python code** when deserializing models, posing significant security risks when sharing models.
+
+Safetensors **prevents code execution vulnerabilities** by focusing strictly on storing tensor data, making it a **safer and more efficient choice** for model serialization.
+
+![Internal structure of a Safetensors model](<assets/Internal structure of a Safetensors model.png>)
+
+**Figure 2-3. Internal structure of a Safetensors model**
+
+##### File structure
+
+Each `.safetensors` file begins with a **header containing metadata**, including a serialized JSON object describing each tensor stored in the file. The header includes:
+
+- the tensor's **data type**
+- **shape**
+- **byte offsets** where the tensor data resides within the file
+
+This structure allows for **zero-copy loading**, where tensor data can be **directly mapped to memory** without unnecessary CPU overhead, improving inference speed, especially when working with LLMs.
+
+##### Sharding for large models
+
+Safetensors supports **sharding**, which allows large models to be split across multiple smaller files. Each shard contains a portion of the model's tensors and is accompanied by an **index file** (e.g., `model.safetensors.index.json`).
+
+The index file maps the names of tensors in the different layers to their respective shard files.
+
+> Example: **Llama 4.1 405B** is released with **30 safetensor files** named like `model-0000x-of-00030.safetensors` and accompanied by a `model.safetensors.index.json` file.
+
+##### Example 2-1. Index file mapping tensors to shard files
+
+```json
+{
+  "metadata": {
+    "total_size": 141107412992
+  },
+  "weight_map": {
+    "lm_head.weight": "model-00030-of-00030.safetensors",
+    "model.embed_tokens.weight": "model-00001-of-00030.safetensors",
+    "model.layers.0.input_layernorm.weight": "model-00001-of-00030.safetensors",
+    "model.layers.0.mlp.down_proj.weight": "model-00001-of-00030.safetensors",
+    "model.layers.0.mlp.gate_proj.weight": "model-00001-of-00030.safetensors",
+    "model.layers.0.mlp.up_proj.weight": "model-00001-of-00030.safetensors",
+   ...
+    "model.layers.1.input_layernorm.weight": "model-00002-of-00030.safetensors",
+    "model.layers.1.mlp.down_proj.weight": "model-00002-of-00030.safetensors",
+    "model.layers.1.mlp.gate_proj.weight": "model-00001-of-00030.safetensors",
+    "model.layers.1.mlp.up_proj.weight": "model-00002-of-00030.safetensors",
+   ...
+  }
+}
+```
+
+What to notice:
+
+- **`metadata.total_size`** — total size of all model weights, in bytes (approximately **131 GB** for this model)
+- **`weight_map`** — maps each tensor name to the specific shard file containing it
+- **`lm_head.weight`** — the final output layer weight is in shard file **30**
+- additional tensor mappings show how different layers are distributed across shard files
+
+Sharding is particularly useful for **extremely large models** where a single file might be impractical due to storage limitations. This approach also enables **parallel loading**, as different shards can be fetched and processed concurrently.
+
+##### Why Safetensors is "mostly" self-contained
+
+The primary limitation is that **tokenizer information and model architecture definitions are not included** within the `.safetensors` file itself. Essential files like `tokenizer.json` and `config.json` must be supplied separately for language model inference — a key reason why it remains **tightly coupled to the Hugging Face Transformers ecosystem** that provides this extra metadata.
+
+The format's structure and focus on **secure serialization** have made it increasingly popular, especially for **LLM storage and sharing**. Safetensors is now the **default weight format** for many large-scale models distributed on Hugging Face.
+
+#### GGUF and GGML
+
+The **GPT-Generated Unified Format (GGUF)** and its predecessor **GPT-Generated Model Language (GGML)** are specialized formats developed for optimizing the storage and execution of LLMs on **resource-constrained hardware** such as CPUs and edge devices.
+
+Originating from the **[`llama.cpp` project](https://github.com/ggerganov/llama.cpp)** led by **Georgi Gerganov**, both formats focus on **efficient inference with minimal hardware requirements**. While GGML was an important first step, GGUF represents a **significant refinement**, addressing many of its predecessor's limitations.
+
+##### Quantization focus
+
+A defining feature of GGUF and GGML is their focus on **quantization**, a technique that **reduces the precision of model weights** from floating-point values to lower-bit representations such as:
+
+- **8-bit**
+- **4-bit**
+- even **2-bit integers**
+
+By lowering precision, both **memory footprint** and **computational overhead** are significantly reduced. This allows models to run effectively **without dedicated GPUs** while maintaining acceptable inference accuracy.
+
+##### Backward compatibility
+
+A key improvement in GGUF is its focus on **backward compatibility**:
+
+- as LLMs evolve and architectures become more complex, maintaining compatibility with existing tools can be challenging
+- GGUF's **modular design** allows newer models to retain compatibility with older runtime versions, provided the core components remain unchanged
+- this **prevents the need for frequent format conversions** when updating models
+- when GGUF is updated to support new features, existing models remain **functional without requiring conversion**
+
+##### LLM-specialized vs general-purpose
+
+Unlike **ONNX**, which was designed as a **general-purpose format** for a wide range of machine learning tasks, **GGUF is specialized for LLM inference**. While originally designed for CPU-based inference, GGUF is now **widely supported across both CPU and GPU execution** by runtimes like **`llama.cpp`** and **vLLM**.
+
+##### GGUF vs Safetensors
+
+When compared to Safetensors:
+
+- **GGUF** attempts to bundle **more metadata directly within the model file itself**, including basic tokenizer information and runtime metadata
+- **Safetensors** focuses primarily on **weight storage with minimal metadata** and relies on external files for tokenizer definitions and model configurations
+
+GGUF stores **token mappings and model parameters in a single file**, but it still depends on specific external runtimes for complete inference — keeping it in the category of **mostly self-contained formats**.
+
+![Internal structure of a GGUF file](<assets/Internal structure of a GGUF file.png>)
+
+**Figure 2-4. Internal structure of a GGUF file (source: @mishig25, GGUF v3)**
+
+##### File structure
+
+A GGUF file consists of a **structured binary layout**:
+
+- begins with a **magic number** and **version field** to identify the file type
+- followed by a section containing **quantized tensor data** stored with byte offsets for efficient access
+- a **metadata section** describes the model's architecture, quantization type, and token mappings
+- a **tensor information block** defines the data type, shape, and memory locations for each tensor stored in the file
+
+This **single-file design** is particularly beneficial in Kubernetes environments, where **consistent, self-contained artifacts simplify orchestration and scaling**.
+
+GGUF represents a leap forward for **deploying LLMs efficiently**, especially on hardware that lacks high-end GPUs. Its focus on **quantization, self-contained design, and backward compatibility** addresses many pain points of earlier formats.
+
+#### Current State and Gaps in Model Portability
+
 Model portability is still **immature** for LLMs.
 
-### ONNX
+While **ONNX** stands out as a self-contained format for general machine learning models, and **GGUF** offers a specialized, self-contained solution for LLMs, both formats reveal important gaps in model portability:
 
-- **ONNX** is strong for general ML portability because it provides a structured model format.
-- But for LLMs, it is often **not fully self-contained** because important artifacts like **tokenizers** may remain outside the model format.
+- **ONNX** provides a structured way to package models but lacks critical components like tokenizers for LLMs
+- **GGUF** includes basic tokenizer metadata but remains **tightly coupled to specific runtimes** like `llama.cpp`
 
-### GGUF
+##### ONNX
 
-- **GGUF** is a more specialized format for LLMs and is relatively self-contained.
-- But it is also more tightly coupled to certain runtimes, especially **`llama.cpp`**.
+- **ONNX** is strong for general ML portability because it provides a structured model format
+- But for LLMs, it is often **not fully self-contained** because important artifacts like **tokenizers** may remain outside the model format
 
-### Safetensors
+##### GGUF
 
-- **Safetensors** is increasingly important for production deployments.
+- **GGUF** is a more specialized format for LLMs and is relatively self-contained
+- But it is also more tightly coupled to certain runtimes, especially **`llama.cpp`**
+
+##### Safetensors
+
+- **Safetensors** is increasingly important for production deployments
 - It is commonly used in a **multifile layout**, which works well with **OCI artifacts** because components can be distributed as separate layers for:
   - **Caching**
   - **Parallel downloads**
   - **Flexibility**
 
-### Core takeaway
+##### Core takeaway
 
 There is still **no universal model packaging standard for LLMs** equivalent to what OCI did for containers.
 
@@ -3215,11 +3560,16 @@ The field is evolving too quickly:
 - Runtime optimizations change fast
 - Serving requirements vary widely
 
-### What is practical today
+True standardization, much like OCI's success with containers, will require the convergence of both **runtime capabilities** and **model representation standards** — a milestone that is still some distance away.
 
-- For now, **GGUF** and **Safetensors** are often the most practical formats depending on the serving stack and deployment goal.
+##### What is practical today
 
-### Important mental model
+For now, **GGUF** and **Safetensors** are often the most practical formats depending on the serving stack and deployment goal:
+
+- **GGUF** dominates the `llama.cpp` ecosystem
+- **Safetensors** is increasingly adopted for production deployments — its **multifile structure works well with OCI artifacts**, where model components can be distributed as separate layers for **efficient caching and parallel downloads**
+
+##### Important mental model
 
 At the end of the day, an LLM is **a collection of files**.
 
@@ -3229,22 +3579,22 @@ Those files may be:
 - Split across multiple artifacts
 - Bound to particular runtimes
 
-This is why discovery, indexing, and management matter so much in Kubernetes environments.
+This is why **discovery, indexing, and management** matter so much in Kubernetes environments — and that is precisely the role of a **model registry**, covered next.
 
-### Encode this
+##### Encode this
 
-- **ONNX = useful, but incomplete for many LLM workflows**
-- **GGUF = self-contained, but runtime-coupled**
-- **Safetensors = production-friendly and OCI-compatible**
-- **True portability standardization is still not finished**
+- **ONNX = useful, but incomplete for many LLM workflows (no tokenizer)**
+- **GGUF = self-contained, but runtime-coupled (`llama.cpp` ecosystem)**
+- **Safetensors = production-friendly and OCI-compatible (default on Hugging Face)**
+- **True portability standardization is still not finished — no Docker-for-models yet**
 
-### Recall prompt
+##### Recall prompt
 
-- *Why is OCI-level standardization for models harder than OCI standardization for containers?*
+*Why is OCI-level standardization for models harder than OCI standardization for containers?*
 
 [Back to Contents](#contents)
 
-## Model Registry
+### Model Registry
 
 A **model registry** is a central system for **managing models and their metadata** across the ML lifecycle.
 
@@ -3253,7 +3603,7 @@ It acts as both:
 - A **discovery mechanism**
 - A **collaboration platform**
 
-### What a model registry does
+#### What a model registry does
 
 It helps teams:
 
@@ -3263,11 +3613,14 @@ It helps teams:
 - Promote models through lifecycle stages
 - Support deployment readiness
 
-### Important operational detail
+A model registry stands at the **intersection of the responsibilities of data scientists and MLOps engineers**:
 
-Most organizations run model registries as **internal services**, often inside the cluster.
+- **For data scientists**, it supports creating and tracking changes during model experimentation, verifying performance and metric tracking, packaging artifacts for reproducibility, and releasing validated models to production
+- **For MLOps engineers**, the model registry facilitates deploying approved models with associated metadata while also supporting ongoing monitoring of deployed models for performance, drift, and necessary retraining — though this level of observability is considered an **advanced feature beyond the core functionality** of a model registry
 
-They usually **do not store the actual model weights directly**.
+#### Important operational detail
+
+Most organizations run model registries as **internal services**, often inside the cluster. They usually **do not store the actual model weights directly**.
 
 Instead, they typically store:
 
@@ -3281,7 +3634,9 @@ The actual model artifacts often live in:
 - **S3 buckets**
 - Other **object stores**
 
-### Why this separation matters
+Organizations **don't expose these registries outside the cluster**. The registries primarily manage model metadata rather than storing the actual model weights or artifacts.
+
+#### Why this separation matters
 
 Keeping metadata separate from large model files improves:
 
@@ -3289,7 +3644,9 @@ Keeping metadata separate from large model files improves:
 - **Scalability**
 - **Operational simplicity**
 
-### Shared value across roles
+By providing a **structured and secure interface** for managing models and their metadata, model registries become a **critical tool for operationalizing machine learning at scale**, especially in dynamic environments like Kubernetes.
+
+#### Shared value across roles
 
 For **data scientists**, the registry supports:
 
@@ -3305,155 +3662,199 @@ For **MLOps engineers**, the registry supports:
 - Governance and auditability
 - Monitoring hooks for later lifecycle steps
 
-### Core model registry capabilities
+#### Core model registry capabilities
 
-#### Metadata management
+The following list outlines the **core features** that define a model registry, providing essential capabilities for both **public and local** use cases.
 
-Stores:
+##### Metadata management
 
-- Accuracy
-- Lineage
-- Benchmarks
-- Training context
+Stores information about:
 
-#### Model discovery and search
+- **Accuracy**
+- **Dataset lineage**
+- **Performance benchmarks**
+- Other critical training context
 
-Allows search by:
+##### Model discovery and search
 
-- Architecture
-- Hyperparameters
-- Dataset
-- Performance metrics
+Search and retrieve models based on metadata such as:
 
-#### Version control
+- **Architecture**
+- **Hyperparameters**
+- **Training datasets**
+- **Performance metrics**
 
-Tracks:
+Supports filtering with **range queries** (e.g., `accuracy > 0.95`).
 
-- Model versions
-- Dataset versions
+##### Version control
+
+Tracks **multiple versions** of both:
+
+- **Models** — enables comparison of different model iterations and rollback if necessary
+- **Datasets** — ensures **reproducibility** by tracking which data version was used for training and evaluation
 
 This is essential for **reproducibility** and **rollback**.
 
-#### Lifecycle management
+##### Lifecycle management
 
-Supports stages such as:
+Manage model stages such as:
 
-- Experimentation
-- Staging
-- Production
-- Retirement
+- **Experimentation**
+- **Staging**
+- **Production**
+- **Retirement**
 
-#### Access control
+This feature is especially critical as part of **continuous development workflows**.
 
-Supports secure collaboration with permissions and visibility rules.
+##### Access control
 
-#### Auditing and compliance
+Provide **fine-grained permissions** for model visibility and usage, ensuring **secure collaboration across teams**.
 
-Tracks approvals, changes, and usage history.
+##### Auditing and compliance
 
-#### Data pipeline integration
+Maintain a record of:
 
-Supports CI/CD workflows like:
+- model **usage**
+- **approvals**
+- **changes**
 
-- Validation
-- Packaging
-- Promotion
-- Rollout
+…to ensure regulatory compliance and reproducibility.
 
-### Related ML concepts
+##### Data pipeline integration
 
-#### Model experimentation
+Integrate into CI/CD workflows like:
+
+- **Validation**
+- **Artifact packaging**
+- **Production rollout**
+
+#### Related ML concepts
+
+> **MODEL EXPERIMENTATION AND FEATURE STORES**
+>
+> **Model experimentation** refers to the **iterative process of training multiple model variations** with different hyperparameters (settings like learning rate or batch size) to find the best-performing configuration.
+>
+> - each training run produces metrics like **accuracy** or **loss**
+> - typically runs as **GPU-intensive training jobs** on Kubernetes
+> - **experiment tracking systems** log parameters and metrics from these runs
+> - **MLflow** (covered later) provides experiment tracking as part of its broader toolset
+>
+> **Features** in machine learning are **input variables** that models use to make predictions — for example, *"number of transactions in the last hour"* or *"average amount over 30 days"* in a fraud detection system.
+>
+> A **feature store** manages the computation and serving of these features **consistently across training and inference**, preventing **training-serving skew**:
+>
+> - feature computation often runs as **data pipelines**
+> - for generative AI workloads, features are **less central** than in traditional ML, as LLMs work primarily with **text and embeddings** rather than structured features
+> - **[Feast](https://feast.dev/)** is a leading open source feature store that manages both traditional ML features and **text embeddings** for generative AI applications like **retrieval-augmented generation (RAG)**
+>
+> Both concepts highlight the **collaborative ML workflow**: data scientists experiment and iterate, while platform teams provide the Kubernetes infrastructure (GPU nodes, persistent storage, batch scheduling) that makes this work scalable.
+>
+> **The model registry serves as the handoff point**, storing metadata from successful experiments ready for production deployment.
+
+##### Model experimentation
 
 This is the iterative process of training many model variants with different:
 
-- Hyperparameters
-- Datasets
-- configurations
+- **Hyperparameters**
+- **Datasets**
+- **Configurations**
 
-The goal is to identify the best-performing version.
+The goal is to **identify the best-performing version**.
 
-#### Feature stores
+##### Feature stores
 
 A **feature store** manages features consistently across training and inference to avoid **training-serving skew**.
 
-This matters more in traditional ML than in many LLM workloads, though embeddings and retrieval systems still make it relevant in generative AI systems.
+This matters more in **traditional ML** than in many LLM workloads, though **embeddings** and **retrieval systems** still make it relevant in generative AI systems.
 
-### Key bridge concept
+#### Key bridge concept
 
 **The model registry is the handoff point between experimentation and production.**
 
 That is one of the highest-value ideas to remember.
 
-### Encode this
+#### Encode this
 
 - **Registry stores metadata, not usually the full model weights**
 - **It bridges experiment workflows and production workflows**
 - **It supports versioning, governance, search, and lifecycle control**
 
-### Recall prompt
+#### Recall prompt
 
 *Why is the model registry considered a handoff point between data science and MLOps?*
 
 [Back to Contents](#contents)
 
-### Hugging Face Model Hub
+To provide a clearer understanding of how these features are implemented in real-world tools, the following sub-subsections examine **four prominent model registries**: **Hugging Face Model Hub**, **MLflow Model Registry**, **Kubeflow Model Registry**, and **OCI Registries**.
 
-The **Hugging Face Model Hub** is the **canonical public platform** for discovering and sharing open source machine learning models, especially **LLMs**.
+#### Hugging Face Model Hub
+
+The **[Hugging Face Model Hub](https://huggingface.co/models)** is the **canonical public platform** for discovering and sharing open source machine learning models, especially **LLMs**.
+
+As of early 2026, it hosts **over two million models** in general and **more than 310,000 LLMs** specifically, all publicly available.
 
 <u>Main idea:</u> Hugging Face plays a role for **open ML models** that is similar to what **GitHub** plays for **open source code**.
 
-#### Why it matters
+##### Why it matters
 
-- It is the main discovery layer for open models
+- It is the **main discovery layer** for open models
 - It standardizes how models are documented
-- It supports both manual exploration and API-driven access
-- It is often the first source people use before internalizing models into production systems
+- It supports both **manual exploration** and **API-driven access**
+- It is often the **first source** people use before internalizing models into production systems
 
-#### Model Cards
+##### Model Cards
 
-Each model entry typically includes a **Model Card**.
+Each model entry in the catalog is accompanied by a **Model Card**.
 
-A Model Card summarizes:
+A **Model Card** provides a standardized summary of a machine learning model's key characteristics:
 
-- Intended use cases
-- Training datasets
-- Evaluation metrics
-- Limitations and risks
-- Licensing information
+- **Intended use cases**
+- **Training datasets**
+- **Evaluation metrics**
+- **Limitations and risks**
+- **Licensing information**
 
 This is important because **model adoption is not just about weights**; it is also about understanding **fitness**, **constraints**, and **governance**.
 
-#### Inference widget
+It often contains links to the datasets used for training, evaluation metrics, and licensing information.
 
-Many models also expose an **interactive inference widget** in the web UI.
+![Hugging Face Model Card for Llama 3.1](<assets/Hugging Face Model Card for Llama 3.1.png>)
+
+**Figure 2-5. Hugging Face Model Card for Llama 3.1 (source: Llama 3.1)**
+
+##### Inference widget
+
+Users can also try out models interactively using the built-in **inference widget**, which enables **quick testing** of the model directly from the web interface without requiring local setup.
 
 This helps with:
 
-- Quick manual validation
-- Basic behavioral testing
-- Fast model comparison before local deployment
+- **Quick manual validation**
+- **Basic behavioral testing**
+- **Fast model comparison** before local deployment
 
-#### API access
+##### API access
 
-Hugging Face also provides a **REST API** for:
+In addition to the web interface, Hugging Face also offers a **REST API** for programmatic access to its repository:
 
-- Querying models
-- Retrieving metadata
-- Discovering versions
-- Filtering models programmatically
+- **Querying models**
+- **Retrieving metadata**
+- **Discovering versions** (latest version of a model)
+- **Filtering models programmatically** (filtering models based on specific criteria)
 
 This is useful in automation pipelines, even if the Hub itself is not the final production registry.
 
-#### Limitation for production
+##### Limitation for production
 
-The Hub is excellent for **public discovery**, but it has important limitations for enterprise production use:
+While the Hugging Face Hub is **perfect for public model sharing and manual discovery**, it has limitations for production use:
 
-- It is not ideal for **proprietary private models**
-- It may be too loose for **strict internal governance**
+- It is a **public registry** — not suitable for organizations that need to keep **proprietary models private**
+- It may also become limiting in **fully automated workflows** where model versions need to be programmatically tracked and managed
 - It is not enough by itself for **full lifecycle traceability**
 - External availability and access control may not meet production requirements
 
-#### Best operational takeaway
+For such scenarios, a **dedicated internal model registry** becomes essential to ensure **version control, traceability, privacy**, and tighter integration into production pipelines.
+
+##### Best operational takeaway
 
 Use Hugging Face as:
 
@@ -3463,67 +3864,77 @@ Use Hugging Face as:
 
 Do not confuse that with an **internal production-grade registry strategy**.
 
-#### Encode this
+##### Encode this
 
 - **Hugging Face Hub = public discovery and sharing platform**
 - **Model Card = operational and governance context around a model**
 - **Useful for exploration, but not sufficient by itself for private production model management**
 
-#### Recall prompt
+##### Recall prompt
 
 *Why is Hugging Face ideal for public model discovery but insufficient as the only production registry for many organizations?*
 
 [Back to Contents](#contents)
 
-### MLflow Model Registry
+#### MLflow Model Registry
 
-**MLflow** is a **Linux Foundation project** for managing the machine learning lifecycle, including:
+**[MLflow](https://mlflow.org/)** is a **Linux Foundation project** for managing the machine learning lifecycle, including:
 
 - **Experiment tracking**
 - **Model packaging**
 - **Model registry**
 
-It was created by **Databricks in 2018** and became widely adopted because it is relatively simple and integrates well with data science workflows.
+It was created by **Databricks in 2018** to address the challenges of managing machine learning experiments and model artifacts consistently across teams and environments. Since its release as an open source project, MLflow has become widely adopted in the **data science community** for its **simplicity and integration capabilities**.
 
-#### Core concept: the Tracking Server
+##### Core concept: the Tracking Server
 
-The central component in MLflow is the **Tracking Server**.
+The central component in MLflow is the **Tracking Server**, which acts as the main hub for managing and storing all experiment metadata, metrics, and model artifacts.
 
 It stores and exposes:
 
-- Experiment metadata
-- Metrics
-- Parameters
-- Runs
-- Model artifacts
-- Registry entries
+- **Experiment metadata**
+- **Metrics**
+- **Parameters**
+- **Runs**
+- **Model artifacts**
+- **Registry entries**
 
 This makes MLflow especially strong on the **data science side** of the lifecycle.
 
-#### Why practitioners like MLflow
+A **rich set of visualizations** allows you to follow the change of performance data and different hyperparameters.
 
-- Easy to install
-- Easy to use locally
-- Strong experiment tracking UX
-- Good for comparing runs and hyperparameters
-- Supports metadata-rich model registration
+##### Why practitioners like MLflow
 
-#### Where model artifacts live
+- **Easy to install**
+- **Easy to use locally**
+- **Strong experiment tracking UX**
+- **Good for comparing runs** and hyperparameters
+- **Supports metadata-rich model registration**
+
+##### Where model artifacts live
 
 In simple setups, model artifacts can live on the **local filesystem**.
 
 In production-oriented setups, MLflow can store artifacts in:
 
-- **S3**
+- **AWS S3**
 - Other object stores
 - External artifact locations
-- References to external sources such as the Hugging Face Hub
+- References to external sources such as the **Hugging Face Hub**
 
-The registry stores **artifact URIs**, not just display names.
+The registry stores **artifact URIs**, not just display names. MLflow manages references to these storage locations through **artifact URIs** stored in the registry's metadata.
 
-#### Programmatic logging and registration
+##### The MLflow Model Registry UI
 
-Most data scientists use MLflow programmatically:
+The MLflow Model Registry is a part of this Tracking Server, providing a **centralized repository for versioning, tracking, and managing** machine learning models. It allows data scientists to register models with **rich metadata**, including version history and performance metrics.
+
+![MLflow Model Registry UI](<assets/MLflow Model Registry UI.png>)
+
+**Figure 2-6. MLflow Model Registry UI**
+
+##### Example 2-2. Programmatically logging and registering models with MLflow
+
+Most data scientists interact with the MLflow Model Registry **programmatically**:
 
 ```python
 import mlflow
@@ -3547,12 +3958,20 @@ with mlflow.start_run():
     )
 ```
 
-#### Registry access through the REST API
+What to notice:
 
-MLOps workflows often interact with MLflow through its HTTP API:
+- **`mlflow.set_tracking_uri(...)`** — sets the tracking server URI for logging
+- **`mlflow.set_experiment(...)`** — creates a new MLflow experiment
+- **`params`** — model hyperparameters
+- **`mlflow.log_params(params)`** — logs those hyperparameters
+- **`mlflow.sklearn.log_model(...)`** — logs the model itself at the tracking server
+
+##### Example 2-3. Searching for and listing models via the MLflow REST API
+
+For MLOps engineers, MLflow provides a **REST API** that you can leverage for **model discovery**:
 
 ```bash
-curl http://localhost:8000/api/2.0/mlflow/registered-models/search
+$ curl http://localhost:8000/api/2.0/mlflow/registered-models/search
 ```
 
 Example response shape:
@@ -3583,71 +4002,105 @@ Example response shape:
 }
 ```
 
-#### OCI image generation
+What to notice:
 
-MLflow can also generate a Dockerfile and package a model into a self-contained container image:
+- **`curl http://localhost:8000/...`** — accessing an MLflow server running on the local machine
+- **`"version": "4"`** — models in the registry are **versioned**
+- **`source`** — URI reference to the model artifacts using MLflow's `mlflow-artifacts://` scheme. In this local setup, artifacts are stored on the filesystem, but the scheme supports **external storage like S3 or GCS**
+
+##### Example 2-4. Creating a self-contained OCI container image with MLflow and Podman
+
+MLflow provides CLI tools that interact with the Model Server. An interesting option here is to create a **self-contained OCI container image** that you can push to an OCI Registry for later usage in a Kubernetes cluster:
 
 ```bash
-mlflow models generate-dockerfile \
+$ mlflow models generate-dockerfile \
   -m mlflow-artifacts:/84948067/f0dd25483e/artifacts/my_model
+... INFO mlflow.models.cli: Generating Dockerfile for model mlflow-artifacts:
+    .../artifacts/my_model
+... INFO mlflow.models.flavor_backend_registry: Selected backend
+    for flavor 'python_function'
+... INFO mlflow.models.cli: Generated Dockerfile in directory mlflow-dockerfile
 
-cd mlflow-dockerfile
-podman build -t my_model .
+$ cd mlflow-dockerfile
+$ podman build -t my_model .
+STEP 1/12: FROM python:3.13.1-slim
+STEP 2/12: RUN apt-get -y update && apt-get install -y --no-install-recommends nginx
+....
+Successfully tagged localhost/my_model:latest
+a828556afe0d53d4728d872aa51fe07eaa1d4ef4faedb5a788bac9a7a7651e73
 ```
 
-This is useful for smaller or traditional ML packaging flows, but it is **not ideal for very large LLM artifacts** that require heavy downloads and more efficient caching patterns.
+What to notice:
 
-#### MLflow on Kubernetes
+- **`mlflow models generate-dockerfile`** — uses the `mlflow` CLI to generate a Dockerfile that describes how to build an image with MLflow and the model data included
+- **`podman build -t my_model .`** — uses `podman` to create an OCI image named `my_model`. Alternatively, **Docker** can be used for building the image
 
-MLflow can be deployed on Kubernetes, usually as a web service backed by a database such as **PostgreSQL**.
+However, this feature is **not optimized for large download volumes** that need to be stored locally, so it is **not very well suited for LLMs**.
+
+> **NOTE**
+>
+> MLflow also provides an **`mlflow models build-docker`** command that combines both steps into a single operation, directly creating the Docker image without generating a separate Dockerfile.
+>
+> The **`generate-dockerfile`** approach shown here offers **more flexibility for customization** (e.g., modifying the base image or adding post-build steps) and works seamlessly with **Podman or Docker**.
+
+##### MLflow on Kubernetes
+
+While MLflow was **not initially built with Kubernetes in mind**, the platform can be deployed effectively on Kubernetes. The standard approach is deploying it as a **web service** using tools like **Helm charts**, where a **PostgreSQL** database often serves as the backend for storing metadata.
 
 However:
 
-- It does **not** introduce native Kubernetes CRDs
+- It does **not** introduce native Kubernetes **CRDs**
 - It is **not deeply Kubernetes-native**
 - Scaling and serving automation usually require extra integration work
 
-#### MLflow and LLMs
+##### MLflow and LLMs
 
-MLflow has improved its GenAI and LLM support significantly, especially from the **3.0** line onward, with capabilities such as:
+MLflow has significantly improved its **LLM support starting with the 3.0 release**, with capabilities such as:
 
-- Memory-efficient Transformers logging
-- Prompt Registry
-- AI gateway
-- GenAI evaluation
-- Tracing for LLM applications
-- Reference-based logging for Hub-backed models
+- **Memory-efficient logging** through the Transformers flavor that avoids loading large models into memory during artifact storage
+- **Prompt Registry** for versioning prompts
+- **AI gateway** for unified LLM provider access
+- Native **GenAI evaluation** capabilities
+- Enhanced **tracing for LLM applications**
+- **Reference-based logging** that stores Hugging Face Hub references instead of full model weights, substantially reducing storage requirements during development
 
-Still, large-scale LLM operations often need complementary infrastructure because:
+For **production deployments**, however, full model weights typically still need to be **downloaded and stored locally** to ensure availability and performance.
 
-- Full weights usually still need local or nearby storage in production
-- Repeated large downloads are expensive
-- Artifact storage patterns may not be optimized for very large model payloads
+That said, these approaches can create challenges in production environments, such as:
 
-#### Best operational takeaway
+- the risk of **losing access to external repositories**
+- **insufficient caching mechanisms** for repeated large model retrievals
+
+MLflow's artifact storage and model handling techniques, though improving, may still require **complementary infrastructure** for LLM management at scale. For example, downloading large models repeatedly from a registry can become inefficient, and MLflow's current artifact storage approach is **not optimized for such high-volume data handling**.
+
+##### Best operational takeaway
 
 **MLflow is strongest as a data science lifecycle platform, not as the final answer to large-scale Kubernetes-native LLM operations.**
 
-#### Encode this
+Its biggest advantage is that it is **very accessible** and can be easily installed on local machines.
+
+For more **Kubernetes-native solutions**, alternatives like **Kubeflow** extend the concept of a model registry with **deeper Kubernetes integration** and additional observability features.
+
+##### Encode this
 
 - **MLflow = experiment tracking first, registry second**
 - **Tracking Server is the central hub**
 - **Great for DS workflows, less native to Kubernetes operations**
-- **LLM support is improving, but large-model production usually needs more infrastructure**
+- **LLM support is improving (3.0+), but large-model production usually needs more infrastructure**
 
-#### Recall prompt
+##### Recall prompt
 
 *Why is MLflow highly effective for experimentation but often incomplete by itself for large-scale LLM production on Kubernetes?*
 
 [Back to Contents](#contents)
 
-### Kubeflow Model Registry
+#### Kubeflow Model Registry
 
-**Kubeflow** is a **Kubernetes-native ML platform** that aims to support the full ML lifecycle.
+**[Kubeflow](https://www.kubeflow.org/)** is a **Kubernetes-native ML platform** that aims to support the full ML lifecycle, including model training, serving, and model registry management.
 
-It was initially developed by **Google** and is now part of the broader **CNCF ecosystem**.
+It was initially developed by **Google** and is now an open source project under **CNCF**, consisting of these loosely connected components.
 
-#### Major Kubeflow components
+##### Major Kubeflow components
 
 - **Kubeflow Dashboard**  
   A central dashboard and hub that connects the authenticated web interfaces of Kubeflow and other ecosystem components.
@@ -3662,62 +4115,68 @@ It was initially developed by **Google** and is now part of the broader **CNCF e
   Kubeflow Trainer is a unified interface for model training and fine-tuning on Kubernetes. It runs scalable and distributed training jobs for popular frameworks like PyTorch or TensorFlow.
 
 - **Kubeflow Katib**  
-  Katib is a Kubernetes-native project for automated machine learning (AutoML) with support for hyperparameter tuning, early stopping, and neural architecture search.
+  Katib is a Kubernetes-native project for automated machine learning (**AutoML**) with support for **hyperparameter tuning**, **early stopping**, and **neural architecture search**.
 
-- **KServe** for model serving  
-  KServe, previously KFServing, solves production model serving on Kubernetes. It started in Kubeflow but later became a separate CNCF project. We cover KServe in detail in the KServe section.
+- **Model serving (KServe)**  
+  **KServe** (previously **KFServing**) solves production model serving on Kubernetes. It started in Kubeflow but has been moved to a **separate CNCF project**. We cover KServe in detail in [KServe](#kserve).
 
 - **Model Registry**  
-  An index and catalog for ML models. The registry is the central hub within the Kubeflow ecosystem, and the rest of this section focuses on it.
+  An **index and catalog** for ML models. The registry is the **central hub** within the Kubeflow ecosystem, and the rest of this section focuses on it.
 
-#### Why Kubeflow is different from MLflow
+At its core, Kubeflow takes advantage of **Kubernetes principles**, with all tasks, including model registration and training, **defined as containerized workloads**.
 
-Kubeflow goes deeper into **Kubernetes-native control-plane integration**.
+![Kubeflow architecture and how it interacts with its Model Registry](<assets/Kubeflow architecture and how it interacts with its Model Registry.png>)
 
-It uses:
+**Figure 2-7. Kubeflow architecture and how it interacts with its Model Registry**
 
-- **CRDs**
-- **Controllers**
-- **Kubernetes manifests**
+##### Why Kubeflow is different from MLflow
+
+Unlike MLflow, which is a more flexible experiment tracking and model management tool, **Kubeflow offers deeper Kubernetes integration** through:
+
+- **CustomResourceDefinitions (CRDs)**
+- **Manifests**
+- **Native controllers** for each ML lifecycle component
 - Native workflow patterns built around cluster operations
 
-This makes Kubeflow more aligned with platform engineering on Kubernetes than tools that primarily began as standalone tracking systems.
+This makes Kubeflow more aligned with **platform engineering on Kubernetes** than tools that primarily began as standalone tracking systems.
 
-#### What the Kubeflow Model Registry does
+##### What the Kubeflow Model Registry does
 
-The **Kubeflow Model Registry** is the central catalog for:
+The **Kubeflow Model Registry** serves as a **central repository** for managing machine learning models, their versions, and related metadata. It substantially simplifies the **transition from experimentation to production deployments**.
 
-- Models
-- Versions
-- Metadata
-- Lineage-relevant details
+It is the central catalog for:
+
+- **Models**
+- **Versions**
+- **Metadata**
+- **Lineage-relevant details**
 
 Its purpose is to simplify the move from **experimentation** to **production deployment** inside a Kubernetes-centric ecosystem.
 
-#### Metadata storage model
+##### Metadata storage model
 
-The registry uses a backend relational database, commonly **MySQL**, and follows a flexible **entity-relationship model** inspired by **Google ML Metadata**.
+At its core, the registry uses a **flexible entity-relationship model** for metadata storage in a backend relational database (**MySQL**). This model is inspired by **Google's ML Metadata project** and provides a **structured, scalable approach** to storing:
 
-This helps with:
+- **Model lineage**
+- **Metrics**
+- **Parameters**
 
-- Structured lineage tracking
-- Parameter storage
-- Metric storage
-- Version reuse across Kubeflow components
-- Triggering downstream workflows
+The Kubeflow Model Registry can **standardize metadata**, enable **version control**, and offer **interoperability across Kubeflow components**. This allows for robust tracking of model versions and the **reuse of metadata for deployment or pipeline triggers**.
 
-#### Operational requirement
+##### Operational requirement
 
-The registry depends on external stateful infrastructure such as:
+The registry relies on **external dependencies** such as:
 
-- **MySQL**
-- **Persistent volumes**
+- **MySQL** for metadata storage
+- A **persistent volume** required for durability
 
-So while it is Kubernetes-native, it is still not "free"; it requires careful production operation.
+This needs to be taken into account when operating the registry in production setups. So while it is Kubernetes-native, it is still not "free"; it requires careful production operation.
 
-#### Registering a model
+It exposes **REST APIs** and a **Python SDK** for interaction.
 
-You can interact with the registry through a Python SDK:
+##### Example 2-5. Register a model at the Kubeflow Model Registry
+
+You can interact with the registry through a Python SDK. The following example shows how you can do this from within a Python program or a Jupyter Notebook:
 
 ```python
 from model_registry import ModelRegistry
@@ -3743,26 +4202,33 @@ rm = registry.register_model(
 )
 ```
 
-#### Access pattern
+What to notice:
 
-Because the service address is cluster-internal, this kind of code usually runs **inside the cluster**, for example:
+- **`ModelRegistry(server_address=..., ...)`** — creates a proxy to the Model Registry running in the cluster. This code must run **within a pod in the cluster** to access the cluster-internal service address (`.svc.cluster.local`)
+- **`registry.register_model(...)`** — registers a model with metadata and a reference to the **location of the model data** (in this case, Google Cloud Storage)
 
-- In a notebook pod
-- In a pipeline step
-- In an application pod
+##### Access pattern
 
-#### Querying the registry from inside the cluster
+Because the service address is **cluster-internal**, this kind of code usually runs **inside the cluster**, for example:
 
-You can also access it from a temporary pod:
+- In a **notebook pod**
+- In a **pipeline step**
+- In an **application pod**
+
+##### Example 2-6. Query the cluster-internal Model Registry with curl from a pod
+
+When a model is registered at the registry, you can easily access it via a Python library call. You can also access the model via a **REST API call directly** to the service:
 
 ```bash
 kubectl run -it --rm curl --image=curl --restart=Never -- \
   http://model-registry-service.kubeflow.svc.cluster.local/...
 ```
 
-#### Integration with KServe
+This runs a `curl` command inside a **temporary pod** to query the **cluster-internal Model Registry service**.
 
-Kubeflow Model Registry can act as an indirection layer for KServe:
+##### Example 2-7. `InferenceService` accessing model data from the Kubeflow registry
+
+You can also access the Kubeflow Model Registry with a **KServe `InferenceService`** in order to initialize the `InferenceService` with the model data that the registry points to:
 
 ```yaml
 apiVersion: serving.kserve.io/v1beta1
@@ -3778,36 +4244,49 @@ spec:
         version: "1"
 ```
 
-This matters because the **InferenceService** can reference the model through the registry, while the actual underlying storage location can change later without rewriting the serving manifest.
+What to notice:
 
-#### Best operational takeaway
+- **`storageUri: "model-registry://iris/v1"`** — reference to the **model ID and version**. The actual storage URI is retrieved from the Model Registry metadata, providing an **extra layer of indirection** that allows changing storage locations without updating the `InferenceService`
+- **`modelFormat: name: "sklearn"`** — format that specifies the runtime to use
+
+This matters because the **`InferenceService`** can reference the model through the registry, while the actual underlying storage location can change later **without rewriting the serving manifest**.
+
+##### Best operational takeaway
 
 **Kubeflow Model Registry is a stronger fit when you want the registry to participate as part of a Kubernetes-native ML platform rather than remain a mostly standalone tracking system.**
 
-#### Encode this
+##### Encode this
 
 - **Kubeflow = full Kubernetes-native ML platform**
 - **Model Registry is central inside that ecosystem**
 - **Uses structured metadata with deeper cluster integration**
 - **Works naturally with KServe and other Kubeflow components**
 
-#### Recall prompt
+##### Recall prompt
 
 *What makes Kubeflow Model Registry more Kubernetes-native than MLflow Model Registry?*
 
 [Back to Contents](#contents)
 
-### OCI
+#### OCI Registry
 
-#### Registry
+An **OCI (Open Container Initiative) Registry** is a **standard mechanism for storing and distributing container images**, commonly used in Kubernetes environments.
 
-An **OCI Registry** is a standard system for **storing and distributing OCI-compliant artifacts**, most famously container images.
+Familiar services like **Docker Hub** and **Quay.io** have made it easy for Kubernetes users to store and manage images without running a registry themselves. Some Kubernetes distributions, such as **Red Hat OpenShift**, even include a **built-in OCI Registry**.
 
 Examples include:
 
 - **Docker Hub**
 - **Quay.io**
 - Built-in registries in some Kubernetes distributions such as **OpenShift**
+
+> **WHAT IS OCI?**
+>
+> The **Open Container Initiative (OCI)** standardizes how containerized applications and artifacts are managed.
+>
+> Founded in **2015 by Docker and others** under the **Linux Foundation**, OCI ensures that containerized applications and related artifacts are **packaged, stored, and exchanged** in a vendor-neutral, interoperable way.
+>
+> OCI began with images but now also supports **OCI artifacts**, which allows registries to store **more than runnable applications** — including model weights, Helm charts, configuration bundles, and more.
 
 ##### Why OCI registries matter for GenAI
 
@@ -3951,9 +4430,13 @@ That is a fundamental distinction from many classic model registry designs.
 
 [Back to Contents](#contents)
 
-#### Images
+#### OCI Images
 
 An **OCI image** is a **standardized container image format** defined by the **Open Container Initiative**.
+
+![OCI image consists of multiple filesystem layers](<assets/OCI image consists of multiple filesystem layers.png>)
+
+**Figure 2-8. OCI image consists of multiple filesystem layers**
 
 Its purpose is **interoperability**:
 
@@ -4034,7 +4517,7 @@ This is one reason **Safetensors + OCI artifacts** is a practical pattern for pr
 
 [Back to Contents](#contents)
 
-## Accessing Model Data in Kubernetes
+### Accessing Model Data in Kubernetes
 
 Now that the notes have covered **model formats**, **registries**, and **artifact distribution**, the next operational question is:
 
@@ -4048,7 +4531,7 @@ For GenAI serving on Kubernetes, this is not a secondary detail. It directly aff
 - **network usage**
 - **inference latency**
 
-### KServe `storageUri` and Storage Initializers
+#### KServe `storageUri` and Storage Initializers
 
 KServe provides a clean reference model for understanding how Kubernetes-based serving systems access model data.
 
@@ -4075,7 +4558,7 @@ What to notice:
 - the runtime here is **TensorFlow**
 - `storageUri` points to the model’s storage location
 
-#### Why the URI scheme matters
+##### Why the URI scheme matters
 
 The **scheme** in `storageUri` determines which storage backend KServe will use and how the model data is prepared.
 
@@ -4094,7 +4577,7 @@ Its purpose is simple:
 
 **make model data available to the runtime container before inference begins**
 
-#### Custom storage initializers
+##### Custom storage initializers
 
 KServe lets you add custom URI schemes through `ClusterStorageContainer`.
 
@@ -4119,7 +4602,7 @@ What this does:
 - registers `model-registry://` as a supported URI prefix
 - allows `InferenceService` resources to refer to models through that scheme
 
-#### Init containers and sidecars
+##### Init containers and sidecars
 
 These are important Kubernetes patterns to remember.
 
@@ -4136,7 +4619,7 @@ These are important Kubernetes patterns to remember.
 
 For model serving, the storage initializer is usually an **init-container pattern**, not a sidecar pattern.
 
-#### Node-local sharing with `emptyDir`
+##### Node-local sharing with `emptyDir`
 
 A common KServe pattern is:
 
@@ -4151,7 +4634,7 @@ This works because `emptyDir` is shared among containers in the same pod, includ
 
 This gives the runtime a node-local copy of the model data for that pod.
 
-### Built-in KServe Storage Initializers
+#### Built-in KServe Storage Initializers
 
 KServe supports several storage schemes out of the box:
 
@@ -4166,7 +4649,7 @@ KServe supports several storage schemes out of the box:
 | `model-registry` | Access a model registered in the Kubeflow Model Registry | `model-registry://iris/v1` |
 | `hf` | Download directly from the Hugging Face Hub | `hf://meta-llama/Llama-2-7b-chat-hf` |
 
-#### Important operational distinction
+##### Important operational distinction
 
 Most of these schemes involve **preparing a node-local copy** of model data for each pod.
 
@@ -4178,7 +4661,7 @@ That is convenient for runtime access speed, but it can mean:
 
 This is one reason storage strategy matters so much for larger models.
 
-### Shared Storage with PersistentVolumes
+#### Shared Storage with PersistentVolumes
 
 When an `InferenceService` runs with multiple replicas, each replica needs access to the same model files.
 
@@ -4192,7 +4675,7 @@ PersistentVolumes provide a third model:
 
 **store the model once, mount it from many pods**
 
-#### Why PersistentVolumes matter
+##### Why PersistentVolumes matter
 
 PVs are useful when you want:
 
@@ -4209,7 +4692,7 @@ Typical backends include:
 - **Azure Files**
 - **Google Cloud Filestore**
 
-#### Example PV and PVC for model storage
+##### Example PV and PVC for model storage
 
 ```yaml
 apiVersion: v1
@@ -4246,7 +4729,7 @@ Key points:
 - `Retain` preserves the underlying model data if the PVC is deleted
 - the PVC must request an access mode compatible with the PV
 
-#### Why `ReadOnlyMany` is a strong fit
+##### Why `ReadOnlyMany` is a strong fit
 
 Serving workloads usually need to **read** model weights, not modify them.
 
@@ -4258,7 +4741,7 @@ This also helps with:
 - less coordination overhead
 - more aggressive filesystem caching
 
-#### Using a PVC with KServe
+##### Using a PVC with KServe
 
 KServe supports PVC-backed access through the `pvc://` storage scheme:
 
@@ -4279,7 +4762,7 @@ The PVC name is referenced directly in the URI.
 
 KServe then mounts the PVC into the model container, typically under `/mnt/models`.
 
-#### How PVC access differs from remote-download schemes
+##### How PVC access differs from remote-download schemes
 
 This is a crucial distinction.
 
@@ -4302,7 +4785,7 @@ That means:
 
 The storage initializer may still exist in the flow, but for PVC-backed access it effectively becomes a **near no-op** compared with remote download schemes.
 
-#### Trade-off: local speed versus shared efficiency
+##### Trade-off: local speed versus shared efficiency
 
 This is the core operational trade-off:
 
@@ -4318,7 +4801,7 @@ This is the core operational trade-off:
 - simpler central updates
 - but introduces network latency on reads
 
-#### Scaling considerations
+##### Scaling considerations
 
 PersistentVolumes work well for many common serving deployments, especially when:
 
@@ -4343,7 +4826,7 @@ Warning signs include:
 
 High-performance distributed storage systems usually scale better than simple NFS setups.
 
-#### Practical takeaway
+##### Practical takeaway
 
 There is no universal best method for model data access.
 
@@ -4357,7 +4840,7 @@ The right choice depends on whether you optimize for:
 
 PVs are often a strong choice for shared model serving, but for very high-throughput or high-scale inference, node-local approaches such as OCI-backed delivery can be better.
 
-### Encode this
+#### Encode this
 
 - **`storageUri` is the control point for how KServe locates model data**
 - **storage initializers are usually init containers that prepare model files before serving**
@@ -4365,9 +4848,52 @@ PVs are often a strong choice for shared model serving, but for very high-throug
 - **`pvc://` differs from remote-download schemes because it mounts shared storage directly**
 - **model access design is a trade-off between local performance and shared efficiency**
 
-### Recall prompt
+#### Recall prompt
 
 *Why might a team choose `pvc://` over `s3://`, and what performance trade-off does that decision introduce?*
+
+[Back to Contents](#contents)
+
+### Model Data Lessons Learned
+
+This combined section explored the **three-layer challenge** of LLM data on Kubernetes: **storage formats**, **registries**, and **runtime access**.
+
+**LLM data is uniquely large**
+
+Models range from **~14 GB** (Mistral 7B) to **~800 GB** (Llama 4 Maverick), and the **sheer size dominates operational decisions** in a way that traditional application containers never do.
+
+**Storage formats are still "mostly self-contained"**
+
+- **Weight-only formats** (PyTorch `state_dict`, TensorFlow checkpoints, NumPy arrays) work for development but require the runtime to **already know the architecture**
+- **Self-contained formats** (ONNX, Safetensors, GGUF/GGML, Hugging Face Transformers) bundle weights with metadata, but **all still depend on external components** (especially **tokenizers**)
+- **Safetensors** is now the **default on Hugging Face**, **GGUF** dominates the `llama.cpp` / edge ecosystem, and **ONNX** is the best example of where the field could go for a fully self-contained LLM format
+
+**Model registries split into "metadata-only" vs "artifact-storing"**
+
+- **Hugging Face Model Hub** — public discovery, **Model Cards**, inference widget; not for proprietary models
+- **MLflow** — strong for experiment tracking and DS workflows, less Kubernetes-native, LLM support improving in 3.0+
+- **Kubeflow Model Registry** — Kubernetes-native, CRD-driven, integrates with KServe `model-registry://` URIs
+- **OCI Registry** — unlike the metadata-only registries, OCI **stores the full model artifact**, making it a strong fit for **immutable, versioned, layered model delivery**
+
+**Accessing model data is a trade-off, not a single answer**
+
+- **`storageUri`** + **storage initializers** is the KServe control point
+- **`emptyDir`** shares model data between init container and serving container
+- **`pvc://`** mounts shared storage directly (no copy step), trading network latency for storage efficiency
+- **OCI-backed delivery** (modelcars, OCI image volume mounts) gives **immutable, cache-friendly** model distribution
+- The right choice depends on optimizing for **startup speed, runtime latency, storage efficiency, replica scale**, or **operational simplicity**
+
+#### Encode this
+
+- **Storage formats, registries, and access patterns are one connected problem, not three**
+- **No format today is fully self-contained for LLMs — tokenizers and configs always come along**
+- **Metadata registries (MLflow, Kubeflow) ≠ artifact registries (OCI)**
+- **`storageUri` scheme is the single control point that decides download-vs-mount semantics**
+- **Replica scale + model size + storage backend together set the operational ceiling**
+
+#### Recall prompt
+
+*Given a 70 GB Safetensors model and 10 inference replicas, which combination of registry + access pattern would you choose for the lowest total startup cost, and what trade-off does it introduce?*
 
 [Back to Contents](#contents)
 
@@ -6884,14 +7410,22 @@ Use these prompts for fast review:
 - **Topology**: When is **multinode multi-GPU** inference unavoidable, and what coordination problems does it bring?
 - **NCCL/RDMA**: Why is **RDMA-backed NCCL** important for multinode LLM inference?
 - **Optimization**: Which **GPU resource optimizations** matter most for production LLM serving?
+- **Model sizes**: Roughly how large is a 7B model in FP16 vs a 70B model? Why does that matter for K8s storage?
+- **Weight-only vs self-contained**: Why is a PyTorch `state_dict` insufficient by itself for production inference?
+- **"Mostly self-contained"**: Why does no LLM format today qualify as fully self-contained?
 - **Portability**: Why are ONNX, GGUF, and Safetensors each useful but incomplete?
+- **`tokenizer.json` and `config.json`**: What do these two files contain, and why are they de-facto standards?
+- **Safetensors sharding**: What does `model.safetensors.index.json` do, and when do you need sharding?
+- **GGUF**: Why is GGUF tied to `llama.cpp`, and why does its quantization focus matter for edge inference?
 - **Registry**: Why does a model registry store metadata more often than weights?
+- **Model experimentation vs feature stores**: How do these two concepts bracket the model registry's role?
 - **Hugging Face**: Why is it the default public discovery platform but not the full production answer?
 - **MLflow**: Why is it strong for experimentation but weaker as a Kubernetes-native serving control plane?
 - **Kubeflow**: What makes its registry more deeply integrated with Kubernetes workflows?
 - **OCI Registry**: Why is storing full model artifacts there different from storing metadata in a model registry?
-- **OCI**: What are the four main OCI image components?
+- **OCI Images**: What are the four main OCI image components?
 - **Model access**: What is the difference between download-based storage initialization and direct PVC-backed mounting?
+- **`storageUri` scheme**: What changes when you switch from `s3://` to `pvc://` to `oci://`?
 - **Production serving**: Why do model evaluation, compression, benchmarking, runtime tuning, autoscaling, startup time, routing, and disaggregated topology need to be treated as one connected system?
 - **LLM-aware routing**: Why is round robin often weak for LLM replicas?
 - **Disaggregated serving**: Why do distributed KV cache and disaggregated prefill require high-bandwidth networking?
