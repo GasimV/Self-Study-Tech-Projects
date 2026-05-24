@@ -60,6 +60,9 @@
      - [KServe `storageUri` and Storage Initializers](#kserve-storageuri-and-storage-initializers)
      - [Built-in KServe Storage Initializers](#built-in-kserve-storage-initializers)
      - [Shared Storage with PersistentVolumes](#shared-storage-with-persistentvolumes)
+     - [OCI Image for Storing Model Data](#oci-image-for-storing-model-data)
+       - [Modelcars](#modelcars)
+       - [OCI Image Volume Mounts](#oci-image-volume-mounts)
    - [Model Data Lessons Learned](#model-data-lessons-learned)
 5. [Running in Production](#running-in-production)
    - [Model and Runtime Tuning](#model-and-runtime-tuning)
@@ -4284,9 +4287,11 @@ Examples include:
 >
 > The **Open Container Initiative (OCI)** standardizes how containerized applications and artifacts are managed.
 >
-> Founded in **2015 by Docker and others** under the **Linux Foundation**, OCI ensures that containerized applications and related artifacts are **packaged, stored, and exchanged** in a vendor-neutral, interoperable way.
+> Founded in **2015 by Docker and others** under the **Linux Foundation**, OCI ensures **interoperability** and **vendor neutrality** in container technologies. It evolved from Docker's proprietary format to **avoid lock-in**, becoming an **open, extensible ecosystem**.
 >
-> OCI began with images but now also supports **OCI artifacts**, which allows registries to store **more than runnable applications** — including model weights, Helm charts, configuration bundles, and more.
+> While OCI began with container images, it now supports **diverse artifacts** like **Helm charts** and **generative AI models** through its **OCI artifacts specification**. This makes registries highly versatile for modern workloads.
+>
+> See [Modelcars](#modelcars) for how to use OCI images with model data via modelcars, and [OCI Image Volume Mounts](#oci-image-volume-mounts) for native OCI image volume mounts in Kubernetes.
 
 ##### Why OCI registries matter for GenAI
 
@@ -4302,7 +4307,20 @@ OCI began with images but now also supports **OCI artifacts**, which allows regi
 
 ##### Why this is important for LLMs
 
-Unlike many model registries that store mostly **metadata and references**, an OCI Registry can store the **full model data itself**.
+An OCI Registry can store **more than just container images**. With the introduction of **OCI 1.1**, the specification expanded to support **OCI artifacts**, a **generalization of the original image format**. OCI artifacts let you store **arbitrary data types**, making an OCI Registry suitable for hosting **machine learning models, including LLMs**.
+
+This means the registry can manage the **entire model file** rather than merely referencing external storage.
+
+OCI Registries provide:
+
+- **Versioning**
+- **Immutability**
+- **Persistence**
+- Efficient **distribution mechanisms**
+
+…that fit well with LLM hosting.
+
+Compared to **MLflow and Kubeflow Registries**, which primarily store **model metadata and references** to external storage, an **OCI Registry focuses on storing the full model data itself**.
 
 That makes it attractive for:
 
@@ -4314,33 +4332,60 @@ That makes it attractive for:
 
 ##### Passive data images
 
-LLM model images are often **passive data images**.
+LLM model images are examples of **"passive data images"**.
 
 That means:
 
-- They are **not executed** like applications
-- They are used as **immutable packages** of model files
-- Inference runtimes consume the files they contain
+- You **don't execute them**
+- Instead, you use them as **immutable packages** of model weights and configurations
+- **Inference runtimes consume the files they contain**
 
-##### Building a model image from Hugging Face
+You can easily create such a data image by cloning a **Hugging Face repository**, as shown next.
 
-Example Dockerfile:
+##### Example 2-8. Dockerfile for creating a container image that holds a model
 
 ```dockerfile
 FROM alpine/git
-
 RUN git lfs install \
  && git clone --depth 1 https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct /models
-
 ENTRYPOINT sh
 ```
 
-##### Building and pushing with Podman
+This Dockerfile can be used directly with **`podman`** or **`docker`** to create a **self-contained OCI image file** that has all the files needed to run the model.
+
+For simplicity, this example adds the **entire model as a single layer**. In production, consider adding each model chunk as its **own layer** so that container runtimes can **download and cache them independently**.
+
+##### Example 2-9. Build and push a model file with podman
 
 ```bash
-podman build -f Dockerfile.model -t quay.io/rhuss/qwen2.5-0.5b-instruct .
-podman push quay.io/rhuss/qwen2.5-0.5b-instruct:latest
+$ podman build -f Dockerfile.model -t quay.io/rhuss/qwen2.5-0.5b-instruct .
+
+STEP 1/3: FROM alpine/git
+Trying to pull docker.io/alpine/git:latest...
+Getting image source signatures
+...
+Writing manifest to image destination
+STEP 2/3: RUN git lfs install
+       && git clone https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
+       && ln -s /git/Qwen2.5-0.5B-Instruct /models
+Git LFS initialized.
+Cloning into 'Qwen2.5-0.5B-Instruct'...
+--> b437a8f78e49
+STEP 3/3: ENTRYPOINT sh
+COMMIT quay.io/rhuss/qwen2.5-0.5b-instruct
+--> f680df7c975f
+Successfully tagged quay.io/rhuss/qwen2.5-0.5b-instruct:latest
+f680df7c975f6bfc806783574003c2b17872e9bf767944380f
+
+$ podman push quay.io/rhuss/qwen2.5-0.5b-instruct:latest
 ```
+
+What to notice:
+
+- **`podman build -f Dockerfile.model ...`** — builds the model image. It will **clone the full repo** from the Hugging Face Hub and might take some time
+- **`podman push ...`** — pushes to the registry where you can access it from the Kubernetes cluster
+
+By leveraging **OCI Registries**, you can **store, version, and distribute** LLM models efficiently within Kubernetes-native infrastructure, integrating smoothly into **MLOps pipelines and declarative workflows**. Both **Modelcars** and **OCI Image Volume Mounts** allow KServe `InferenceServices` to **directly load model data from OCI images** — see [Modelcars](#modelcars) and [OCI Image Volume Mounts](#oci-image-volume-mounts).
 
 ##### Important production note
 
@@ -4537,7 +4582,7 @@ KServe provides a clean reference model for understanding how Kubernetes-based s
 
 In the simplest case, the storage location is declared directly in an `InferenceService` using `storageUri`.
 
-Example using S3-backed model storage:
+##### Example 2-10. `InferenceService` picking up model data from an S3 storage
 
 ```yaml
 apiVersion: "serving.kserve.io/v1beta1"
@@ -4553,10 +4598,9 @@ spec:
 
 What to notice:
 
-- `serviceAccountName` identifies the Kubernetes `ServiceAccount`
-- that service account is typically associated with a `Secret` or cloud-native identity
+- **`serviceAccountName: sa`** — identifies the Kubernetes `ServiceAccount` that is **associated with a `Secret`** holding the authentication credentials (or a cloud-native identity)
 - the runtime here is **TensorFlow**
-- `storageUri` points to the model’s storage location
+- **`storageUri: "s3://kserve-examples/mnist"`** — reference to an **S3 bucket** that holds the model data files
 
 ##### Why the URI scheme matters
 
@@ -4579,9 +4623,14 @@ Its purpose is simple:
 
 ##### Custom storage initializers
 
-KServe lets you add custom URI schemes through `ClusterStorageContainer`.
+KServe lets you add **custom URI schemes** through a **`ClusterStorageContainer`** resource. In this resource you specify:
 
-Example:
+- a **reference to an image** holding the custom storage initializer
+- a **list of URL schemas** that should trigger that storage initializer
+
+URLs that match these schemas can then be used as `storageUri` specification in an `InferenceService`.
+
+###### Example 2-11. `ClusterStorageContainer` adding `model-registry://` schema support
 
 ```yaml
 apiVersion: serving.kserve.io/v1alpha1
@@ -4596,11 +4645,12 @@ spec:
     - prefix: model-registry://
 ```
 
-What this does:
+What to notice:
 
-- declares a custom initializer image
-- registers `model-registry://` as a supported URI prefix
-- allows `InferenceService` resources to refer to models through that scheme
+- **`image: kubeflow/model-registry-storage-initializer`** — reference to the **OCI image** for executing the initializer logic
+- **`supportedUriFormats.prefix: model-registry://`** — registers the URL schema `model-registry` so that it can be used in an `InferenceService`
+
+Kubernetes runs the storage initializer as an **init-container before the model runtimes start**; its only purpose is to **make the model data available** for the serving runtime.
 
 ##### Init containers and sidecars
 
@@ -4619,6 +4669,20 @@ These are important Kubernetes patterns to remember.
 
 For model serving, the storage initializer is usually an **init-container pattern**, not a sidecar pattern.
 
+> **INIT CONTAINERS AND SIDECARS**
+>
+> **Init containers** and **sidecars** are powerful Kubernetes patterns for enhancing pod behavior.
+>
+> **Init containers** run **first** and perform **one-time setup tasks**, such as **populating a shared volume** with data needed by the main container.
+>
+> **Sidecars**, on the other hand, run **alongside** the main container, often providing auxiliary functionality like:
+>
+> - **logging**
+> - **data processing**
+> - **cross-container data sharing**
+>
+> Together, these patterns enable a **flexible and modular design for pods**. For more insights, check out the **init container** and **sidecar** patterns described in [*Kubernetes Patterns*](https://www.oreilly.com/library/view/kubernetes-patterns-2nd/9781098131678/).
+
 ##### Node-local sharing with `emptyDir`
 
 A common KServe pattern is:
@@ -4636,16 +4700,18 @@ This gives the runtime a node-local copy of the model data for that pod.
 
 #### Built-in KServe Storage Initializers
 
-KServe supports several storage schemes out of the box:
+KServe supports several storage schemes out of the box.
 
-| Scheme | Description | Example |
+**Table 2-2. KServe storage initializers**
+
+| Schema | Description | Example |
 | --- | --- | --- |
 | `gs` | Download from Google Cloud Storage | `gs://kfserving-examples/models/sklearn/1.0/model` |
 | `s3` | Download from an S3 bucket | `s3://kserve-examples/mnist` |
 | `https` | Download model data with HTTP | `https://huggingface.co/meta-llama/Llama-3.2-3B` |
-| `hdfs`, `webhdfs` | Access files from Hadoop Distributed File System | `hdfs://path/to/model` |
-| `pvc` | Copy or mount model data from a PersistentVolumeClaim | `pvc://${PVC_NAME}/export` |
-| `oci` | Pull an OCI image with model data and access it directly via a modelcar | `oci://quay.io/rhuss/kserving-example-sklearn:1.0` |
+| `hdfs`, `webhdfs` | Access files from a Hadoop Distributed File System | `hdfs://path/to/model` |
+| `pvc` | Copy or mount model data from a `PersistentVolumeClaim` | `pvc://${PVC_NAME}/export` |
+| `oci` | Pull an OCI image with model data and access it directly via a modelcar — see [Modelcars](#modelcars) | `oci://quay.io/rhuss/kserving-example-sklearn:1.0` |
 | `model-registry` | Access a model registered in the Kubeflow Model Registry | `model-registry://iris/v1` |
 | `hf` | Download directly from the Hugging Face Hub | `hf://meta-llama/Llama-2-7b-chat-hf` |
 
@@ -4692,7 +4758,7 @@ Typical backends include:
 - **Azure Files**
 - **Google Cloud Filestore**
 
-##### Example PV and PVC for model storage
+##### Example 2-12. `PersistentVolume` and `PersistentVolumeClaim` for model storage
 
 ```yaml
 apiVersion: v1
@@ -4722,28 +4788,31 @@ spec:
       storage: 20Gi
 ```
 
-Key points:
+What to notice:
 
-- `storage: 20Gi` defines the total PV capacity
-- `ReadOnlyMany` allows multiple pods to mount the volume read-only at the same time
-- `Retain` preserves the underlying model data if the PVC is deleted
-- the PVC must request an access mode compatible with the PV
+- **`storage: 20Gi`** — defines the **total PV capacity**
+- **`accessModes: ReadOnlyMany`** — allows multiple pods to mount the volume **read-only simultaneously**
+- **`persistentVolumeReclaimPolicy: Retain`** — preserves the underlying model data if the PVC is deleted (**prevents accidental model deletion**); `Delete` removes both PV and underlying storage
+- **`nfs:`** — NFS is used here as an example; other distributed filesystems supported by your cluster (such as **Ceph**, **AWS EFS**, **Azure Files**, or **Google Cloud Filestore**) can be configured similarly
+- the PVC must request an **access mode compatible** with the PV
 
 ##### Why `ReadOnlyMany` is a strong fit
 
-Serving workloads usually need to **read** model weights, not modify them.
+Model serving workloads typically need **read-only access** to model weights and configuration files. Inference engines **read the model parameters but don't modify them** during serving. This **read-only characteristic** makes the **`ReadOnlyMany`** access mode ideal for model storage PVs.
 
-That makes **read-only shared mounts** a natural fit.
+Configuring read-only access happens at **two levels**:
 
-This also helps with:
+- **PV level** — the `ReadOnlyMany` access mode permits multiple pods to mount the volume simultaneously for reading
+- **Pod level** — setting **`readOnly: true`** in the volume mount specification **reinforces this constraint** and provides additional benefits
 
-- safer sharing across replicas
-- less coordination overhead
-- more aggressive filesystem caching
+Read-only mounts deliver **two performance advantages**:
 
-##### Using a PVC with KServe
+- the operating system can apply **aggressive filesystem caching** since it knows the data won't change
+- there's **no lock contention** between replicas attempting concurrent access, eliminating coordination overhead that would occur with read-write mounts
 
-KServe supports PVC-backed access through the `pvc://` storage scheme:
+##### Example 2-13. `InferenceService` using `PersistentVolumeClaim` for model data
+
+KServe supports PVs through the **`pvc://`** storage URI scheme, enabling direct integration with `PersistentVolumeClaims`:
 
 ```yaml
 apiVersion: serving.kserve.io/v1beta1
@@ -4758,9 +4827,9 @@ spec:
       storageUri: pvc://llama-3-8b-pvc/
 ```
 
-The PVC name is referenced directly in the URI.
+What to notice:
 
-KServe then mounts the PVC into the model container, typically under `/mnt/models`.
+- **`storageUri: pvc://llama-3-8b-pvc/`** — references the PVC **by name**. KServe mounts the PVC **directly into the model container at `/mnt/models`**
 
 ##### How PVC access differs from remote-download schemes
 
@@ -4838,7 +4907,395 @@ The right choice depends on whether you optimize for:
 - **replica scale**
 - **operational simplicity**
 
-PVs are often a strong choice for shared model serving, but for very high-throughput or high-scale inference, node-local approaches such as OCI-backed delivery can be better.
+PVs are often a strong choice for shared model serving, but for very high-throughput or high-scale inference, **node-local approaches such as OCI-backed delivery** can be better.
+
+Beyond `PersistentVolumes`, **OCI images** offer another approach for transferring and storing model data. The following sub-section explores how to **package models as OCI images** and access them efficiently from LLM runtimes.
+
+#### OCI Image for Storing Model Data
+
+In **2013**, **Docker** invented a clever **layered format** for storing container blueprints. The original and still prevalent usage for those images is to store, beside the kernel, all the binaries and files that make up a Linux operating system.
+
+It is a **layered format** so that users can create **base images** that can be reused for different specialized images, for example, those containing the applications that will be run in a container. **Multiple containers share layers** when running if they refer to the same layers.
+
+In addition to the **read-only layers** of an image, Docker uses a **union filesystem** that adds a **read-write layer on top** of the image layer stack, so that different container instances can still share the same underlying operating system files.
+
+> One key benefit of this schema is that the read-only layers can be **cached individually**, which makes working with OCI images very efficient as **only changed layers** need to be distributed.
+
+For the moment it is important that:
+
+- you can **share layers**
+- an OCI image is **built up hierarchically** — the layers are **stacked**
+
+This stacking matches nicely for **model composition techniques** like **fine-tuning with Low-Rank Adaptation (LoRA) adapters** on top of foundational models. These foundational models, stored in base images, can be **shared when running on the cluster nodes**, which makes it very **efficient to run multiple specialized fine-tuned models**.
+
+> See Figure 2-8 above for how OCI images are composed. At the end, all layers are packed into a **tar archive** stored in an OCI Registry.
+
+Docker's success eventually led to a **standardization of the OCI image specification**. A full ecosystem of supporting tools has emerged over time:
+
+- **registries** for hosting OCI images
+- CLI tooling like **`skopeo`** or **`oras`** for inspecting and managing OCI images
+
+Putting LLMs into OCI images **piggybacks on this existing landscape** and automatically benefits from the existing work that has been done in this area.
+
+##### Example 2-14. Deployment with init-container copying model data to `emptyDir` volume
+
+We can initialize the model data directly from an OCI container image. The following example introduces an `emptyDir` volume for sharing the model data between an **init-container** (which copies from the OCI image) and the **serving container**:
+
+```yaml
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: vllm
+spec:
+  replicas: 1
+  template:
+    spec:
+      initContainers:
+      - name: copy-model-data
+        image: quay.io/rhuss/qwen2.5-0.5b-instruct:latest
+        command:
+        - "sh"
+        - "-c"
+        - "cp -a /models/. /mnt/models"
+        volumeMounts:
+        - name: models
+          mountPath: /mnt/models
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:latest
+        args:
+        - "--served-model-name",
+        - "Qwen/Qwen2.5-0.5B-Instruct",
+        - "--model",
+          "/mnt/models"
+        volumeMounts:
+        - name: models
+          mountPath: /mnt/models
+      volumes:
+        - name: models
+          emptyDir: {}
+```
+
+What to notice:
+
+- **`image: quay.io/rhuss/qwen2.5-0.5b-instruct:latest`** — OCI image holding the model data for Qwen 2.5 in the directory `/models` (built per Example 2-9)
+- **`cp -a /models/. /mnt/models`** — copies the data from the image directory `/models` to the mounted `/mnt/models` directory that is backed by an `emptyDir` volume. **This might take some time depending on the size of the model to copy**
+- the init-container **mounts the `emptyDir` volume** at `/mnt/models`
+- **`--model /mnt/models`** — runs vLLM so that it accesses the model stored in `/mnt/models`
+- the application container **mounts the shared directory** at `/mnt/models` to access the data copied by the init-container
+- **`emptyDir: {}`** — declares an **empty node-local directory**
+
+The technique above shows how model data is **typically initialized** for a deployed model, whether it's downloaded from an S3 bucket or extracted from an OCI image. KServe's storage initializers use this **same init-container approach** to copy model data from various sources.
+
+Besides downloading the data from some source, this technique involves an **expensive copy step** that is performed **every time a runtime pod is started**.
+
+The following sub-subsections demonstrate how this **copying over of gigabyte-sized amounts of data can be avoided** by directly accessing the data that is contained in an OCI model data image.
+
+> **CNCF MODELPACK SPECIFICATION**
+>
+> The **[CNCF ModelPack specification](https://github.com/CloudNativeAI/model-spec)** is a **CNCF Sandbox project** that extends the OCI image specification for **packaging and distributing AI models**.
+>
+> It targets an expansion of the OCI standard to support AI model artifacts, including:
+>
+> - **model weights**
+> - **metadata**
+> - **configurations**
+>
+> The goal is to **standardize model storage and management**, ensuring better compatibility across different runtime environments. By leveraging OCI's extensible architecture, it aims to **simplify model deployment and sharing**.
+>
+> This initiative complements OCI's **image volume mount capabilities** described later in [Modelcars](#modelcars) and [OCI Image Volume Mounts](#oci-image-volume-mounts). The definition of **new annotation types** is also part of the specification.
+>
+> The specification was accepted into the **CNCF Sandbox in May 2025**, reflecting **strong community interest** and **strong industry support**. Its success will lead to a **more unified approach to operationalizing AI workloads** in cloud-native environments.
+
+##### Modelcars
+
+As we have seen in Example 2-14, you can easily access models stored in OCI images. However, this way of **copying all the model data into an intermediate storage** has some drawbacks.
+
+**Direct access** to model data stored in an OCI image **without copying** would:
+
+- **significantly speed up initialization**
+- **reduce node space usage**
+- an image needs to be **downloaded only once** but can be used **simultaneously by many pods**
+- for LLM models that benefit from the **layered nature of OCI images** (like **LoRA fine-tuned** models), the overall storage space needed for specialized models that share a foundational model is reduced
+- the image layers of the foundation model can be **shared among the specialized models**, reducing required disk space considerably
+
+Kubernetes has **long lacked support** for this use case. Although the feature request was already recorded more than **10 years ago** in **GitHub issue 831**, it was not considered for implementation for many years.
+
+However, things have changed with the advent of LLMs and the desire to ship model data in OCI images. **Starting with Kubernetes 1.35**, you can use **image volume mounts directly in your pod specs**. However, it might take some time until image volume mounts move out of the experimental stage and are considered stable.
+
+KServe uses a technique to achieve the same behavior for **older Kubernetes versions**: **modelcars**.
+
+> You might consider jumping directly to [OCI Image Volume Mounts](#oci-image-volume-mounts) if you can already leverage OCI volume mounts. Modelcars can be considered a **temporary solution** you can use today.
+>
+> **OCI image volumes will support everything that modelcars provide**, but in a **much cleaner and more standardized way**. Use OCI image volumes whenever you can; rely on modelcars if this is not yet possible.
+
+###### Example 2-15. `InferenceService` that uses model data from an OCI image
+
+Unlike the vanilla Kubernetes deployment in Example 2-14, KServe's `InferenceService` resource **handles the modelcar setup automatically**. The **`oci://`** URL format is **KServe-specific syntax** for referencing OCI images containing model data, and the model data stored in the referenced image will be **directly accessed without prior copying** into a volume:
+
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: "sklearn-iris-oci"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      # OCI Registry and repository of the image holding the model data
+      storageUri: "oci://rhuss/kserving-example-sklearn:1.0"
+```
+
+Modelcars can **speed up the startup of a model runtime considerably**, especially when working with a large dataset.
+
+> **NOTE — Deep-dive ahead**
+>
+> The rest of this Modelcars subsection is a **deep dive** into the technical architecture and implementation. You may wish to skip directly to [OCI Image Volume Mounts](#oci-image-volume-mounts). The pattern behind this technique proves useful in other scenarios when you have to deal with a large amount of data.
+
+###### `shareProcessNamespace` trick
+
+The Kubernetes pod specification supports a relatively unknown property called **`shareProcessNamespace`**.
+
+- By default, containers that Kubernetes starts for a pod **cannot see each other**. Running `ps aux` inside a container shows **only the processes** started by that container. This is great for keeping containers isolated.
+- Setting **`shareProcessNamespace: true`** allows the container to **"see" other processes** from other containers.
+- You can also access the **filesystem from all containers** via the **`/proc` filesystem**.
+
+###### Example 2-16. Accessing another container's root filesystem
+
+```bash
+$ cat spns.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spns
+spec:
+  containers:
+  - image: docker.io/httpd
+    name: httpd
+  - image: docker.io/busybox
+    name: busybox
+    command: ["sleep", "infinity"]
+  shareProcessNamespace: false
+
+$ kubectl apply -f spns.yaml
+
+# Jump into the busybox container
+$ kubectl exec -it spns -c busybox -- sh
+
+$$ ps
+PID   USER     TIME  COMMAND
+    1 root      0:00 sleep infinity
+    7 root      0:00 sh
+   14 root      0:00 ps aux
+
+$$ ls -d /proc [0-9]*
+/proc/1  /proc/7
+
+# Root filesystem of PID 1
+$$ ls /proc/1/root/
+bin    dev    etc    home   lib    lib64
+proc   root   run    sys    tmp    usr    var
+
+# Jump out of the container again
+$$ exit
+
+# Change `shareProcessNamespace` from false to true
+$ sed  's/false/true/' spns.yml | kubectl apply --force -f -
+
+# Jump into busybox container like before
+$ kubectl exec -it spns -c busybox -- sh
+$$ ps
+
+PID   USER     TIME  COMMAND
+    1 root      0:00 /pause
+    7 root      0:00 httpd -DFOREGROUND
+   15 www-data  0:00 httpd -DFOREGROUND
+   16 www-data  0:00 httpd -DFOREGROUND
+   17 www-data  0:00 httpd -DFOREGROUND
+   99 root      0:00 sleep infinity
+  126 root      0:00 sh
+  132 root      0:00 ps
+
+# Show data from the other container
+$$ head -3 /proc/7/root/usr/local/apache2/conf/httpd.conf
+#
+# This is the main Apache HTTP server configuration file.  It contains the
+# configuration directives that give the server its instructions.
+```
+
+What to notice:
+
+- Simple pod with **two containers**: an Apache HTTP server and a busybox that sleeps forever to keep the container running. **No process namespace sharing** is enabled initially
+- Only the **processes from the container's process namespace are visible**. The specified command has PID 1 when process namespace isolation is enabled
+- **Root filesystem of process PID 1** (which is the same as `ls /`)
+- When **process namespace sharing is enabled**, the PIDs from the other containers can be seen, too
+- Via the `/proc` filesystem, a file specific to the **`httpd`-container** can be accessed from the **busybox container**
+
+> **NOTE — Permissions caveat**
+>
+> You can access other processes' filesystems **only when Unix permissions allow**. Ideally, the processes from all containers use the **same UID**, so that cross-container filesystem access should not be an issue.
+>
+> However, depending on your cluster setup, additional mechanisms like **SELinux** might affect the ability to access another container's filesystem, even when using that UID or using UID 0 for the containers.
+
+This technique to cross-share the containers' filesystems is **universal to Kubernetes** and can be used for any deployed workload, regardless of whether you have deployed the runtime yourself or via an add-on platform.
+
+###### How KServe implements direct image mounting
+
+Although it's not necessary to understand what happens behind the scenes, it's enlightening to see how KServe implements direct image mounting. The technique is **independent of KServe** and can also be used in other contexts where access to large datasets stored in OCI images is required.
+
+![Modelcar components](<assets/Modelcar components.png>)
+
+**Figure 2-9. Modelcar components**
+
+The **serving runtime** and the **modelcar container** start in **parallel**. During startup:
+
+- the modelcar creates a **symbolic link** from its filesystem to a **shared `emptyDir` volume** accessible by both containers
+- the modelcar goes into an **infinite sleep** to keep the container alive
+
+This linking operation is part of the modelcar's startup command and requires **minimal resources — less than 10 MB of memory** to maintain idle status.
+
+> It's important to emphasize that **no data is copied over**; just a **symbolic link** is created to allow the serving runtime container to find the model data at a **fixed location** (e.g., `/mnt/models`).
+
+###### Example 2-17. Pod with modelcar sidecar using `/proc` symlink for model data
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sklearn-iris-oci-predictor-00001-deployment-7fd9c7fc67-dzdsz
+  namespace: default
+spec:
+  shareProcessNamespace: true
+  containers:
+  - name: kserve-container
+    image: kserve/sklearnserver
+    args:
+    - --model_name=sklearn-iris-oci
+    - --model_dir=/mnt/models
+    volumeMounts:
+    - mountPath: /mnt
+      name: kserve-provision-location
+  - name: modelcar
+    image: rhuss/kserving-example-sklearn:1.0
+    args:
+    - sh
+    - -c
+    - ln -s /proc/$$$$/root/models /mnt/models && sleep infinity
+    volumeMounts:
+    - mountPath: /mnt
+      name: kserve-provision-location
+  volumes:
+  - name: kserve-provision-location
+    emptyDir: {}
+```
+
+What to notice:
+
+- **`kserve-container`** with `image: kserve/sklearnserver` — serving runtime that executes on the model from the modelcar
+- mounts the shared local directory on **`/mnt`** so that the model can be accessed from `/mnt/models`
+- **`modelcar`** with `image: rhuss/kserving-example-sklearn:1.0` — modelcar image that holds the model data
+- **`ln -s /proc/$$$$/root/models /mnt/models && sleep infinity`** — creates a symbolic link `/mnt/models` that **points into the modelcar's own root filesystem**, accessible via the `/proc` filesystem. In YAML, the `$$$$` gets replaced with `$$`, which is the special shell variable that holds the modelcar's shell process ID. After the link is created, the modelcar **sleeps indefinitely** to keep the container alive
+- **`kserve-provision-location: emptyDir: {}`** — declaration of the shared `emptyDir` volume that is referenced in the container declaration for the serving runtime and the modelcar
+
+###### Modelcar drawbacks
+
+While the modelcar technique proved to be very valuable for optimizing the initialization of LLMs, it also has a handful of drawbacks:
+
+**Startup order**
+
+Serving runtimes typically assume the model data is **already present** when they start up. However, with modelcars, the **modelcar container and runtime container start in parallel**. This can lead to the **runtime starting before the model is available**.
+
+Despite modelcar containers starting quickly, startup is slower when the modelcar image still needs to be pulled from an OCI Registry. This can be mitigated by using the **Kubernetes sidecar support** (available since **Kubernetes 1.28** as an optional feature), so that the runtime starts only when the modelcar is initialized.
+
+For setups where sidecars are not enabled, you can still **minimize the risk of a race condition** by **pre-pulling the modelcar image** in an init-container.
+
+**Security**
+
+Enabling `shareProcessNamespace` **allows access to the process namespace and filesystems of all containers** defined for a pod. This is especially important to remember when other sidecars are included.
+
+A prominent example is the service mesh **Istio**, which uses sidecars to provide its functionality. Istio sidecars **assume they are fully isolated**, so they don't implement any precautions to hide sensitive information like the access configuration to their upstream Istio daemon.
+
+The lack of additional encryption of the local Istio configuration can be **easily exploited**. Understanding the consequences when using tools and platforms like **Istio** or **Knative** that perform sidecar injections is therefore **critical**.
+
+**Nonuniform startup times**
+
+Depending on whether the model OCI image has already been loaded in the Kubernetes node's OCI runtime, the actual serving runtime can either start quickly or might **take several minutes** until a potentially large model OCI image is downloaded from a registry.
+
+To make the startup times more predictable — especially important in **scale-to-zero scenarios** — optimization techniques like **image prefetching** can be leveraged.
+
+**Multiarchitecture support**
+
+Modelcars require an **active process** to keep the sidecar alive. This process is **specific to a certain CPU architecture**, so if you want to use modelcar images in a **multiarchitecture setup**, you need to create **copies of modelcars, one for each supported CPU architecture**.
+
+Those images contain the same ML model, **wasting resources**. However, tools like **BuildKit**, **umoci**, or **skopeo** can mitigate this duplication by creating **multiarchitecture images** with **manifest lists** that **share architecture-independent layers** (like model data) across platforms, while duplicating only the architecture-specific executable layers. This approach leverages **OCI's content-addressable storage** to deduplicate shared layers automatically when pushed to registries.
+
+All of these drawbacks can be overcome by **real OCI image volume mounts**. Luckily, **Kubernetes 1.35 offers OCI image sources for volumes as a beta feature**. It will still take some time until this mount type is generally available; in the meantime, **modelcars are a good bridging technology** with a smooth upgrade path until OCI image volume mounts arrive for everyone.
+
+##### OCI Image Volume Mounts
+
+Starting with **Kubernetes 1.31**, pods can **directly mount OCI container images as volumes** without the need to copy model data first. This feature provides an **efficient way to access large model artifacts** stored in OCI images, reducing both **initialization time** and **storage overhead**.
+
+The benefit of direct image mounts over the modelcar approach is that it **avoids the need for symbolic links or process namespace sharing**. Instead, model data can be **directly read from the image layers as a mounted volume**, benefiting from the underlying **OCI image layer cache**.
+
+###### Example 2-18. Pod serving a locally mounted LLM via vLLM
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: llm-server
+spec:
+  containers:
+  - name: main
+    image: vllm/vllm-openai:latest
+    args:
+      - "--served-model-name"
+      - "meta-llama/Meta-Llama-3-8B"
+      - "--model"
+      - "/mnt/models"
+    volumeMounts:
+      - name: model-volume
+        mountPath: /mnt/models
+        subPath: models
+  volumes:
+  - name: model-volume
+    image:
+      reference: quay.io/meta-llama/meta-llama-3.2-8b
+      pullPolicy: IfNotPresent
+```
+
+What to notice:
+
+- **`image: vllm/vllm-openai:latest`** — runtime image for serving the model, vLLM in this case
+- **`--model /mnt/models`** — specifies an absolute path to the mounted model as a startup argument for vLLM
+- **`mountPath: /mnt/models`** — mounts the content of the OCI image into `/mnt/models`
+- **`subPath: models`** — mounts only a **specific subdirectory** from the image rather than the entire image root. Using `models` as the `subPath` matches the **typical modelcar image structure** and provides **forward compatibility**
+- **`image:`** — the volume type for an OCI image to mount. The usual pull semantics apply: if no `pullPolicy` is provided, always pull the image if the tag `latest` is specified. Otherwise, Kubernetes pulls only if the image is **not present at the node**
+- **`pullPolicy: IfNotPresent`** — the pull policy can be also specified explicitly
+
+###### subPath and forward compatibility
+
+Image volumes support **`subPath`** and **`subPathExpr`** mounts, allowing you to mount **specific subdirectories** from an OCI image rather than the entire image root.
+
+The `subPath` feature is particularly important for **forward compatibility** with modelcars. By:
+
+- structuring your OCI images with model data in a **`/models` subdirectory**
+- and using **`subPath: models`**
+
+…you create images that work **seamlessly with both the modelcar approach and native OCI image volumes**. This enables a **smooth migration path** from modelcars to native image volumes **without rebuilding your model images**.
+
+###### Current limitations
+
+While this image volume mount feature simplifies large model deployments for both OCI images and OCI artifacts, it still has limitations as of early 2026:
+
+- **Container runtime support** — CRI-O v1.33+ has full support; containerd requires v2.2.0+ for beta features (v2.1.0+ for basic support)
+- **Feature gates** must be **explicitly enabled** (still disabled by default)
+- The feature **doesn't support writeable layers**; volumes remain **read-only**
+- Only **directory mounts** are supported; individual files cannot be mounted directly
+
+The community is actively working on these limitations, with **signature validation**, **compressed layers**, and **read-write support** planned for future releases. This feature will eventually become the **preferred method for serving LLMs on Kubernetes**, replacing the modelcar approach as it matures. In the meantime, **modelcars are a reliable approach** for direct access to model data stored in an OCI image.
 
 #### Encode this
 
@@ -4877,11 +5334,42 @@ Models range from **~14 GB** (Mistral 7B) to **~800 GB** (Llama 4 Maverick), and
 
 **Accessing model data is a trade-off, not a single answer**
 
-- **`storageUri`** + **storage initializers** is the KServe control point
-- **`emptyDir`** shares model data between init container and serving container
-- **`pvc://`** mounts shared storage directly (no copy step), trading network latency for storage efficiency
-- **OCI-backed delivery** (modelcars, OCI image volume mounts) gives **immutable, cache-friendly** model distribution
-- The right choice depends on optimizing for **startup speed, runtime latency, storage efficiency, replica scale**, or **operational simplicity**
+Model data access strategies involve **fundamental trade-offs** among **storage efficiency**, **access performance**, and **operational complexity**.
+
+**Table 2-3. Comparison of model data access strategies**
+
+| Approach | Storage efficiency | Access speed | Startup time | Best for | Limitations |
+| --- | --- | --- | --- | --- | --- |
+| **Init Container Copy** | Low | Fast | Slow | Single replica per node, latency-sensitive inference | Wastes node storage, slow initial pod creation, repeated copying |
+| **PersistentVolume** | Highest | Moderate | Fast | Multiple replicas with moderate scale, external model management | Network dependency, infrastructure overhead, struggles at hundreds of replicas |
+| **Modelcar** | High | Fast | Moderate | Multiple models sharing base layers, efficient storage | Requires OCI packaging, process namespace sharing, security considerations |
+| **OCI Volume Mount** | High | Fast | Moderate | Multiple models, native Kubernetes integration | Beta feature (K8s 1.35+), limited runtime support |
+
+**Init container copying** delivers the **fastest inference performance** through **node-local I/O**, making it ideal for **latency-sensitive workloads**. However, this approach **wastes storage when running multiple replicas**, as each node maintains its own copy. Use this strategy for **single-replica or low-concurrency scenarios** where you can tolerate slow startup in exchange for peak inference performance.
+
+**`PersistentVolumes`** provide the **highest storage efficiency** by storing models once and sharing them across all replicas. Storage efficiency comes at the cost of **network latency on every model file read**. PVs work well for **tens of replicas** but face challenges when scaling to hundreds due to **backend saturation and network contention**. Choose PVs when **storage costs matter more than peak inference performance**, or when data scientists manage models externally through distributed filesystems.
+
+**OCI image-based approaches (modelcars and volume mounts)** offer a **middle ground**:
+
+- **high storage efficiency** through layer sharing
+- plus **fast local access**
+
+As a **standardized format**, OCI enables seamless model distribution and discovery across registries.
+
+- **Modelcars** provide immediate availability but require **process namespace sharing** with security considerations
+- **OCI volume mounts** offer cleaner integration as a **native Kubernetes feature** but remain experimental as of Kubernetes 1.33
+
+Both approaches **excel when running multiple fine-tuned models sharing the same base model**, as common layers are shared across all instances.
+
+**Hybrid strategies for complex environments**
+
+Consider hybrid strategies for complex environments:
+
+- **Development environments** might use **`PersistentVolumes`** for easy model updates
+- **Production deployments** use **OCI volumes** for performance and reliability
+- Different **model tiers** might use different approaches: frequently accessed models in OCI images for speed, less-critical models sharing `PersistentVolumes` for cost efficiency
+
+As **OCI volume mounts mature and gain widespread runtime support**, they will likely become the **preferred approach for most deployments**.
 
 #### Encode this
 
@@ -4890,6 +5378,7 @@ Models range from **~14 GB** (Mistral 7B) to **~800 GB** (Llama 4 Maverick), and
 - **Metadata registries (MLflow, Kubeflow) ≠ artifact registries (OCI)**
 - **`storageUri` scheme is the single control point that decides download-vs-mount semantics**
 - **Replica scale + model size + storage backend together set the operational ceiling**
+- **Four access strategies: init-container copy / PV / modelcar / OCI volume mount — each with different trade-offs**
 
 #### Recall prompt
 
