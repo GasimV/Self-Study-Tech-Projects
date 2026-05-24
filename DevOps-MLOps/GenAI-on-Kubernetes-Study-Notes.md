@@ -108,6 +108,9 @@
      - [Fine-Tuning](#fine-tuning)
      - [Parameter-Efficient Fine-Tuning](#parameter-efficient-fine-tuning)
      - [Low-Rank Adaptation](#low-rank-adaptation)
+   - [Running Tuning Jobs on Kubernetes](#running-tuning-jobs-on-kubernetes)
+     - [Kubeflow Trainer](#kubeflow-trainer)
+     - [Other Frameworks](#other-frameworks)
    - [Customization Lessons Learned](#customization-lessons-learned)
 8. [High-Value Recall Checklist](#high-value-recall-checklist)
 
@@ -8296,6 +8299,512 @@ Even if it is **not the traditional use case** for LoRA, it is still possible to
 
 [Back to Contents](#contents)
 
+### Running Tuning Jobs on Kubernetes
+
+- With an understanding of the different tuning techniques and their trade-offs, this subsection explores **how to operationalize them on Kubernetes**.
+
+- So far, the notes have introduced the core concepts for creating and tuning an LLM, from **traditional full fine-tuning**, to **PEFT**, to **advanced tuning pipelines**. Understanding these different approaches is important because they have **different implications and challenges** from a Kubernetes platform perspective.
+
+- This subsection shifts from implementation details to **platform requirements**. All of these tuning techniques have **at least one training phase** that requires **GPUs for scaling**. The GPU management principles covered earlier for inference largely apply here as well — see [Kubernetes and GPUs](#kubernetes-and-gpus) for a recap.
+
+#### Why networking becomes the bottleneck
+
+- Although provisioning GPU workloads is not new, a **major additional challenge for training** is that **networking can easily become the bottleneck** of the system.
+
+- A tuning job is **not equivalent to an inference request**; even for an SLM, the **hardware requirements for tuning are greater than for serving**. As a result, the job will likely require **multiple GPUs on the same node or even across multiple nodes**.
+
+![Multinode training job](<assets/Multinode training job.png>)
+
+**Figure 6-6. Multinode training job**
+
+Based on the type of tuning performed, the system **gathers the sharded weights** of the model on all GPUs **before every "step"** of the model execution (in particular, every layer **forward and backward passes**). This action requires:
+
+- a **continuous stream of data shuffling** across the GPUs
+- based on the size of the model and the number of GPUs, it can produce **traffic of many gigabytes per second**
+
+The **bandwidth is the main scalability challenge** and requires improvements across the entire stack:
+
+- **specialized network interfaces and protocols**
+- more efficient **kernel implementations** and ad-hoc **GPU instructions**
+
+Similar to inference optimization, training also has kernel implementations that benefit from **dedicated GPU instructions**:
+
+- **Liger Kernel** (optimized for **Triton**)
+- **FlashAttention**
+
+#### Higher-level training libraries
+
+The attention kernel is a **core component**, and it is usually embedded in a **higher-level, end-user library**. While Hugging Face provides many of these libraries, such as **Transformers**, other options include:
+
+- **DeepSpeed**
+- **NVIDIA's Megatron-LM**
+
+Although these libraries have different APIs and configurations, they **all use PyTorch**, which has become the **de facto standard deep learning library** for LLM implementation.
+
+> **NOTE — PyTorch**
+>
+> **PyTorch** is an **open source machine learning library** originally created by **Meta** and now owned by the **PyTorch Foundation**, part of the **Linux Foundation**.
+>
+> It has many different applications, but in the context of LLM development it is used mainly as the **core deep learning library**: other end-user libraries like **Hugging Face Transformers** use PyTorch and have **deprecated support** for other deep learning libraries like **TensorFlow** or **JAX**.
+
+The PyTorch project has many different packages that cover a large set of capabilities:
+
+- the **core neural network implementation**
+- a **compiler**
+- a **distributed package** with the specific goal of supporting **distributed training jobs**
+
+In particular, **Fully Sharded Data Parallel (FSDP2)** is the most common library used to **scale the job on multiple nodes**.
+
+The software and hardware stack is **evolving rapidly**, with the hope that many of these complexities will eventually become implementation details from a platform perspective. However, **optimizing the network stack** is a challenge that **cannot be avoided**.
+
+Managing this complexity at scale requires **dedicated tooling that abstracts the distributed training infrastructure** from data scientists, who need to focus on **model development**.
+
+#### Kubeflow Trainer
+
+- **[Kubeflow Trainer](https://www.kubeflow.org/docs/components/trainer/)** is a component of the Kubeflow ecosystem designed specifically for **managing the scaling and distribution** of LLM fine-tuning.
+
+- The Kubeflow project aims to be the **foundation for AI platforms on Kubernetes** and is evolving from its origins in **predictive AI** to support **generative AI workloads**. Another component, the **Kubeflow Model Registry**, was introduced earlier in [Kubeflow Model Registry](#kubeflow-model-registry).
+
+##### Two personas, two APIs
+
+- Kubeflow Trainer's sole purpose is to **manage the Kubernetes building blocks** required to **configure, deploy, and scale long-running training jobs**.
+
+The project designs its API for **two different personas**:
+
+- the **platform administrator**, who configures the cluster and available resources via a **`TrainingRuntime`**
+- the **data scientist / AI engineer**, who submits the training job using a **`TrainJob`**
+
+Since these roles have different skills and tools, Kubeflow Trainer provides a **Python Kubeflow SDK** that **abstracts the creation of the `TrainJob`**, so the data scientist does not need to interact directly with Kubernetes resources.
+
+![Kubeflow Trainer architecture](<assets/Kubeflow Trainer architecture.png>)
+
+**Figure 6-7. Kubeflow Trainer architecture**
+
+##### `TrainingRuntime` and `ClusterTrainingRuntime`
+
+**`TrainingRuntime`** (or **`ClusterTrainingRuntime`** for cluster-wide configuration) is **equivalent to KServe's `ServingRuntime`** described in [KServe](#kserve). It's a **template** that declares the **availability of a runtime**, such as PyTorch, including its container image and other options.
+
+- a **`TrainingRuntime`** is visible **only in the namespace** where you create it; `TrainJobs` must be in the same namespace to use it
+- a **`ClusterTrainingRuntime`** is **visible to the entire cluster**
+
+Kubeflow Trainer supports **multiple frameworks for distributed training**:
+
+- **PyTorch**
+- **DeepSpeed**
+- **MLX**
+- **MPI**
+
+Because of this **multiframework design**, a `TrainingRuntime` requires a mandatory **`trainer.kubeflow.org/framework`** label. The SDK uses this label to apply the **correct configuration** for the specified framework (e.g., `torch` for PyTorch) and its trainer.
+
+##### `BuiltinTrainer` vs `CustomTrainer`
+
+The **trainer** represents the library that uses the framework to **define and perform the training job**. It can be one of two types:
+
+- **`BuiltinTrainer`** — like **TorchTune**, provides a **predefined training script** for common use cases like LLM fine-tuning, requiring only parameters for the input dataset and LoRA configuration. **Less flexible**, but **easier to start with**
+- **`CustomTrainer`** — gives the user **full control** by allowing them to define a **Python function** containing the entire training process. **Maximum flexibility** for the data scientist, while the administrator only needs to define the `TrainingRuntime` with the compatible framework
+
+##### `TrainJob` → `JobSet` → Kubernetes Jobs
+
+The **`TrainJob`** object defines the **training code** and references a **training runtime**. As mentioned before, the **SDK simplifies the configuration** so data scientists don't need to write it manually.
+
+Once the `TrainJob` is created, the **Kubeflow Trainer controller merges it with the `TrainingRuntime`** to produce a **`JobSet`** and the corresponding **Kubernetes Jobs**.
+
+A **`JobSet`** is a **Kubernetes custom resource** that represents a **group of Kubernetes Jobs**. It comes from a standalone **[JobSet project](https://jobset.sigs.k8s.io/)** that aims to **unify the API** for deploying **High-Performance Computing (HPC)** and **AI/ML training workloads** on Kubernetes.
+
+##### Example 6-3. Installing Kubeflow Trainer
+
+The Kubeflow Trainer installation is straightforward like for any other Kubernetes controller:
+
+```bash
+export VERSION=v2.1.0
+export URL="https://github.com/kubeflow/trainer.git/manifests/overlays"
+kubectl apply --server-side -k "${URL}/manager?ref=${VERSION}"
+kubectl apply --server-side -k "${URL}/runtimes?ref=${VERSION}"
+```
+
+What to notice:
+
+- **`VERSION=v2.1.0`** — replace with the version to install
+- the Kubeflow Trainer project provides a **built-in set of `ClusterTrainingRuntimes`** to simplify the getting-started experience
+- in production, **administrators will define their own curated list of runtimes**
+
+##### Example 6-4. `ClusterTrainingRuntime`
+
+Kubeflow Trainer provides a set of built-in `ClusterTrainingRuntimes`, but they are **optional**. You can skip this specific installation step and **replace the built-in runtimes with one or more custom runtimes**:
+
+```yaml
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: ClusterTrainingRuntime
+metadata:
+  name: my-torch-distributed-runtime
+  labels:
+    trainer.kubeflow.org/framework: torch
+spec:
+  mlPolicy:
+    numNodes: 1
+    torch:
+      numProcPerNode: auto
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+```
+
+What to notice:
+
+- **`kind: ClusterTrainingRuntime`** — replace with **`TrainingRuntime`** to create a **namespace-scoped** training runtime
+- **`metadata.name: my-torch-distributed-runtime`** — the data scientist uses this name to **select the desired runtime** for their job
+- **`trainer.kubeflow.org/framework: torch`** — this label is used by the **SDK** to guide the configuration of the `TrainJob`
+- **`mlPolicy.numNodes: 1`** — the spec can define default values for most of the values; for example, this means the job can only use **one node**
+- **`image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime`** — the administrator might want to control the image used in the cluster by replacing this value with a customized image. The image is **GPU-specific**, so in this case it is for **NVIDIA CUDA**
+
+##### Example 6-5. Trainer function using Hugging Face TRL as a `CustomTrainer`
+
+With the cluster configured and the `TrainingRuntime` available, the platform administrator's work is done. The data scientist can now focus on creating the **training job**:
+
+```python
+def my_custom_trainer(**kwargs):
+    from datasets import load_dataset
+    from transformers import AutoTokenizer, set_seed
+    from trl import SFTTrainer
+
+    # It is not mandatory to set a fixed seed but it is useful for reproducibility
+    set_seed(kwargs["seed"])
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        ...,    # kwargs[...]
+        use_fast=True
+    )
+
+    # Load datasets
+    train_dataset = load_dataset(
+        ...,    # kwargs[...]
+    )
+
+    # Initialize Trainer
+    trainer = SFTTrainer(
+        model=...,
+        args=...,
+        train_dataset=train_dataset,
+        eval_dataset=...,
+        peft_config=...,
+        processing_class=tokenizer,
+    )
+
+    trainer.train()
+
+    trainer.save_model(
+        ...,    # kwargs[...]
+    )
+```
+
+What to notice:
+
+- the **custom trainer function must be self-contained**, so the **`import` must be part of the body**. This example is based on Hugging Face libraries: `datasets` for the training dataset (and optionally the evaluation dataset), `transformers` for the tokenizer, and `trl` for the actual trainer class. There is **no Kubeflow Trainer-specific code** here; the function is a **plain Python train function** that can be directly invoked
+- **`AutoTokenizer.from_pretrained(..., use_fast=True)`** — the tokenizer is related to the model that is fine-tuned. It is important to use a **fast tokenizer** that works concurrently to avoid slowdown of the training process
+- **`train_dataset = load_dataset(...)`** — contains the new knowledge that the model should learn during fine-tuning. It can be a publicly available dataset, but most likely it will be a **custom one**
+- **`SFTTrainer(...)`** — the initialization is equivalent to the previous example. This is where you **select the model**, specify the **datasets**, and configure the **PEFT technique** (e.g., `LoraConfig`)
+- **`trainer.train()`** — initializes the training process. Hardware configurations such as **number of GPUs and workers** are **not specified here**; instead, you define them when creating the job (see Example 6-6)
+
+> **NOTE — SDK function serialization**
+>
+> When you call `client.train(func=my_custom_trainer)`, the **SDK serializes your Python function** and **embeds it into the `TrainJob` custom resource**. The `TrainingRuntime`'s **base container image** (preinstalled with PyTorch, Transformers, PEFT) **deserializes and executes your function** at runtime.
+>
+> This **differs from traditional Kubernetes workflows**: you **never build or push custom images** — just **rerun the SDK command** when you modify your function.
+>
+> The trade-off is that the **base image must already contain all your dependencies**, and your function must be **serializable** (imports must reference installed packages, **no complex closures**).
+
+##### Example 6-6. Create `TrainJob` via Kubeflow SDK
+
+With the training logic and configuration defined in the trainer function, you can now create the `TrainJob` using the **Kubeflow Python SDK**:
+
+```python
+from kubeflow.trainer import CustomTrainer, TrainerClient
+
+client = TrainerClient()
+
+torch_runtime = client.get_runtime("my-torch-distributed-runtime")
+
+job_name = client.train(
+    trainer=CustomTrainer(
+        # The custom trainer function is injected here with its parameters
+        func=my_custom_trainer,
+        func_args=...,      # load_args()
+        num_nodes=8,
+        resources_per_node={
+            "cpu": 4,
+            "memory": "64Gi",
+            "nvidia.com/gpu": 1,
+        },
+    ),
+    runtime=torch_runtime,
+)
+
+client.wait_for_job_status(name=job_name, status={"Running"})
+_ = client.get_job_logs(job_name, follow=True)
+
+# It is possible to get all the steps and the status for each of them
+# steps = client.get_job(name=job_name).steps
+
+# client.delete_job(job_name)
+```
+
+What to notice:
+
+- a **`CustomTrainer`** is created using the custom function defined in Example 6-5, and the **`TrainerClient`** submits the `TrainJob`
+- **`num_nodes=8` + `resources_per_node`** — hardware requirements are specified **during job submission**. The values are **directly related to the size of the model and the type of tuning** you perform. In this example, the value has been used to customize a **Meta-Llama-3.1-8B-Instruct** model using **PEFT LoRA**
+- **`wait_for_job_status(... status={"Running"})`** — the client can wait for a specific job status. This is a **blocking call**. You can also fetch **logs** or configure the use of **TensorBoard** — a visualization toolkit originally from the TensorFlow project that is now compatible with multiple libraries, including PyTorch
+- **`client.delete_job(job_name)`** — while you can delete the job at any time, even while it's running, this action also **removes the `TrainJob` object** and its associated metadata from Kubernetes. If you're not using external experiment tracking, consider **preserving completed jobs** to maintain a record of training runs
+
+> **SOME YAML MAGIC**
+>
+> A training job like the one in Example 6-6 requires **many parameters, more than 10**. If the job creation code runs **inside a Jupyter Notebook**, maybe using the **Kubeflow Notebooks** component, it is possible to **easily configure all the parameters** using the **`yamlmagic`** library.
+>
+> This Python module can be installed in a notebook via `pip install yamlmagic` and loaded via `%load_ext yamlmagic`; after that, it is possible to initialize a variable, like `my_params`, using a code block that begins with `%%yaml my_params`. Each row of the block after this first line is parsed as YAML and `my_params` becomes a **Python dictionary** ready to be used.
+>
+> ###### Example 6-7. Use `yamlmagic` in Jupyter Notebooks for training configuration
+>
+> ```python
+> # In a Jupyter Notebook cell
+> %load_ext yamlmagic
+>
+> %%yaml training_config
+> model_name: meta-llama/Llama-3.2-3B
+> dataset: openai/gsm8k
+> num_epochs: 3
+> learning_rate: 2.0e-4
+> output_dir: /mnt/models/llama-gsm8k
+>
+> # Now use the config with Kubeflow SDK
+> from kubeflow.trainer import TrainingClient
+>
+> client = TrainingClient()
+> client.train(
+>     name="llama-math-tuning",
+>     model=training_config["model_name"],
+>     dataset=training_config["dataset"],
+>     num_epochs=training_config["num_epochs"],
+>     learning_rate=training_config["learning_rate"],
+>     output_dir=training_config["output_dir"]
+> )
+> ```
+
+##### Example 6-8. Merge LoRA adapter with the base model
+
+In the LoRA example, the training procedure **doesn't produce a new, full model**. Instead, each saved checkpoint is a **LoRA adapter** that can be **dynamically composed with the base model at runtime**. This enables the **efficient serving of multiple tuned models**, as described in Figure 6-5.
+
+While this is **not the best approach for efficient serving**, it can be useful **for testing purposes** to **merge the LoRA adapter with the base model** to create a new, standalone model:
+
+```python
+from peft import PeftModel
+from transformers import AutoModelForCausalLM
+
+base_model = AutoModelForCausalLM.from_pretrained(
+    ...,
+    device_map="cuda"
+)
+finetuned_path = "/opt/app-root/Meta-Llama-3.1-8B-Instruct/checkpoint-100/"
+
+model = PeftModel.from_pretrained(base_model, finetuned_path)
+merged_model = model.merge_and_unload()
+merged_model.save(...)
+```
+
+What to notice:
+
+- **`AutoModelForCausalLM.from_pretrained(..., device_map="cuda")`** — the base model must be loaded first. The **`device_map` parameter** makes the model directly **load on the GPU**
+- **`finetuned_path = "/opt/.../checkpoint-100/"`** — it is necessary to have the path where the **LoRA-tuned model is stored**. After every training epoch a **new checkpoint** (aka model candidate) is created; in this example, **checkpoint number 100** is selected
+- **`merged_model = model.merge_and_unload()`** — after the base model and the fine-tuned layer are loaded together, it is possible to **merge** and obtain the new model using the **`merge_and_unload()`** method
+
+##### Storage and operational considerations
+
+The **checkpoint paths** shown (like `/opt/app-root/Meta-Llama-3.1-8B-Instruct/checkpoint-100/`) require **persistent storage infrastructure** to survive **beyond the ephemeral training job lifecycle**.
+
+From a platform perspective, scheduling these **long-running, resource-intensive workloads** requires **additional optimization** to ensure:
+
+- **fair cluster usage**
+- **prevention of GPU underutilization**
+
+One significant challenge is **gang scheduling**: distributed workloads often require the system to **deploy all its pods simultaneously** to run correctly. This is an **"all-or-nothing" semantic**.
+
+The experience for the **data scientist is simpler**, as the Kubeflow ecosystem allows them to **focus on the model customization lifecycle**, with **limited awareness** of the underlying Kubernetes platform.
+
+> **TIP — Kubeflow ecosystem for end-to-end MLOps**
+>
+> The Kubeflow project includes numerous components to support the **entire MLOps or LLMOps lifecycle**:
+>
+> - the **Kubeflow Model Registry** ([Kubeflow Model Registry](#kubeflow-model-registry)) — model metadata management
+> - **Kubeflow Trainer** — distributed training jobs (covered here)
+>
+> Data scientists can develop and manage the Python code included in the fine-tuning example by leveraging **two other Kubeflow components**:
+>
+> - **Kubeflow Notebooks** — manages the infrastructure for **web-based IDEs like Jupyter**, making it easy for data scientists to **self-provision** an environment and experiment with the Kubeflow Trainer SDK
+> - **Kubeflow Pipelines** — after experimenting and defining the training job, a data scientist can use Kubeflow Pipelines to **convert the notebook into a reproducible pipeline**. This allows the logic to be **executed multiple times** for retraining the model, either by extracting the code into distinct steps or by **directly incorporating the notebook** into the pipeline
+
+#### Other Frameworks
+
+While Kubeflow Trainer provides a comprehensive solution for most use cases, the ecosystem offers **several alternatives** worth considering.
+
+The Kubeflow Trainer project takes a **Kubernetes-native approach** to managing the lifecycle of distributed training jobs, allowing both platform administrators and data scientists to work with their preferred tools.
+
+While Kubeflow Trainer and **Hugging Face's TRL** offer a robust, platform-centric solution for distributed training on Kubernetes, several other projects and libraries provide **specialized tools** to optimize the fine-tuning process, particularly focusing on **efficiency, speed, and resource management** for LLMs:
+
+- **DeepSpeed**
+- **Unsloth**
+- **Ray with KubeRay**
+
+##### DeepSpeed
+
+**[DeepSpeed](https://www.deepspeed.ai/)** is a **deep learning optimization library** that **wraps PyTorch** to simplify the management of training jobs.
+
+Using DeepSpeed with Kubeflow Trainer is **very similar to the previous example**:
+
+- select a **DeepSpeed-compatible `TrainingRuntime`** (such as the default DeepSpeed distributed runtime)
+- **update the custom trainer logic**
+
+###### Example 6-9. Trainer function using DeepSpeed
+
+```python
+def my_custom_deepspeed_trainer(**kwargs):
+    from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
+    from datasets import load_dataset
+    from torch.utils.data import DataLoader
+    from torch.utils.data.distributed import DistributedSampler
+    import deepspeed
+
+    # Initialize DeepSpeed distributed training
+    deepspeed.init_distributed(dist_backend="nccl")
+    local_rank = int(kwargs["local_rank"])
+
+    # Set seed for reproducibility
+    set_seed(kwargs["seed"])
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(..., use_fast=True)   # kwargs[...]
+
+    # Load datasets
+    train_dataset = load_dataset(...).with_format("torch")      # kwargs[...]
+
+    train_loader = DataLoader(
+        dataset, batch_size=16, sampler=DistributedSampler(dataset)
+    )
+
+    # DeepSpeed configuration
+    ds_config = {
+        ...,    # kwargs[...]
+    }
+
+    # Initialize DeepSpeed engine.
+    model_engine, _, _, _ = deepspeed.initialize(
+        model=model,
+        config=ds_config,
+        model_parameters=model.parameters(),
+    )
+
+    num_epoch = int(...)    # kwargs[...]
+    for epoch in range(num_epoch):
+        for batch_idx, batch in enumerate(train_loader):
+            for key in batch.keys():
+                batch[key] = batch[key].to(local_rank)
+            outputs = model_engine(batch)
+            loss = outputs.loss
+
+            model_engine.backward(loss)
+            model_engine.step()
+
+
+    model_engine.module.save_pretrained(...)   # kwargs[...]
+    tokenizer.save_pretrained(...)      # kwargs[...]
+```
+
+What to notice:
+
+- **`deepspeed.init_distributed(dist_backend="nccl")`** — you must initialize the distributed training. The value **`nccl`** is used for **NVIDIA CUDA hardware**, and **`local_rank`** is an environment variable provided as an argument to the training script
+- **`load_dataset(...).with_format("torch")`** — the example loads the dataset using the **Hugging Face `datasets` library**, and it can be **easily converted to a PyTorch dataset**
+- **`deepspeed.initialize(...)`** — the engine initialization returns **multiple variables**, but for this example only the **`model_engine`** is needed
+- in this example, the **training loop is explicit**, showing the computation of the **forward pass, loss, and backward pass**
+
+##### Ray
+
+While Kubeflow Trainer's flexibility is sufficient for most model customization techniques, it is **not the only framework** for distributed computation on Kubernetes. The **[Ray project](https://www.ray.io/)** is a valid alternative.
+
+Ray provides an entire ecosystem of components for AI platforms and was previously introduced in [Ray Serve and KubeRay](#ray-serve-and-kuberay). Its core concepts, like the **`RayCluster`** (Figure 1-5), are **generic** and apply to the **training space as well**.
+
+Ray's integration with Kubernetes is managed by **KubeRay**, which provides the necessary APIs:
+
+- deploy a **`RayCluster`**
+- submit a **`RayJob`** to perform a **long-running, multinode computation** for model customization
+
+The process is **similar to the Kubeflow Trainer example**:
+
+- create a Python script with the training logic
+- instantiate a `RayCluster` (a step **not required by Kubeflow Trainer**)
+- deploy the job
+
+###### Ray vs Kubeflow Trainer — code delivery differences
+
+Code delivery **differs** between the two:
+
+- **Kubeflow Trainer** — **serializes and injects Python functions** directly
+- **Ray** — requires **training scripts packaged in container images** or accessible via **remote locations** (Git repos, mounted volumes), with the `RayJob` CR **referencing the script path** rather than embedding code
+
+This means that:
+
+- **Ray requires container rebuilds** for code changes — better suited for teams already using the Ray ecosystem
+- **Kubeflow Trainer's immediate re-execution** supports **rapid experimentation**
+
+A full example of using **DeepSpeed and Ray** to fine-tune an LLM can be found in the **[opendatahub-io repository](https://github.com/opendatahub-io)**, which uses the **CodeFlare SDK** to programmatically configure KubeRay resources.
+
+> **WARNING — Don't confuse Ray Tune with LLM model tuning**
+>
+> **Ray Tune** is a module designed for **hyperparameter tuning and optimization**, which mainly applies to **predictive AI**.
+>
+> The equivalent project in the Kubeflow community is **Kubeflow Katib**.
+>
+> While not designed for model customization, it is still possible to use Ray Tune with the **Hugging Face `transformers` library** for hyperparameter optimization techniques like **Population Based Training (PBT)**.
+
+##### Unsloth
+
+The **[Unsloth project](https://github.com/unslothai/unsloth)** specifically targets the **LLM customization process** with the goal to make it **easy, fast, and with limited hardware requirements**. It has a **large and active community**.
+
+While **not designed for large-scale infrastructure on Kubernetes**, it is **very easy to start with**, as it can be **installed locally as a standard Python package**:
+
+```bash
+pip install unsloth
+```
+
+In this respect, it can be seen as the **fine-tuning equivalent of local inference projects** like **Ollama** or **`llama.cpp`**. Although designed as a local library, it is possible to deploy it on Kubernetes using the **[AIKit project](https://github.com/sozercan/aikit)**.
+
+#### Encode this
+
+- **Training networking is the real scaling bottleneck — gigabytes/sec across GPUs every step**
+- **FSDP2 + Liger Kernel + FlashAttention are the optimization vocabulary for training**
+- **Kubeflow Trainer separates platform admin (`TrainingRuntime`) from data scientist (`TrainJob` via SDK)**
+- **`TrainJob` → `JobSet` → Kubernetes Jobs is the controller chain**
+- **`BuiltinTrainer` = quick start; `CustomTrainer` = full Python function flexibility**
+- **SDK serializes Python functions into `TrainJob` — no custom image build/push needed**
+- **DeepSpeed = explicit training-loop control inside a custom trainer**
+- **Ray + KubeRay = alternative to Kubeflow Trainer; script-based delivery (vs serialized functions)**
+- **Don't confuse Ray Tune (hyperparameter search) with LLM model tuning**
+- **Unsloth = local-first fine-tuning, K8s-deployable via AIKit**
+
+#### Recall prompt
+
+*Why does Kubeflow Trainer's "serialize and inject Python function" model give data scientists faster iteration than Ray's "container with embedded script" approach?*
+
+[Back to Contents](#contents)
+
 ### Customization Lessons Learned
 
 This section explored how to **adapt an existing LLM** to a specific use case on Kubernetes, from prompt-level adjustments to full fine-tuning.
@@ -8338,6 +8847,28 @@ Whatever the technique:
 - **serving topology depends on the technique** — full fine-tune = new dedicated deployment, PEFT/LoRA = one base + many adapters
 - **secure communication between training components** matters for production workloads
 
+**Running tuning jobs on Kubernetes**
+
+- **Networking is the real scaling bottleneck**: gathering sharded weights across GPUs at every step produces **gigabytes/sec of traffic**; bandwidth is what limits scale, not just GPU count
+- **PyTorch is the de facto deep-learning library**; FSDP2 is the most common way to shard a training job across nodes
+- **Kubeflow Trainer** separates two personas:
+  - **Platform admin** owns `TrainingRuntime` / `ClusterTrainingRuntime` (template like KServe's `ServingRuntime`)
+  - **Data scientist** submits a `TrainJob` via the **Kubeflow Python SDK** without touching YAML
+- Controller chain: **`TrainJob` + `TrainingRuntime` → `JobSet` → Kubernetes Jobs**
+- **`BuiltinTrainer`** (e.g., TorchTune) for quick starts; **`CustomTrainer`** for arbitrary Python functions
+- The SDK **serializes the Python function** into the `TrainJob` CR — **no custom image build/push** for code changes (image just needs the deps)
+- **Alternative frameworks**: **DeepSpeed** (PyTorch wrapper, explicit loop), **Ray + KubeRay** (script-based, container rebuild for code changes), **Unsloth** (local-first, K8s-deployable via AIKit)
+- **Don't confuse Ray Tune (hyperparameter search) with LLM model tuning** — Ray Tune is for predictive AI; Kubeflow Katib is its Kubeflow equivalent
+
+**Training jobs are batch workloads, not services**
+
+Training job management requires **different operational patterns** than inference serving:
+
+- jobs are **batch workloads** with defined completion criteria, **not long-running services**
+- resource allocation favors **throughput over latency**
+- **checkpoint management** enables recovery from preemption
+- **gang scheduling** prevents partial resource allocation from blocking expensive GPU nodes
+
 #### Encode this
 
 - **The cheapest customization is no customization — try prompts and RAG first**
@@ -8345,10 +8876,12 @@ Whatever the technique:
 - **PEFT + LoRA = the cost-effective default for most LLM customization on K8s**
 - **Full fine-tuning is reserved for cases where partial parameter updates aren't enough**
 - **Advanced techniques are multistep K8s pipelines, not one-shot training jobs**
+- **Kubeflow Trainer = the Kubernetes-native way to run training jobs without exposing platform plumbing to data scientists**
+- **Training jobs are batch + gang-scheduled, not stateless services**
 
 #### Recall prompt
 
-*Given a stable internal knowledge base, 10 GPUs, and a need to serve five fine-tuned variants of one model, which customization technique would you choose and why?*
+*Given a stable internal knowledge base, 10 GPUs, and a need to serve five fine-tuned variants of one model, which customization technique would you choose and why — and which Kubernetes framework would you reach for to run the training?*
 
 [Back to Contents](#contents)
 
@@ -8407,6 +8940,12 @@ Use these prompts for fast review:
 - **LoRA**: How does LoRA decompose the weight-update matrix, and why does that enable one-base-many-adapters serving?
 - **X-LoRA / QLoRA**: What does each variant add on top of vanilla LoRA?
 - **Advanced techniques**: Why do **GRPO**, **DPO**, **distillation**, **model merging**, and **InstructLab** look like multideployment K8s pipelines rather than single training jobs?
+- **Training networking**: Why does **bandwidth between GPUs** dominate scaling of LLM training, and which technologies (FSDP2, Liger Kernel, FlashAttention) address it?
+- **Kubeflow Trainer personas**: How does the **`TrainingRuntime` / `TrainJob` split** mirror KServe's **`ServingRuntime` / `InferenceService`** model?
+- **`BuiltinTrainer` vs `CustomTrainer`**: When do you choose each, and what does the Kubeflow SDK do with a `CustomTrainer` function?
+- **Kubeflow Trainer vs Ray**: What is the operational difference between **"serialize a Python function into the `TrainJob`"** and **"package the script into a container image"**?
+- **Ray Tune trap**: Why is **Ray Tune** *not* what you reach for to fine-tune an LLM, and what is the right Kubeflow equivalent?
+- **Training as batch**: Why are tuning jobs **batch workloads with gang scheduling**, and why does that change how you reason about checkpoints and resource allocation?
 
 ### One-sentence compression
 
