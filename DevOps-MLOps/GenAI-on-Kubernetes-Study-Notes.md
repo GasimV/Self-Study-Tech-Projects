@@ -5876,6 +5876,40 @@ Throughout these notes, LLMs are usually treated as **operational black boxes**,
 
 For the rest of this section, basic familiarity with these concepts is assumed.
 
+> **PREFILL AND DECODE — QUICK REFRESHER**
+>
+> The **prefill phase** is when the model processes the **input prompt** and builds the internal attention state, often called the **KV cache**. During this phase, the model reads all prompt tokens in parallel-ish chunks and prepares to predict the **first output token**.
+>
+> So **TTFT** (**Time To First Token**) mostly includes:
+>
+> 1. **receiving the request**,
+> 2. **tokenizing / preparing the prompt**,
+> 3. **running the prompt through the model during prefill**,
+> 4. **sampling the first generated token**,
+> 5. **returning that token to the user**.
+>
+> The **decode phase** starts after the first token is produced. The model then generates **one token at a time**, using the **KV cache from prefill** plus the newly generated tokens.
+>
+> So the rough timeline is:
+>
+> ```text
+> User prompt
+>    ↓
+> Prefill: process prompt, build KV cache
+>    ↓
+> First output token  ← TTFT ends here
+>    ↓
+> Decode: generate token 2, token 3, token 4...
+>    ↓
+> End of generation
+> ```
+>
+> A slightly more precise phrasing:
+>
+> > The **prefill phase** is the model's processing of the input context up to computing the **first next-token distribution**. The **decode phase** is the **autoregressive generation** of output tokens after that, usually one token per step.
+>
+> In short: **prefill = prompt processing before/for the first token**, and **decode = producing the rest of the completion token by token**.
+
 ### Observability Stack and Configuration
 
 Existing Kubernetes observability tools and practices can be **reused or adapted** for LLM workloads.
