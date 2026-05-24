@@ -100,7 +100,16 @@
      - [Guardrails AI](#guardrails-ai)
      - [Llama Stack and Moderation APIs](#llama-stack-and-moderation-apis)
    - [Observability Lessons Learned](#observability-lessons-learned)
-7. [High-Value Recall Checklist](#high-value-recall-checklist)
+7. [Model Customization](#model-customization)
+   - [Introduction to LLM Creation](#introduction-to-llm-creation)
+   - [Prompt and Context Engineering](#prompt-and-context-engineering)
+   - [When to Use Model Customization](#when-to-use-model-customization)
+   - [Tuning a Model](#tuning-a-model)
+     - [Fine-Tuning](#fine-tuning)
+     - [Parameter-Efficient Fine-Tuning](#parameter-efficient-fine-tuning)
+     - [Low-Rank Adaptation](#low-rank-adaptation)
+   - [Customization Lessons Learned](#customization-lessons-learned)
+8. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -7870,6 +7879,479 @@ Explainability and fairness require **organization-wide adoption**, supported by
 
 [Back to Contents](#contents)
 
+## Model Customization
+
+Training an LLM **from scratch** requires significant computational resources and expertise that most organizations do not have. These notes do **not** cover creating a model from scratch. Instead, the focus is on **customizing an existing LLM** for a specific use case.
+
+This section covers:
+
+- several **tuning techniques**
+- the Kubernetes technologies available to implement and deploy the corresponding training jobs
+
+[Back to Contents](#contents)
+
+### Introduction to LLM Creation
+
+LLM training techniques differ significantly across model providers that invest heavily in developing proprietary methods. Most technical papers published with model releases **omit implementation details**, making reproduction difficult. The [technical paper for **DeepSeek V3**](https://arxiv.org/pdf/2412.19437) is a notable exception with unusually detailed documentation.
+
+Much of the innovation focuses on **new model architectures with more efficient attention mechanisms**. **Dataset curation** and **tuning methods** are rarely disclosed in detail.
+
+#### The LLM creation pipeline
+
+Training starts with **data cleaning and deduplication**. The **first phase, pre-training**, consumes most of the time and cost: processing all data using **thousands of GPUs for many weeks**. The output is a **base or foundation model** that can predict text but lacks an understanding of tasks or appropriate content boundaries.
+
+The next step is **alignment**, which teaches the LLM to **perform tasks safely and reliably** according to human preferences.
+
+> This phase is analogous to **Isaac Asimov's Three Laws of Robotics**: just as robots need core principles to ensure safe interaction with humanity, **LLMs need behavioral boundaries** to perform tasks without causing harm.
+
+Alignment requires:
+
+- **curated labeled data**
+- a **reward mechanism** where humans or specialized reward models evaluate the model's responses
+
+It is possible to find **base models** that went through a pre-training phase only, but the **vast majority** of publicly available models have **already been aligned** so that they are ready to be used for a specific set of tasks.
+
+**Model customization**, also known as **post-training**, applies to an **already aligned model**.
+
+![LLM creation pipeline](<assets/LLM creation pipeline.png>)
+
+**Figure 6-1. LLM creation pipeline**
+
+> **MODEL TUNING, MODEL CUSTOMIZATION, AND POST-TRAINING**
+>
+> **Model tuning** is a **general term** for various fine-tuning techniques and is **not specific to LLMs** — it also applies to predictive AI.
+>
+> **Model customization** is a **broader term** that encompasses all techniques used to **modify an LLM** or to **learn new tasks**. Some of these methods differ compared to traditional fine-tuning and may require multiple steps, including human interaction.
+>
+> **Post-training** refers to the **specific phase** in the LLM creation pipeline where model customization occurs. This step can be applied **multiple times** to **incrementally inject new policies or knowledge** into the model.
+>
+> These terms are often used **interchangeably** in these notes because they all involve **modifying a model** and present **similar operational challenges** on a Kubernetes platform.
+
+#### Why versatility matters
+
+The primary difference that makes LLMs unique from traditional predictive AI models is their **versatility**:
+
+- a single **LLM can perform a large number of different tasks**
+- a traditional **machine learning model is specialized for just one**
+
+This versatility is why **inference comes first** in operational terms: you can often **adapt an existing LLM** for different use cases **without any training at all**.
+
+Before diving into training techniques, it's worth understanding **when you don't need to train**. Many use cases can be solved through alternatives that **avoid the complexity and cost entirely**.
+
+#### Encode this
+
+- **LLM creation = pre-training (huge) → alignment → post-training (customization)**
+- **Most public models are already aligned and ready for use**
+- **Customization = post-training applied on top of an aligned model**
+- **Tuning / customization / post-training are used interchangeably here**
+
+#### Recall prompt
+
+*Why is alignment necessary after pre-training, and what does it add that pre-training alone cannot?*
+
+[Back to Contents](#contents)
+
+### Prompt and Context Engineering
+
+The real power of LLMs is that they **work without modification**. Through **careful engineering of inputs and context**, you can often achieve your goals **without training**. These alternatives aren't just simpler — they are **often the right choice**.
+
+#### Prompt engineering
+
+**Prompt engineering** is the process of **crafting detailed and specific instructions (prompts)** to guide an LLM's output.
+
+This set of instructions is **critical to maximize the accuracy** of the response. This field is becoming a **specialization in its own right**, with best practices for communicating effectively with an LLM to obtain the most accurate results.
+
+Effective prompt engineering is not just about specifying the task; it also involves describing:
+
+- **The scenario** — *"This is an airline company named ABC"*
+- **The role the model should take** — *"You are an AI-assistant chatbot to help customers"*
+- **The boundaries of the task** to help reduce hallucinations or guide behavior — *"You can only reply about our company and if you are sure about the answer"*
+
+Similar prompts are usually specified by the **provider of the service** and **hidden to the end users** as a **system prompt**.
+
+> **System prompts should not be relied upon as security controls** — they can be bypassed through **prompt injection** or **jailbreaking techniques**.
+>
+> For production systems with security requirements, **additional safeguards** like **input validation**, **output filtering**, and **content moderation** should be implemented at the application level. See [Model Safety: Hallucination and Guardrails](#model-safety-hallucination-and-guardrails) for the full guardrail toolkit.
+
+Since every LLM is trained on a **vast but finite dataset**, another use of prompt engineering is to **inject additional data into the prompt**, forcing the model to use that information during generation.
+
+#### Context engineering
+
+Basic or manual prompt engineering techniques have **evolved into established patterns** that make the system more powerful, even **enabling models to dynamically invoke tools** to retrieve information or perform actions.
+
+This is a core principle of **AI agents** and is often called **context engineering**. The term reflects that the **main engineering work lies in creating the input context** for the LLM, a process involving **complex, multicomponent, and iterative steps**.
+
+#### Retrieval-Augmented Generation (RAG)
+
+One of the most widely adopted patterns for context enrichment is **Retrieval-Augmented Generation (RAG)**, which **injects relevant data from external sources** into the context based on the user's question.
+
+How the RAG pattern works:
+
+- additional data is ingested as **embedding vectors** into a **vector database** using specialized **embedding models**
+- when a user request arrives, an **initial query** is performed against the vector database using **similarity search algorithms** (such as **approximate nearest neighbors**) to find content that is **semantically close** to the user's input
+- this **additional context** is then included in the prompt for the model to use when answering the question
+
+This solution helps to inject:
+
+- **external or recent knowledge** that wasn't available during the model's training
+- **proprietary data**
+- **information published after the training cutoff date**
+
+While each model has a **limited context window**, RAG addresses this by **filtering and including only the data most relevant** to the user's question — rather than attempting to include an entire knowledge base.
+
+![An example of RAG pipeline](<assets/An example of RAG pipeline.png>)
+
+**Figure 6-2. An example of RAG pipeline**
+
+The flexibility of solutions like RAG makes them **increasingly popular**. You can **update the vector database with new data in minutes** and **refresh the knowledge of the solution**. This trend, together with the adoption of **agentic AI** patterns, is taking over significant portions of the model customization space.
+
+#### Combining prompt/context engineering with customization
+
+<u>Important takeaway:</u> all prompt and context engineering techniques work with **both general-purpose models and tuned models**. You can **combine RAG with model customization**.
+
+The question isn't **"either/or"** but rather:
+
+> *Which combination gives you the best balance of performance, cost, and maintainability?*
+
+#### Encode this
+
+- **Prompt engineering = scenario + role + boundaries + injected data**
+- **System prompts are not security controls — pair with guardrails**
+- **Context engineering = building the input context dynamically for the LLM (multistep, multicomponent)**
+- **RAG = embeddings + vector DB + similarity search → context injection**
+- **RAG and customization are complementary, not mutually exclusive**
+
+#### Recall prompt
+
+*When would you reach for RAG instead of fine-tuning, and when does the inverse become a better operational choice?*
+
+[Back to Contents](#contents)
+
+### When to Use Model Customization
+
+While **RAG** and **prompt engineering** are powerful, they aren't always the **most cost-effective solution**. Model customization becomes valuable when you need to **embed knowledge or behavior directly into the model itself**.
+
+#### Inference-cost trade-off
+
+The possibility to influence model behavior through prompts and RAG is powerful and often sufficient. But this approach has limitations that make model customization the better choice in certain scenarios.
+
+A **large context window requires more GPU memory** at inference time. Model customization is a key tool for **controlling inference costs**:
+
+- it allows a company's **core, slow-changing knowledge** to be **embedded directly into the model**
+- this **reduces the need for a large context window** with every request
+
+> Example: a **bank** could create a customized model with embedded domain knowledge about **loans, trading, and credit risk**. This information doesn't change frequently, so it makes sense to **embed it in the model itself** rather than providing it in the context of every request. The result is **lower inference costs** and **potentially better performance**.
+
+#### Model size and Small Language Models (SLMs)
+
+The same principle applies to **model size**: a **small, specialized model** (potentially created through **distillation** from a larger model) can be **as effective as or even more effective than a larger, untuned model**.
+
+This is particularly relevant with **Small Language Models (SLMs)** that require fewer resources to be served:
+
+- an SLM usually has between **8 and 16 billion parameters**
+- this makes it a good candidate to be tuned with **constrained time and resources**
+
+**Model distillation** is another approach, where a **large teacher model** is used to train a **smaller, more efficient SLM** that inherits the teacher's knowledge while requiring fewer computational resources.
+
+#### Encode this
+
+- **Customization shines when knowledge is stable and large context windows are too expensive**
+- **SLMs (8–16B params) are the natural target for cost-effective customization**
+- **Distillation transfers a teacher model's knowledge into a smaller student**
+- **The choice is about inference economics, not just accuracy**
+
+#### Recall prompt
+
+*Why does embedding stable domain knowledge into a model lower inference cost compared to passing it through RAG every request?*
+
+[Back to Contents](#contents)
+
+### Tuning a Model
+
+The possibility to **continually train a model**, also known as **post-training**, is **not new to machine learning**. In traditional predictive AI, models are often fine-tuned in a **second phase** to update them with new data.
+
+In the context of generative AI, this activity is usually performed to:
+
+- **specialize a model** and improve performance in a specific domain
+- **reduce the overall cost** of the solution by leveraging **specialized smaller models** instead of one of the bigger and more expensive alternatives
+
+![Fine-tuning concept](<assets/Fine-tuning concept.png>)
+
+**Figure 6-3. Fine-tuning concept**
+
+While fine-tuning is **less complex and costly than pre-training** by an order of magnitude, it can still take **many hours or even days** to run.
+
+Sometimes, however, **full fine-tuning is unnecessary**. For example, the user might want to **reduce the domain areas** that the model should be able to answer — similar to the prompt engineering use case described before but as a **built-in feature in the model** and **less affected by external attacks**. These simpler options fall under a category named **Parameter-Efficient Fine-Tuning (PEFT)**.
+
+For both full fine-tuning and PEFT approaches, **Hugging Face** provides the **Transformer Reinforcement Learning (TRL)** library, which includes **`SFTTrainer`**, a utility class that can:
+
+- load a model
+- perform various tuning techniques
+- include an evaluation step to compute accuracy
+
+> **WHAT IS SUPERVISED FINE-TUNING?**
+>
+> The name of the library `SFTTrainer` stands for **Supervised Fine-Tuning Trainer**. The term **"supervised"** is usually omitted when discussing fine-tuning because practitioners implicitly understand the process as supervised.
+>
+> While some techniques for **unsupervised fine-tuning** exist, the vast majority of methods require **labeled data** as input — data that has been classified by a human or another model. The reason is straightforward: for a model to learn a specific policy or piece of knowledge, the **input dataset must contain the specific traits** the model is expected to embed.
+>
+> However, **labeled data for generative models differs from classification tasks**:
+>
+> - in **classification**, labels are **discrete categories** such as `spam` / `not-spam`
+> - for **LLMs**, the label is the **complete expected output text**
+>
+> Training pairs consist of input-output sequences such as:
+>
+> - input *"Translate to French: Hello"* paired with output *"Bonjour"*
+> - input *"Summarize: [article]"* paired with output *"The article discusses X, Y, and Z."*
+>
+> During training, the model learns by **predicting the next word at each step** in the output sequence and **adjusting when it predicts incorrectly**. Both classification and generation are **"supervised"** because training provides correct answers, but **generation predicts sequences of tokens** rather than single categories.
+>
+> The **creation of a supervised input dataset** is usually an **expensive activity**. As a result, these curated datasets are **orders of magnitude smaller** than the datasets used for unsupervised pre-training.
+
+#### Fine-Tuning
+
+**Fine-tuning** a model involves **continuing the training process** to embed additional knowledge or tasks, such as:
+
+- **instruction following**
+- **question answering**
+- **chat capabilities**
+
+In other words, **full fine-tuning changes all the model's parameters**, producing a **distinct model** that, while derived from the original, has been **fully adapted to the new training data**.
+
+This approach requires a **considerable amount of labeled data** (at least **hundreds of thousands of new examples**) to influence the model enough to learn new concepts. It is a **very expensive activity**.
+
+From a Kubernetes platform perspective, full fine-tuning requires:
+
+- **many GPUs during the training phase**
+- **dedicated GPUs to serve the new model** — there is no efficient way to layer or merge it with the original at inference time
+
+While this is the **primary approach for predictive AI**, **full fine-tuning in generative AI is more challenging** due to:
+
+- the **high cost of preparing datasets**
+- the **computational expense** of training and inference
+- risks such as **catastrophic forgetting** — where the model loses previously learned knowledge
+
+##### Example 6-1. `SFTTrainer` usage to perform supervised fine-tuning
+
+The Hugging Face `SFTTrainer` can be used to perform full fine-tuning:
+
+```python
+from datasets import load_dataset
+from trl import SFTTrainer
+from transformers import AutoModelForCausalLM
+
+
+train_dataset = load_dataset("json", data_files="my_file.json")
+original_model = AutoModelForCausalLM.from_pretrained(...)
+
+trainer = SFTTrainer(
+    model=original_model,
+    train_dataset=train_dataset,
+)
+
+trainer.train()
+trainer.save_model("target_location")
+```
+
+What to notice:
+
+- **`load_dataset(...)`** — loads the dataset with new content for the model to learn. This can be a **public dataset from Hugging Face** or a **local file**
+- **`AutoModelForCausalLM.from_pretrained(...)`** — the function used to load the model is the **same one used for inference**. The model can be downloaded on the fly, but it is typically **downloaded locally first**
+
+#### Parameter-Efficient Fine-Tuning
+
+**Parameter-Efficient Fine-Tuning (PEFT)** is a group of techniques that takes a **different approach** to tuning a model:
+
+- the **original model remains unchanged**
+- instead, it is **composed with new layers** that influence its behavior at runtime during inference
+
+While conceptually similar to prompt engineering in that both **influence model behavior without full retraining**, **PEFT embeds learned parameters directly into the model architecture** rather than relying on text-based prompts at runtime.
+
+##### Why PEFT is easier for Kubernetes platforms
+
+From a Kubernetes platform perspective, PEFT is **much easier to manage** for both training and serving:
+
+- the **training phase** requires **fewer data samples** (between **100 and 1,000 labeled examples**), making the training job **shorter and less hardware intensive**
+- **serving these fine-tuned models is also more efficient** — the **base model can be dynamically composed with one or more tuned layers at runtime** in the same deployment, thanks to support in modern inference engines
+- see [OCI Image for Storing Model Data](#oci-image-for-storing-model-data) for efficient model storage and [LLM-Aware Routing](#llm-aware-routing) for inference routing
+
+##### PEFT trade-offs
+
+The main drawback of PEFT is that it has a **more limited impact** on the model compared to full fine-tuning, which modifies all parameters. With PEFT, **only a small fraction of the parameters are affected**.
+
+> For example, **LoRA** (one of the most popular PEFT algorithms) might tune **less than 1% of the total parameters** for a **Llama 3.1 8B model**.
+
+Hugging Face created a library named **`peft`** to collect different PEFT algorithms, and it integrates **natively with the `SFTTrainer`** class.
+
+##### Example 6-2. LoRA fine-tuning using `SFTTrainer`
+
+```python
+from datasets import load_dataset
+from trl import SFTTrainer
+from peft import LoraConfig
+from transformers import AutoModelForCausalLM
+
+train_dataset = load_dataset("json", data_files="my_file.json")
+original_model = AutoModelForCausalLM.from_pretrained(...)
+lora_config = LoraConfig(...)
+
+trainer = SFTTrainer(
+    model=original_model,
+    train_dataset=train_dataset,
+    peft_config=lora_config,
+)
+
+trainer.train()
+trainer.save_model("target_location")
+```
+
+What to notice:
+
+- **`lora_config = LoraConfig(...)`** — compared to full fine-tuning, the **only difference** is the initialization of the PEFT configuration (in this case, LoRA). There are many parameters; check the **Hugging Face PEFT documentation** for more details
+- **`peft_config=lora_config`** — to enable PEFT, you just need to **pass the `lora_config` instance** as the `peft_config` argument
+
+#### Low-Rank Adaptation
+
+**Low-Rank Adaptation (LoRA)** keeps the **original model weights frozen** while training a **relatively small number of new parameters** on the fine-tuning dataset.
+
+The new parameters are organized as **smaller matrices called adapters**. These **low-rank matrices** learn the updates, and their **product is combined with the original weights**.
+
+##### How LoRA decomposes weight updates
+
+In a **traditional fine-tuning job**, the training process **learns a new, full-sized matrix** representing the weight updates.
+
+**LoRA**, however, **decomposes this large update**. Instead of learning the full matrix, the training produces **two much smaller, low-rank matrices**. When these two smaller matrices are **multiplied**, their **product approximates the full weight update**.
+
+This **decomposition** is what makes the training procedure **significantly more efficient**.
+
+![Comparison of LoRA decomposition and full fine-tuning](<assets/Comparison of LoRA decomposition and full fine-tuning.png>)
+
+**Figure 6-4. Comparison of LoRA decomposition and full fine-tuning**
+
+##### LoRA variants
+
+LoRA is applicable to a **large set of LLMs**, and **many variants** of the algorithm exist for specific scenarios. Two notable specializations:
+
+- **X-LoRA** — extends the approach to **Mixture-of-Experts (MoE)** architectures
+- **QLoRA** — applies **quantization** to reduce fine-tuning memory requirements
+
+##### Benefits of LoRA
+
+LoRA offers **two main benefits**:
+
+- a **cheaper training phase** (in terms of time and hardware) compared to full fine-tuning
+- an **efficient inference approach** — since the base model is **not modified**, adapters can be **composed with it at runtime**
+
+The combined size of the two small matrices (**A** and **B**) is typically only **1–10% of the original model size**, making it possible to **serve one base model and many LoRA-tuned models** using the hardware required for **only the base model**.
+
+![Serving of LoRA adapters](<assets/Serving of LoRA adapters.png>)
+
+**Figure 6-5. Serving of LoRA adapters**
+
+##### Merging LoRA adapters with the base model
+
+Even if it is **not the traditional use case** for LoRA, it is still possible to **merge the LoRA adapter with the base model** for testing purposes.
+
+> Further reading: the blog post **["Practical Tips for Finetuning LLMs Using LoRA (Low-Rank Adaptation)"](https://magazine.sebastianraschka.com/p/practical-tips-for-finetuning-llms)** by **Sebastian Raschka** provides more information about LoRA.
+
+> **ADVANCED TUNING TECHNIQUES**
+>
+> Full fine-tuning and PEFT are **not the only ways** to tune a model; new and more complex techniques are **constantly emerging**.
+>
+> Many of these new approaches involve **multistep workflows** rather than a single training loop, which can include using **synthetic data** produced by the model in a previous iteration. Some of the most common advanced techniques include:
+>
+> - **Group Relative Policy Optimization (GRPO)**
+> - **Direct Preference Optimization (DPO)**
+> - **Model distillation**
+> - **Model merging**
+> - **Reward modeling**
+>
+> These notes do not cover these advanced methods in detail, as each technique is a complex topic. They are also very different:
+>
+> - **GRPO** is an innovation from the **DeepSeek** team
+> - **InstructLab** is a full methodology from **IBM Research** for alignment tuning
+>
+> For more information, see the **[Transformer Reinforcement Learning (TRL)](https://github.com/huggingface/trl)** library from Hugging Face, which collects many of these techniques with **dedicated trainer classes**.
+>
+> The focus of these notes is on the **operational challenges** of generative AI. From a Kubernetes platform perspective, these tuning methods manifest as:
+>
+> - **long-running, multideployment topologies**
+> - **most components require dedicated GPUs**
+> - **the ability to communicate securely** between components
+>
+> The **security of this communication** is critical for production workloads and is a separate operational concern.
+
+#### Encode this
+
+- **Fine-tuning = all parameters change, very expensive, needs hundreds of thousands of examples, dedicated GPUs to serve**
+- **PEFT = composes new layers on top of a frozen base, cheaper training, can share one base model across many adapters at inference time**
+- **LoRA = decomposes weight updates into two small matrices (A × B); typically 1–10% of original size**
+- **X-LoRA = LoRA + MoE; QLoRA = LoRA + quantization**
+- **SFT = Supervised Fine-Tuning; the "S" is usually implicit**
+
+#### Recall prompt
+
+*Why can a single LoRA-tuned deployment serve many specialized variants of a model using essentially the hardware of just the base model?*
+
+[Back to Contents](#contents)
+
+### Customization Lessons Learned
+
+This section explored how to **adapt an existing LLM** to a specific use case on Kubernetes, from prompt-level adjustments to full fine-tuning.
+
+**You often don't need to train**
+
+- **prompt engineering** sets scenario, role, and boundaries
+- **context engineering** builds dynamic, multistep input contexts (the foundation of **AI agents**)
+- **RAG** injects external knowledge via embeddings + vector DB + similarity search
+- these techniques work with **both general-purpose and tuned models**
+
+**When training is the right call**
+
+- **stable, slow-changing domain knowledge** is better embedded in the model than passed via context every request
+- **smaller specialized models (SLMs, 8–16B params)** can match or beat larger untuned models at a fraction of the inference cost
+- **distillation** transfers a large teacher's behavior into a smaller student
+
+**Two training families**
+
+- **Full fine-tuning** — modifies all parameters; powerful but expensive; needs hundreds of thousands of examples; produces a **distinct model** that needs dedicated GPUs to serve
+- **PEFT (Parameter-Efficient Fine-Tuning)** — composes new layers on a **frozen base**; 100–1,000 examples; one base + many adapters served on the same hardware
+
+**LoRA dominates the PEFT space**
+
+- **decomposes** the full weight-update matrix into two **low-rank matrices** (A × B)
+- adapters are typically **1–10% of the base model size**
+- **X-LoRA** handles MoE; **QLoRA** combines LoRA with quantization
+- inference composes the base model + adapters at runtime → strong cost story
+
+**Beyond LoRA**
+
+Advanced techniques (**GRPO**, **DPO**, **distillation**, **model merging**, **reward modeling**, **InstructLab**) are **multistep workflows**, often with **synthetic data**, **multiple dedicated GPU pools**, and **secure inter-component communication**. From a Kubernetes perspective, they look more like **long-running training pipelines** than single training loops.
+
+**Operational lens**
+
+Whatever the technique:
+
+- **dataset preparation is the most expensive step** (curated labeled data)
+- **training jobs are long-running, GPU-heavy workloads**
+- **serving topology depends on the technique** — full fine-tune = new dedicated deployment, PEFT/LoRA = one base + many adapters
+- **secure communication between training components** matters for production workloads
+
+#### Encode this
+
+- **The cheapest customization is no customization — try prompts and RAG first**
+- **Customization wins when knowledge is stable and inference cost matters**
+- **PEFT + LoRA = the cost-effective default for most LLM customization on K8s**
+- **Full fine-tuning is reserved for cases where partial parameter updates aren't enough**
+- **Advanced techniques are multistep K8s pipelines, not one-shot training jobs**
+
+#### Recall prompt
+
+*Given a stable internal knowledge base, 10 GPUs, and a need to serve five fine-tuned variants of one model, which customization technique would you choose and why?*
+
+[Back to Contents](#contents)
+
 ## High-Value Recall Checklist
 
 Use these prompts for fast review:
@@ -7918,6 +8400,13 @@ Use these prompts for fast review:
 - **Production serving**: Why do model evaluation, compression, benchmarking, runtime tuning, autoscaling, startup time, routing, and disaggregated topology need to be treated as one connected system?
 - **LLM-aware routing**: Why is round robin often weak for LLM replicas?
 - **Disaggregated serving**: Why do distributed KV cache and disaggregated prefill require high-bandwidth networking?
+- **LLM creation pipeline**: What is the difference between **pre-training**, **alignment**, and **post-training (customization)**?
+- **Prompt vs context engineering**: Where does **RAG** fit, and why is it complementary to fine-tuning rather than a replacement?
+- **When to customize**: What kinds of knowledge or behavior justify embedding into the model instead of injecting via RAG every request?
+- **Full fine-tuning vs PEFT**: What is the operational cost difference, and why is PEFT easier on a Kubernetes platform?
+- **LoRA**: How does LoRA decompose the weight-update matrix, and why does that enable one-base-many-adapters serving?
+- **X-LoRA / QLoRA**: What does each variant add on top of vanilla LoRA?
+- **Advanced techniques**: Why do **GRPO**, **DPO**, **distillation**, **model merging**, and **InstructLab** look like multideployment K8s pipelines rather than single training jobs?
 
 ### One-sentence compression
 
