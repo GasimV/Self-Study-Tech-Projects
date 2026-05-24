@@ -7892,15 +7892,15 @@ This section covers:
 
 ### Introduction to LLM Creation
 
-LLM training techniques differ significantly across model providers that invest heavily in developing proprietary methods. Most technical papers published with model releases **omit implementation details**, making reproduction difficult. The [technical paper for **DeepSeek V3**](https://arxiv.org/pdf/2412.19437) is a notable exception with unusually detailed documentation.
+- LLM training techniques differ significantly across model providers that invest heavily in developing proprietary methods. Most technical papers published with model releases **omit implementation details**, making reproduction difficult. The [technical paper for **DeepSeek V3**](https://arxiv.org/pdf/2412.19437) is a notable exception with unusually detailed documentation.
 
-Much of the innovation focuses on **new model architectures with more efficient attention mechanisms**. **Dataset curation** and **tuning methods** are rarely disclosed in detail.
+- Much of the innovation focuses on **new model architectures with more efficient attention mechanisms**. **Dataset curation** and **tuning methods** are rarely disclosed in detail.
 
 #### The LLM creation pipeline
 
-Training starts with **data cleaning and deduplication**. The **first phase, pre-training**, consumes most of the time and cost: processing all data using **thousands of GPUs for many weeks**. The output is a **base or foundation model** that can predict text but lacks an understanding of tasks or appropriate content boundaries.
+- Training starts with **data cleaning and deduplication**. The **first phase, pre-training**, consumes most of the time and cost: processing all data using **thousands of GPUs for many weeks**. The output is a **base or foundation model** that can predict text but lacks an understanding of tasks or appropriate content boundaries.
 
-The next step is **alignment**, which teaches the LLM to **perform tasks safely and reliably** according to human preferences.
+- The next step is **alignment**, which teaches the LLM to **perform tasks safely and reliably** according to human preferences.
 
 > This phase is analogous to **Isaac Asimov's Three Laws of Robotics**: just as robots need core principles to ensure safe interaction with humanity, **LLMs need behavioral boundaries** to perform tasks without causing harm.
 
@@ -7919,11 +7919,11 @@ It is possible to find **base models** that went through a pre-training phase on
 
 > **MODEL TUNING, MODEL CUSTOMIZATION, AND POST-TRAINING**
 >
-> **Model tuning** is a **general term** for various fine-tuning techniques and is **not specific to LLMs** — it also applies to predictive AI.
+> - **Model tuning** is a **general term** for various fine-tuning techniques and is **not specific to LLMs** — it also applies to predictive AI.
 >
-> **Model customization** is a **broader term** that encompasses all techniques used to **modify an LLM** or to **learn new tasks**. Some of these methods differ compared to traditional fine-tuning and may require multiple steps, including human interaction.
+> - **Model customization** is a **broader term** that encompasses all techniques used to **modify an LLM** or to **learn new tasks**. Some of these methods differ compared to traditional fine-tuning and may require multiple steps, including human interaction.
 >
-> **Post-training** refers to the **specific phase** in the LLM creation pipeline where model customization occurs. This step can be applied **multiple times** to **incrementally inject new policies or knowledge** into the model.
+> - **Post-training** refers to the **specific phase** in the LLM creation pipeline where model customization occurs. This step can be applied **multiple times** to **incrementally inject new policies or knowledge** into the model.
 >
 > These terms are often used **interchangeably** in these notes because they all involve **modifying a model** and present **similar operational challenges** on a Kubernetes platform.
 
@@ -7953,11 +7953,11 @@ Before diving into training techniques, it's worth understanding **when you don'
 
 ### Prompt and Context Engineering
 
-The real power of LLMs is that they **work without modification**. Through **careful engineering of inputs and context**, you can often achieve your goals **without training**. These alternatives aren't just simpler — they are **often the right choice**.
+- The real power of LLMs is that they **work without modification**. Through **careful engineering of inputs and context**, you can often achieve your goals **without training**. These alternatives aren't just simpler — they are **often the right choice**.
 
 #### Prompt engineering
 
-**Prompt engineering** is the process of **crafting detailed and specific instructions (prompts)** to guide an LLM's output.
+> **Prompt engineering** is the process of **crafting detailed and specific instructions (prompts)** to guide an LLM's output.
 
 This set of instructions is **critical to maximize the accuracy** of the response. This field is becoming a **specialization in its own right**, with best practices for communicating effectively with an LLM to obtain the most accurate results.
 
@@ -7977,13 +7977,13 @@ Since every LLM is trained on a **vast but finite dataset**, another use of prom
 
 #### Context engineering
 
-Basic or manual prompt engineering techniques have **evolved into established patterns** that make the system more powerful, even **enabling models to dynamically invoke tools** to retrieve information or perform actions.
+- Basic or manual prompt engineering techniques have **evolved into established patterns** that make the system more powerful, even **enabling models to dynamically invoke tools** to retrieve information or perform actions.
 
-This is a core principle of **AI agents** and is often called **context engineering**. The term reflects that the **main engineering work lies in creating the input context** for the LLM, a process involving **complex, multicomponent, and iterative steps**.
+- This is a core principle of **AI agents** and is often called **context engineering**. The term reflects that the **main engineering work lies in creating the input context** for the LLM, a process involving **complex, multicomponent, and iterative steps**.
 
 #### Retrieval-Augmented Generation (RAG)
 
-One of the most widely adopted patterns for context enrichment is **Retrieval-Augmented Generation (RAG)**, which **injects relevant data from external sources** into the context based on the user's question.
+> One of the most widely adopted patterns for context enrichment is **Retrieval-Augmented Generation (RAG)**, which **injects relevant data from external sources** into the context based on the user's question.
 
 How the RAG pattern works:
 
@@ -8007,7 +8007,7 @@ The flexibility of solutions like RAG makes them **increasingly popular**. You c
 
 #### Combining prompt/context engineering with customization
 
-<u>Important takeaway:</u> all prompt and context engineering techniques work with **both general-purpose models and tuned models**. You can **combine RAG with model customization**.
+- <u>Important takeaway:</u> all prompt and context engineering techniques work with **both general-purpose models and tuned models**. You can **combine RAG with model customization**.
 
 The question isn't **"either/or"** but rather:
 
@@ -8029,11 +8029,11 @@ The question isn't **"either/or"** but rather:
 
 ### When to Use Model Customization
 
-While **RAG** and **prompt engineering** are powerful, they aren't always the **most cost-effective solution**. Model customization becomes valuable when you need to **embed knowledge or behavior directly into the model itself**.
+- While **RAG** and **prompt engineering** are powerful, they aren't always the **most cost-effective solution**. Model customization becomes valuable when you need to **embed knowledge or behavior directly into the model itself**.
 
 #### Inference-cost trade-off
 
-The possibility to influence model behavior through prompts and RAG is powerful and often sufficient. But this approach has limitations that make model customization the better choice in certain scenarios.
+- The possibility to influence model behavior through prompts and RAG is powerful and often sufficient. But this approach has limitations that make model customization the better choice in certain scenarios.
 
 A **large context window requires more GPU memory** at inference time. Model customization is a key tool for **controlling inference costs**:
 
@@ -8044,7 +8044,7 @@ A **large context window requires more GPU memory** at inference time. Model cus
 
 #### Model size and Small Language Models (SLMs)
 
-The same principle applies to **model size**: a **small, specialized model** (potentially created through **distillation** from a larger model) can be **as effective as or even more effective than a larger, untuned model**.
+- The same principle applies to **model size**: a **small, specialized model** (potentially created through **distillation** from a larger model) can be **as effective as or even more effective than a larger, untuned model**.
 
 This is particularly relevant with **Small Language Models (SLMs)** that require fewer resources to be served:
 
@@ -8208,22 +8208,22 @@ trainer.save_model("target_location")
 
 What to notice:
 
-- **`lora_config = LoraConfig(...)`** — compared to full fine-tuning, the **only difference** is the initialization of the PEFT configuration (in this case, LoRA). There are many parameters; check the **Hugging Face PEFT documentation** for more details
+- **`lora_config = LoraConfig(...)`** — compared to full fine-tuning, the **only difference** is the initialization of the PEFT configuration (in this case, LoRA). There are many parameters; check the **[Hugging Face PEFT documentation](https://huggingface.co/docs/peft/package_reference/lora)** for more details
 - **`peft_config=lora_config`** — to enable PEFT, you just need to **pass the `lora_config` instance** as the `peft_config` argument
 
 #### Low-Rank Adaptation
 
-**Low-Rank Adaptation (LoRA)** keeps the **original model weights frozen** while training a **relatively small number of new parameters** on the fine-tuning dataset.
+- **[Low-Rank Adaptation (LoRA)](https://arxiv.org/abs/2106.09685)** keeps the **original model weights frozen** while training a **relatively small number of new parameters** on the fine-tuning dataset.
 
-The new parameters are organized as **smaller matrices called adapters**. These **low-rank matrices** learn the updates, and their **product is combined with the original weights**.
+- The new parameters are organized as **smaller matrices called adapters**. These **low-rank matrices** learn the updates, and their **product is combined with the original weights**.
 
 ##### How LoRA decomposes weight updates
 
-In a **traditional fine-tuning job**, the training process **learns a new, full-sized matrix** representing the weight updates.
+- In a **traditional fine-tuning job**, the training process **learns a new, full-sized matrix** representing the weight updates.
 
-**LoRA**, however, **decomposes this large update**. Instead of learning the full matrix, the training produces **two much smaller, low-rank matrices**. When these two smaller matrices are **multiplied**, their **product approximates the full weight update**.
+- **LoRA**, however, **decomposes this large update**. Instead of learning the full matrix, the training produces **two much smaller, low-rank matrices**. When these two smaller matrices are **multiplied**, their **product approximates the full weight update**.
 
-This **decomposition** is what makes the training procedure **significantly more efficient**.
+- This **decomposition** is what makes the training procedure **significantly more efficient**.
 
 ![Comparison of LoRA decomposition and full fine-tuning](<assets/Comparison of LoRA decomposition and full fine-tuning.png>)
 
@@ -8233,8 +8233,8 @@ This **decomposition** is what makes the training procedure **significantly more
 
 LoRA is applicable to a **large set of LLMs**, and **many variants** of the algorithm exist for specific scenarios. Two notable specializations:
 
-- **X-LoRA** — extends the approach to **Mixture-of-Experts (MoE)** architectures
-- **QLoRA** — applies **quantization** to reduce fine-tuning memory requirements
+- **[X-LoRA](https://arxiv.org/abs/2402.07148)** — extends the approach to **Mixture-of-Experts (MoE)** architectures
+- **[QLoRA](https://arxiv.org/abs/2305.14314)** — applies **quantization** to reduce fine-tuning memory requirements
 
 ##### Benefits of LoRA
 
@@ -8269,10 +8269,10 @@ Even if it is **not the traditional use case** for LoRA, it is still possible to
 >
 > These notes do not cover these advanced methods in detail, as each technique is a complex topic. They are also very different:
 >
-> - **GRPO** is an innovation from the **DeepSeek** team
-> - **InstructLab** is a full methodology from **IBM Research** for alignment tuning
+> - **[GRPO](https://arxiv.org/abs/2402.03300)** is an innovation from the **DeepSeek** team
+> - **[InstructLab](https://arxiv.org/abs/2403.01081v1)** is a full methodology from **IBM Research** for alignment tuning
 >
-> For more information, see the **[Transformer Reinforcement Learning (TRL)](https://github.com/huggingface/trl)** library from Hugging Face, which collects many of these techniques with **dedicated trainer classes**.
+> For more information, see the **[Transformer Reinforcement Learning (TRL)](https://github.com/huggingface/trl)** library from [Hugging Face](https://huggingface.co/docs/trl/en/index), which collects many of these techniques with **dedicated trainer classes**.
 >
 > The focus of these notes is on the **operational challenges** of generative AI. From a Kubernetes platform perspective, these tuning methods manifest as:
 >
