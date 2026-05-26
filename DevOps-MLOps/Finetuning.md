@@ -1269,6 +1269,61 @@ W′ = W + (α / r) · W_AB
 
 **Figure 7-11. To apply LoRA to a weight matrix W, decompose it into the product of two matrices A and B. During finetuning, only A and B are updated. W is kept intact.**
 
+##### How LoRA computes the forward pass — training vs merged inference
+
+A subtle but important point that's easy to miss: the forward pass **looks different during training than after merging**.
+
+###### During training — two paths in parallel
+
+During training, the **same input `x`** is passed through **both** paths simultaneously:
+
+- the **frozen base weights `W`**
+- the **trainable adapter `B · A`**
+
+Their outputs are **summed** into `y`:
+
+```text
+y = W · x + (α / r) · B · A · x
+```
+
+This is what enables learning: gradients flow only into **A** and **B**, while **W** remains untouched.
+
+###### After training — merge once, then inference is identical to the base model
+
+After training, the adapter is **merged into the base weights**:
+
+```text
+W_merged = W + (α / r) · B · A
+```
+
+Inference then uses a **single matrix multiplication**, identical in cost to the original model:
+
+```text
+y = W_merged · x
+```
+
+> **This is the operational win**: LoRA adds **zero inference latency** once merged. The dual-path cost lives entirely in **training**.
+
+###### The merge, in three concrete operations
+
+The expression `W_merged = W + (α / r) · B · A` decomposes into **three steps** that map directly to what the code does:
+
+1. **Matrix multiplication** — `B × A = ΔW`
+2. **Scalar multiplication** — `(α / r) · ΔW`
+3. **Matrix addition** — `W + (α / r) · ΔW`
+
+###### Symbol reference
+
+| Symbol | Meaning |
+| --- | --- |
+| **`x`** | **Input vector** to the layer — activations from the previous layer (e.g., a token embedding or hidden state) |
+| **`y`** | **Output activations** produced by the layer |
+| **`W`** | Original **frozen** base weight matrix (dimension `n × m`) |
+| **`A`, `B`** | **Trainable** LoRA adapter matrices (dimensions `n × r` and `r × m`) |
+| **`r`** | LoRA **rank** (hyperparameter) — controls adapter capacity |
+| **`α`** | LoRA **scaling factor** (hyperparameter) — controls how strongly the adapter influences the base model |
+| **`ΔW`** | **Effective weight update** = `(α / r) · B · A` (low-rank approximation of a full-rank update) |
+
 > **NOTE — Low-rank factorization**
 >
 > **LoRA (Low-Rank Adaptation)** is built on the concept of **low-rank factorization**, a long-standing **dimensionality reduction** technique.
@@ -1399,6 +1454,27 @@ In practice, **`α` is often chosen so that the ratio `α / r` is typically betw
 - if **`r` is large**, you might want **`α` to be smaller**
 
 > Experimentation is needed to determine the best **`α` / `r` combination** for your use case.
+
+###### What `α` does to the *same* trained adapter
+
+A useful operational insight: **`α` lets you tune the adapter's influence after training, without retraining**. The trained matrices `A` and `B` are **fixed** at the end of training — but the **effective update** `ΔW = (α / r) · B · A` can be **scaled up or down** just by changing `α`.
+
+Suppose training converged and the adapter learned this update:
+
+```text
+B · A = [[ 0.1,  0.2 ],
+         [ 0.3,  0.4 ]]
+```
+
+With **`r = 8` fixed**, sweeping `α` produces three different effective updates **from the same trained adapter**:
+
+| `α` | `α / r` | `ΔW = (α / r) · B · A` | Effect |
+| --- | --- | --- | --- |
+| **4** | 0.5 | `[[ 0.05, 0.10 ], [ 0.15, 0.20 ]]` | **Half-strength** — conservative update |
+| **8** | 1.0 | `[[ 0.10, 0.20 ], [ 0.30, 0.40 ]]` | **Full-strength** — adapter applied as-is |
+| **16** | 2.0 | `[[ 0.20, 0.40 ], [ 0.60, 0.80 ]]` | **Double-strength** — aggressive update |
+
+> The matrices **`A` and `B` are identical in all three rows** — only `α` differs. A larger `α` **amplifies** the learned correction; a smaller `α` **suppresses** it. This is what makes `α` a **post-training knob**: you can dial the adapter's effect up or down at merge time without touching the trained weights.
 
 ##### Serving LoRA adapters
 
