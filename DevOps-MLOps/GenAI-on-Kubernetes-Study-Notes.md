@@ -7895,6 +7895,8 @@ This section covers:
 - several **tuning techniques**
 - the Kubernetes technologies available to implement and deploy the corresponding training jobs
 
+> **Deep-dive companion notes:** for a much more detailed treatment of **finetuning specifically** — covering transfer learning, when (and when not) to finetune, RAG vs finetuning trade-offs, memory bottlenecks, and PEFT — see the dedicated **[Finetuning notes](Finetuning.md)** (a structured companion to Chapter 7 of [*"AI Engineering"* by Chip Huyen](https://www.oreilly.com/library/view/ai-engineering/9781098166298/)).
+
 [Back to Contents](#contents)
 
 ### Introduction to LLM Creation
