@@ -110,6 +110,20 @@
      - [Low-Rank Adaptation](#low-rank-adaptation)
    - [Running Tuning Jobs on Kubernetes](#running-tuning-jobs-on-kubernetes)
      - [Kubeflow Trainer](#kubeflow-trainer)
+       - [Two personas, two APIs](#two-personas-two-apis)
+       - [`TrainingRuntime` and `ClusterTrainingRuntime`](#trainingruntime-and-clustertrainingruntime)
+       - [`BuiltinTrainer` vs `CustomTrainer`](#builtintrainer-vs-customtrainer)
+       - [`TrainJob` → `JobSet` → Kubernetes Jobs](#trainjob--jobset--kubernetes-jobs)
+       - [Example 6-3. Installing Kubeflow Trainer](#example-6-3-installing-kubeflow-trainer)
+       - [Example 6-4. `ClusterTrainingRuntime`](#example-6-4-clustertrainingruntime)
+       - [Example 6-5. Trainer function using Hugging Face TRL as a `CustomTrainer`](#example-6-5-trainer-function-using-hugging-face-trl-as-a-customtrainer)
+       - [Example 6-6. Create `TrainJob` via Kubeflow SDK](#example-6-6-create-trainjob-via-kubeflow-sdk)
+       - [Example 6-8. Merge LoRA adapter with the base model](#example-6-8-merge-lora-adapter-with-the-base-model)
+       - [Storage and operational considerations](#storage-and-operational-considerations)
+       - [Orchestration vs. distribution strategy: where does FSDP live?](#orchestration-vs-distribution-strategy-where-does-fsdp-live)
+       - [Example — Self-contained FSDP `CustomTrainer`](#example--self-contained-fsdp-customtrainer)
+       - [Where do `LOCAL_RANK`, `RANK`, `WORLD_SIZE`, … come from?](#where-do-local_rank-rank-world_size--come-from)
+       - [Why Kubernetes / Kubeflow Trainer instead of just `torchrun`?](#why-kubernetes--kubeflow-trainer-instead-of-just-torchrun)
      - [Other Frameworks](#other-frameworks)
        - [DeepSpeed](#deepspeed)
        - [Ray](#ray)
@@ -8656,6 +8670,530 @@ The experience for the **data scientist is simpler**, as the Kubeflow ecosystem 
 >
 > - **[Kubeflow Notebooks](https://www.kubeflow.org/docs/components/notebooks/overview/)** — manages the infrastructure for **web-based IDEs like Jupyter**, making it easy for data scientists to **self-provision** an environment and experiment with the Kubeflow Trainer SDK
 > - **[Kubeflow Pipelines](https://www.kubeflow.org/docs/components/pipelines/overview/)** — after experimenting and defining the training job, a data scientist can use Kubeflow Pipelines to **convert the notebook into a reproducible pipeline**. This allows the logic to be **executed multiple times** for retraining the model, either by extracting the code into distinct steps or by **directly incorporating the notebook** into the pipeline
+
+##### Orchestration vs. distribution strategy: where does FSDP live?
+
+A natural follow-up after the TRL example: *if I want **FSDP** (or DDP, DeepSpeed, Accelerate), where does that code actually go?* The answer is that the **FSDP / PyTorch Distributed logic usually lives inside the `CustomTrainer` function itself**, exactly like the Hugging Face TRL trainer in Example 6-5.
+
+It helps to keep **two distinct layers** separate in your head:
+
+```text
+Kubeflow Trainer layer (orchestration):
+- creates the TrainJob
+- chooses the TrainingRuntime
+- produces the JobSet / Kubernetes Jobs
+- allocates nodes, CPU, memory, GPUs
+- launches the distributed workers
+
+Your trainer function layer (training strategy):
+- loads the model and dataset
+- initializes PyTorch distributed
+- applies FSDP / DDP / DeepSpeed / Accelerate / TRL
+- runs the training loop
+- saves checkpoints / the final model
+```
+
+So **Kubeflow Trainer handles the *orchestration***, while **FSDP handles the *actual distributed-training strategy***.
+
+A minimal sketch of the strategy layer — note how all the distributed mechanics are *inside* the function:
+
+```python
+def my_fsdp_trainer(**kwargs):
+    import os
+    import torch
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.utils.data.distributed import DistributedSampler
+
+    dist.init_process_group(backend="nccl")
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+
+    model = build_model(...)
+    model.cuda()
+
+    model = FSDP(model)
+
+    dataset = build_dataset(...)
+    sampler = DistributedSampler(dataset)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        sampler=sampler,
+        batch_size=...,
+    )
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=...)
+
+    for epoch in range(...):
+        sampler.set_epoch(epoch)
+
+        for batch in dataloader:
+            loss = model(**batch).loss
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+    if dist.get_rank() == 0:
+        save_model_or_checkpoint(...)
+```
+
+The **SDK side** then only declares *how much hardware* to use — the same `num_nodes` / `resources_per_node` knobs from Example 6-6:
+
+```python
+job_name = client.train(
+    trainer=CustomTrainer(
+        func=my_fsdp_trainer,
+        func_args={...},
+        num_nodes=8,
+        resources_per_node={
+            "cpu": 4,
+            "memory": "64Gi",
+            "nvidia.com/gpu": 1,
+        },
+    ),
+    runtime=torch_runtime,
+)
+```
+
+The dividing line is worth memorizing:
+
+```text
+num_nodes / resources_per_node  → Kubernetes-side resource allocation
+FSDP / DDP / DeepSpeed code      → training-side distribution logic
+```
+
+Inside `CustomTrainer` you can swap in **any** distribution strategy:
+
+```text
+Pure PyTorch FSDP
+PyTorch DDP
+Hugging Face Trainer with FSDP args
+Hugging Face Accelerate
+DeepSpeed
+TRL SFTTrainer with an FSDP/DeepSpeed config
+a fully custom training loop
+```
+
+Whichever you pick, the **main requirements** stay the same:
+
+```text
+the TrainingRuntime image must contain your dependencies
+the runtime must launch the distributed processes correctly
+your function must be serializable
+your code must read the environment variables the runtime provides
+checkpoints must be saved to shared/object storage, not only local disk
+```
+
+> **In short:** **FSDP goes inside the `CustomTrainer` function** (or inside whatever library you call from it). Kubeflow Trainer *starts and coordinates* the distributed job; your trainer code *decides* whether the job uses FSDP, DDP, DeepSpeed, TRL, Accelerate, or something else.
+
+##### Example — Self-contained FSDP `CustomTrainer`
+
+Here is a more complete, **self-contained `CustomTrainer` function** that uses **PyTorch FSDP** for a causal-LM fine-tuning workload. It assumes the Kubeflow Trainer runtime launches the distributed workers and provides the usual env vars (`LOCAL_RANK`, `RANK`, `WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT`):
+
+```python
+def my_fsdp_trainer(**kwargs):
+    """
+    Example CustomTrainer function for Kubeflow Trainer using PyTorch FSDP.
+
+    Expected kwargs:
+      model_name: str
+      dataset_name: str
+      text_column: str
+      output_dir: str
+      epochs: int
+      batch_size: int
+      lr: float
+      max_length: int
+      seed: int
+      min_num_params: int
+    """
+
+    import os
+    from functools import partial
+
+    import torch
+    import torch.distributed as dist
+    from torch.utils.data import DataLoader
+    from torch.utils.data.distributed import DistributedSampler
+
+    from datasets import load_dataset
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        DataCollatorForLanguageModeling,
+        set_seed,
+    )
+
+    from torch.distributed.fsdp import (
+        FullyShardedDataParallel as FSDP,
+        MixedPrecision,
+        StateDictType,
+        FullStateDictConfig,
+    )
+    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+
+    # -----------------------------
+    # 1. Read config
+    # -----------------------------
+    model_name = kwargs["model_name"]
+    dataset_name = kwargs["dataset_name"]
+    text_column = kwargs.get("text_column", "text")
+    output_dir = kwargs.get("output_dir", "/tmp/fsdp-model")
+
+    epochs = int(kwargs.get("epochs", 1))
+    batch_size = int(kwargs.get("batch_size", 1))
+    lr = float(kwargs.get("lr", 2e-5))
+    max_length = int(kwargs.get("max_length", 1024))
+    seed = int(kwargs.get("seed", 42))
+    min_num_params = int(kwargs.get("min_num_params", 1_000_000))
+
+    set_seed(seed)
+
+    # -----------------------------
+    # 2. Initialize distributed
+    # -----------------------------
+    dist.init_process_group(backend="nccl")
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+
+    is_main_process = rank == 0
+
+    # -----------------------------
+    # 3. Load tokenizer and dataset
+    # -----------------------------
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        use_fast=True,
+    )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    raw_dataset = load_dataset(dataset_name)
+
+    train_dataset = raw_dataset["train"]
+
+    def tokenize_fn(examples):
+        return tokenizer(
+            examples[text_column],
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+
+    tokenized_dataset = train_dataset.map(
+        tokenize_fn,
+        batched=True,
+        remove_columns=train_dataset.column_names,
+    )
+
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
+    sampler = DistributedSampler(
+        tokenized_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True,
+        seed=seed,
+    )
+
+    dataloader = DataLoader(
+        tokenized_dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        collate_fn=data_collator,
+        drop_last=True,
+    )
+
+    # -----------------------------
+    # 4. Load model
+    # -----------------------------
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    )
+
+    model.config.use_cache = False
+    model.to(device)
+
+    # -----------------------------
+    # 5. Configure FSDP
+    # -----------------------------
+    auto_wrap_policy = partial(
+        size_based_auto_wrap_policy,
+        min_num_params=min_num_params,
+    )
+
+    mixed_precision = MixedPrecision(
+        param_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        reduce_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        buffer_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    )
+
+    model = FSDP(
+        model,
+        auto_wrap_policy=auto_wrap_policy,
+        mixed_precision=mixed_precision,
+        device_id=device,
+        use_orig_params=True,
+    )
+
+    # Important: create the optimizer AFTER wrapping with FSDP
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=lr,
+    )
+
+    # -----------------------------
+    # 6. Training loop
+    # -----------------------------
+    model.train()
+
+    for epoch in range(epochs):
+        sampler.set_epoch(epoch)
+
+        for step, batch in enumerate(dataloader):
+            batch = {
+                key: value.to(device)
+                for key, value in batch.items()
+                if torch.is_tensor(value)
+            }
+
+            outputs = model(**batch)
+            loss = outputs.loss
+
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+            if is_main_process and step % 10 == 0:
+                print(
+                    f"epoch={epoch} step={step} loss={loss.item():.4f}",
+                    flush=True,
+                )
+
+    # -----------------------------
+    # 7. Save full model checkpoint
+    # -----------------------------
+    dist.barrier()
+
+    save_policy = FullStateDictConfig(
+        offload_to_cpu=True,
+        rank0_only=True,
+    )
+
+    with FSDP.state_dict_type(
+        model,
+        StateDictType.FULL_STATE_DICT,
+        save_policy,
+    ):
+        state_dict = model.state_dict()
+
+    if is_main_process:
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save model weights
+        unwrapped_model = model.module
+        unwrapped_model.save_pretrained(
+            output_dir,
+            state_dict=state_dict,
+        )
+
+        # Save tokenizer
+        tokenizer.save_pretrained(output_dir)
+
+        print(f"Model saved to {output_dir}", flush=True)
+
+    dist.barrier()
+
+    # -----------------------------
+    # 8. Cleanup
+    # -----------------------------
+    dist.destroy_process_group()
+```
+
+The **hardware part stays outside the function**, in the SDK call:
+
+```python
+job_name = client.train(
+    trainer=CustomTrainer(
+        func=my_fsdp_trainer,
+        func_args={
+            "model_name": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "dataset_name": "your_dataset_name",
+            "text_column": "text",
+            "output_dir": "/mnt/checkpoints/my-fsdp-model",
+            "epochs": 1,
+            "batch_size": 1,
+            "lr": 2e-5,
+            "max_length": 2048,
+            "seed": 42,
+            "min_num_params": 1_000_000,
+        },
+        num_nodes=8,
+        resources_per_node={
+            "cpu": 4,
+            "memory": "64Gi",
+            "nvidia.com/gpu": 1,
+        },
+    ),
+    runtime=torch_runtime,
+)
+```
+
+What to notice:
+
+- the **optimizer is created *after* the `FSDP(...)` wrap** — FSDP flattens/sharded parameters, so an optimizer built on the unwrapped parameters would not see the sharded state
+- **`bf16` is preferred when supported**, falling back to `fp16`, for both the model dtype and the FSDP `MixedPrecision` config
+- the **full-checkpoint save** uses `FULL_STATE_DICT` with `offload_to_cpu=True` and `rank0_only=True`, so only **rank 0** gathers and writes the consolidated weights
+- **`dist.barrier()`** before and after saving keeps all ranks in step around the checkpoint
+
+> **Practical note:** `output_dir` should usually be a **mounted PVC, NFS path, S3-compatible mount, or other persistent/shared storage** — *do not* rely on the container's temporary local disk for real training checkpoints, since it disappears with the ephemeral job.
+
+##### Where do `LOCAL_RANK`, `RANK`, `WORLD_SIZE`, … come from?
+
+These variables are **not defined inside your trainer function**. They are **injected by the distributed launcher/runtime** that starts your training processes. In this stack the chain looks roughly like:
+
+```text
+Kubeflow Trainer TrainJob
+  → TrainingRuntime / ClusterTrainingRuntime
+  → JobSet
+  → Kubernetes Jobs/Pods
+  → launcher command (usually torchrun / the PyTorch distributed launcher)
+  → your CustomTrainer function
+```
+
+The environment variables originate in that **launcher layer**.
+
+**The main variables:**
+
+```text
+LOCAL_RANK   = GPU/process index within the current node
+RANK         = global process index across all nodes
+WORLD_SIZE   = total number of distributed processes
+MASTER_ADDR  = address of the leader/master process
+MASTER_PORT  = port used for the distributed rendezvous
+```
+
+For example, with **2 nodes and 4 GPUs per node**:
+
+```text
+WORLD_SIZE = 8
+
+Node 1:
+  process 0: RANK=0, LOCAL_RANK=0
+  process 1: RANK=1, LOCAL_RANK=1
+  process 2: RANK=2, LOCAL_RANK=2
+  process 3: RANK=3, LOCAL_RANK=3
+
+Node 2:
+  process 4: RANK=4, LOCAL_RANK=0
+  process 5: RANK=5, LOCAL_RANK=1
+  process 6: RANK=6, LOCAL_RANK=2
+  process 7: RANK=7, LOCAL_RANK=3
+```
+
+Notice that **`RANK` is global** (unique across the whole job) while **`LOCAL_RANK` restarts at 0 on each node** — which is exactly why `LOCAL_RANK` is the one you pass to `torch.cuda.set_device(...)`.
+
+**Where are they actually set?** For a local/manual run, `torchrun` sets them:
+
+```bash
+torchrun \
+  --nnodes=8 \
+  --nproc-per-node=1 \
+  --node-rank=$NODE_RANK \
+  --master-addr=$MASTER_ADDR \
+  --master-port=$MASTER_PORT \
+  train.py
+```
+
+In **Kubeflow Trainer you normally don't write that command by hand** — the **`TrainingRuntime` template and the Trainer controller** create the Kubernetes Jobs and launch the workers with the correct distributed environment. Your `CustomTrainer` just **reads** the values:
+
+```python
+local_rank = int(os.environ["LOCAL_RANK"])
+rank = int(os.environ["RANK"])
+world_size = int(os.environ["WORLD_SIZE"])
+```
+
+> **In short:** the variables are produced by the **distributed launcher** — directly by `torchrun` for local/manual runs, and *indirectly* by `TrainJob + TrainingRuntime + JobSet + PyTorch runtime launcher` under Kubeflow Trainer. Your trainer function simply **assumes they already exist**.
+
+##### Why Kubernetes / Kubeflow Trainer instead of just `torchrun`?
+
+**PyTorch Distributed (FSDP/DDP) owns the training *algorithm*; Kubernetes and Kubeflow Trainer own *running that algorithm reliably on real infrastructure*.**
+
+You *can* run distributed training with PyTorch alone:
+
+```bash
+torchrun --nnodes=4 --nproc-per-node=8 train.py
+```
+
+…but then **you** have to answer all the infrastructure questions yourself:
+
+```text
+Which machines are available?
+Which machines have free GPUs?
+How do I reserve CPU/RAM/GPU resources?
+How do I start the same job on all nodes?
+How do the nodes discover each other?
+What happens if a pod/process fails?
+Where are logs collected?
+Where are checkpoints stored?
+How do I track job status?
+How do I stop two users from grabbing the same GPUs?
+How do admins control approved images/runtimes?
+```
+
+PyTorch does **not** solve those cluster-management problems — it **assumes the processes are already started correctly and can communicate** with one another.
+
+Kubernetes supplies the **infrastructure layer**:
+
+```text
+scheduling
+resource allocation
+GPU assignment
+pod lifecycle
+networking
+secrets/configs
+volumes
+logs
+restart policies
+namespace isolation
+multi-user cluster sharing
+```
+
+And **Kubeflow Trainer adds a training-specific layer** on top of Kubernetes:
+
+```text
+TrainJob: user-facing training job API
+TrainingRuntime: admin-defined training environment
+JobSet/Kubernetes Jobs: actual distributed execution
+SDK: Python interface for data scientists
+```
+
+So the division of responsibility is:
+
+```text
+PyTorch FSDP/DDP/DeepSpeed:
+  "How should the model be trained across processes/GPUs?"
+
+Kubernetes:
+  "Where do those processes run — with what resources, networking, storage, and lifecycle?"
+
+Kubeflow Trainer:
+  "How do we package distributed training as a clean, repeatable, platform-managed job?"
+```
+
+> For a **small experiment**, PyTorch alone is plenty. On an **enterprise GPU cluster**, Kubernetes + Kubeflow Trainer earn their keep by turning training from a manual, server-by-server operation into a **repeatable, schedulable, observable, multi-user platform workflow**.
 
 #### Other Frameworks
 
