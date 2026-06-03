@@ -143,6 +143,19 @@
      - [NVIDIA KAI Scheduler](#nvidia-kai-scheduler)
      - [Volcano](#volcano)
      - [Making the right choice](#making-the-right-choice)
+   - [Topology-Aware Scheduling](#topology-aware-scheduling)
+     - [Comparing Topology-Aware Scheduling Solutions](#comparing-topology-aware-scheduling-solutions)
+     - [Coscheduling plug-in (PodGroup CRD)](#coscheduling-plug-in-podgroup-crd-1)
+     - [Kueue](#kueue-1)
+     - [NVIDIA KAI Scheduler](#nvidia-kai-scheduler-1)
+     - [Volcano](#volcano-1)
+     - [Making the right choice](#making-the-right-choice-1)
+   - [Quota Management and Multitenancy: GPU as a Service](#quota-management-and-multitenancy-gpu-as-a-service)
+     - [Comparing Quota Management and Multitenancy Solutions](#comparing-quota-management-and-multitenancy-solutions)
+     - [Kueue](#kueue-2)
+     - [NVIDIA KAI Scheduler](#nvidia-kai-scheduler-2)
+     - [Volcano](#volcano-2)
+     - [Making the right choice](#making-the-right-choice-2)
 9. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -9653,7 +9666,7 @@ What to notice:
 
 The **[Kueue](https://kueue.sigs.k8s.io/)** project operates at a **higher abstraction** than scheduler plug-ins, providing **job-level admission control**: it decides whether the cluster should **admit** a workload based on **available quota** and **queue priority**. When Kueue admits a job, it ensures all **required resources exist**, complementing the **low-level gang-scheduling** mechanisms that guarantee atomic scheduling.
 
-Kueue's biggest value is **multitenant resource management**: **hierarchical quotas**, **priority-based queuing**, **resource borrowing** between teams, and **fairness policies** that prevent any single tenant from monopolizing cluster resources. Reach for Kueue when managing **shared training clusters across multiple teams** — it provides the **policy layer** (who gets resources, and when) that enables a more generic **GPU-as-a-Service** use case, covered in "Quota Management and Multitenancy: GPU as a Service".
+Kueue's biggest value is **multitenant resource management**: **hierarchical quotas**, **priority-based queuing**, **resource borrowing** between teams, and **fairness policies** that prevent any single tenant from monopolizing cluster resources. Reach for Kueue when managing **shared training clusters across multiple teams** — it provides the **policy layer** (who gets resources, and when) that enables a more generic **GPU-as-a-Service** use case, covered in [Quota Management and Multitenancy: GPU as a Service](#quota-management-and-multitenancy-gpu-as-a-service).
 
 Kueue also integrates seamlessly with **Kubeflow Trainer**, **RayJob**, and other AI projects, making it a natural choice for training-job orchestration. The end-to-end flow involves **distinct personas**: the **platform administrator** configures global rules in a **`ClusterQueue`** and creates the **`LocalQueue`** the **data scientist** uses to access the assigned quota and provision the workload (see Figure 7-2).
 
@@ -9759,6 +9772,362 @@ A common (and **recommended**) scenario combines **Kueue** for **admission contr
 > While **`PyTorchJob`** is specialized for distributed **training**, LWS mainly targets distributed **inference** — especially **multihost** inference where the LLM is **sharded and run across multiple devices on multiple nodes**. This scenario has the **same gang-scheduling challenge** as a distributed training job.
 
 While the gang-scheduling solutions discussed here ensure distributed training jobs receive **complete** resource allocations, they **don't** address **where** those resources sit within the cluster's **physical infrastructure**. Placing pods across nodes with **different GPU interconnect technologies** can dramatically impact training performance — making **topology awareness** the next critical scheduling consideration.
+
+### Topology-Aware Scheduling
+
+Gang scheduling ensures all pods of a distributed job schedule **together**, but it does **not** guarantee they land on nodes with **optimal hardware topology** for inter-GPU communication.
+
+Where a scheduler **without** gang scheduling might partially deploy a job (wasting expensive GPUs), a scheduler **without topology awareness** risks **spreading workers across different nodes** — forcing inter-GPU traffic onto **unoptimized network paths** that are **orders of magnitude slower**, dramatically increasing job execution time.
+
+Here, **topology-aware** refers to the **physical interconnect architecture** between GPUs:
+
+- GPUs connected **within a single node** via **NVLink** or **PCIe**
+- GPUs connected **across nodes** through high-speed fabrics like **InfiniBand** or **RoCE** (RDMA over Converged Ethernet)
+- GPUs connected through **standard Ethernet**
+
+The **bandwidth and latency** of these interconnects dramatically affect distributed training performance:
+
+| Interconnect | Scope | Approx. bandwidth | Latency |
+| --- | --- | --- | --- |
+| **NVLink** (4.0, H100) | Intra-node GPU↔GPU | up to **900 GB/s** bidirectional | very low |
+| **InfiniBand** | Across nodes | **200–400 GB/s** | sub-microsecond |
+| **Standard Ethernet** | Across nodes | **10–100 GB/s** | higher |
+
+The topic of GPU-to-GPU bandwidth and these technologies was raised with similar concerns for **inference** in [Single-Node Versus Multinode Inference](#single-node-versus-multinode-inference).
+
+> **TIP — what is a "fabric"?**
+>
+> In networking, a **fabric** is the underlying infrastructure providing **interconnected communication paths** between many nodes or devices. Unlike traditional **hierarchical** architectures with discrete layers, a fabric provides a **mesh-like topology** where **multiple paths** exist between endpoints, enabling **high bandwidth and low latency**.
+>
+> For GPU computing, fabrics like **InfiniBand** or **NVSwitch** (a switching fabric for **full-mesh GPU connectivity within a server**) provide the high-speed interconnect that lets GPUs communicate efficiently — **within a single server** (NVSwitch connecting 8–16 GPUs) or **across servers** (InfiniBand connecting hundreds of nodes). The fabric **abstracts** the underlying switching complexity into a unified high-performance communication layer.
+
+Topology-aware scheduling **extends gang scheduling** by factoring **hardware topology constraints** into placement decisions, ensuring distributed jobs land on nodes with the **optimal interconnect** for their communication patterns.
+
+A job needing **eight GPUs** can perform **significantly better** when all eight sit **within a single eight-GPU node** connected via **NVLink**, versus spread across **eight single-GPU nodes** communicating over **Ethernet**. All distributed strategies benefit from good interconnects, but **sensitivity varies**:
+
+- **Data Parallelism** needs efficient **gradient synchronization** across workers.
+- **Tensor Parallelism** and **Fully Sharded Data Parallelism (FSDP)** impose **especially stringent** low-latency, high-bandwidth requirements because they perform **fine-grained communication every forward and backward pass** — tensor parallelism **transfers activations** between GPUs, and FSDP **continuously gathers parameters and reduces gradients**.
+
+These operations scale **with communication latency** and **inversely with bandwidth**, making GPU topology and interconnect quality **critical for performance**, especially for parallelism strategies **beyond simple data parallelism**.
+
+> **COMMUNICATION PATTERNS IN DISTRIBUTED TRAINING**
+>
+> The main parallelism strategies generate **distinct communication patterns** with different network requirements.
+>
+> - **Data Parallelism** replicates the **full model** on each GPU and **synchronizes gradients** after every step. Gradients capture the **direction and magnitude** of the adjustments needed to improve predictions: each iteration, the model predicts, compares to the correct answers, and computes how each **weight** should change to reduce error. Each worker computes gradients on its **data subset**, then **all workers synchronize** (typically by **averaging**) for consistent updates. With billions of parameters, every iteration can move **tens of gigabytes** of gradient data across workers. *(Background on gradient descent: [Google ML Crash Course](https://developers.google.com/machine-learning/crash-course/linear-regression/gradient-descent); infrastructure detail: [PyTorch distributed communication docs](https://pytorch.org/docs/stable/distributed.html).)*
+> - **Tensor Parallelism** splits **individual layers** across GPUs, requiring **activation transfers** during forward and backward passes. **Activations** are the **intermediate results** each layer produces; e.g., a single matrix multiply split across four GPUs passes activation tensors between them — making tensor parallelism **particularly sensitive to latency**.
+> - **FSDP** is a **memory-efficient** alternative to Data Parallelism that **shards** parameters, gradients, and optimizer states across all GPUs instead of replicating the full model. Each GPU **gathers** the needed shards **just-in-time**, computes, then **discards** them to save memory. This frequent **all-gather** and **reduce-scatter** traffic makes FSDP **sensitive to both bandwidth and latency**.
+>
+> For detailed explanations of these strategies, see [Model Parallelism](#model-parallelism).
+
+Because of these performance implications, administrators must **balance topology awareness against full resource utilization**. A job may stay **queued even when total GPU capacity exists** if those GPUs aren't arranged in the **preferred topology** — deliberately avoiding scheduling a job into a **severe bottleneck**.
+
+#### Comparing Topology-Aware Scheduling Solutions
+
+Some gang-scheduling solutions also offer **varying levels of topology awareness** for optimizing GPU placement and interconnect utilization. Understanding each approach helps administrators match technology to their **topology complexity** and **performance** requirements (Table 7-3).
+
+##### Table 7-3. Topology-aware scheduling solutions
+
+| Solution | Topology-awareness capability | Implementation approach | Best suited for |
+| --- | --- | --- | --- |
+| **Coscheduling plug-in** (`PodGroup` CRD) | **None native** | Relies on default node labels and **pod affinity/anti-affinity** for basic placement hints | Simple topologies where manual labeling and affinity rules suffice; should be complemented for complex training topologies |
+| **Kueue** | **`ResourceFlavor`-based** | Defines GPU "flavors" by topology (NVLink, InfiniBand, rack locality) via **node labels and tolerations** | Multitier GPU topologies needing routing to specific interconnect types or failure domains |
+| **NVIDIA KAI Scheduler** | **GPU topology-aware placement** integrated with gang scheduling | Native understanding of **NVLink**, **NVSwitch** fabrics, and **InfiniBand** topology for optimal multi-GPU placement | GPU-heavy clusters where interconnect topology directly drives training performance |
+| **Volcano** | **Built-in topology plug-ins** | Topology-aware plug-ins understand GPU and network topology, **auto-optimizing** placement per job requirements | Complex HPC-style topologies with **heterogeneous** interconnects (NVLink + InfiniBand + Ethernet) |
+
+#### Coscheduling plug-in (PodGroup CRD)
+
+The coscheduling plug-in provides **no native topology awareness** beyond standard Kubernetes primitives. Administrators can **partially work around** this by manually **labeling nodes** with topology info (such as `rack-id`, `nvlink-enabled`, or `infiniband-connected`) and configuring **pod affinity/anti-affinity** in workload specs to influence placement.
+
+Note that Kubernetes affinity/anti-affinity is **unrelated** to the coscheduling plug-in and is an **entirely manual** process. It works for **simple** topologies with few distinct interconnect types, but becomes **unwieldy** as complexity grows, demanding **extensive per-job configuration**.
+
+#### Kueue
+
+Kueue handles topology awareness through its **`ResourceFlavor`** mechanism, letting administrators define multiple **"flavors"** of GPU resources differentiated by **topology characteristics**. Flavors are based on **node labels** that the administrator configures — or that tools like **[GPU Feature Discovery](#gpu-feature-discovery)** automate. A `ResourceFlavor` selects nodes via **`nodeLabels`** (e.g., `gpu-interconnect: nvlink`, `network-fabric: infiniband`, `rack: rack-1`) and **tolerations**, creating **logical resource pools** that workloads request through queue configuration. When a `ClusterQueue` references multiple flavors with different topology, Kueue's **admission controller** enforces topology constraints by admitting a workload **only when matching resources are available**.
+
+This delivers **sophisticated topology awareness without application-level changes**: workloads just specify a **queue name**, and Kueue handles topology-aware placement through its integration with the underlying scheduler.
+
+First, define the **`ResourceFlavor`s** (Example 7-6).
+
+##### Example 7-6. Kueue ResourceFlavor definition
+
+```yaml
+# ResourceFlavor for premium GPU nodes with NVLink and InfiniBand
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: gpu-nvlink-infiniband
+spec:
+  nodeLabels:
+    # Select nodes where GPUs are connected via NVLink
+    gpu-interconnect: nvlink
+    # Select nodes where inter-node communication happens via InfiniBand
+    network-fabric: infiniband
+    gpu-type: nvidia-h100
+  ...
+---
+# ResourceFlavor for standard GPU nodes with Ethernet
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: gpu-standard-ethernet
+spec:
+  nodeLabels:
+    # Nodes that use PCIe for GPU interconnect and Ethernet for networking
+    gpu-interconnect: pcie
+    network-fabric: ethernet
+    gpu-type: nvidia-h100
+  ...
+```
+
+After the flavors are defined, use them to configure queue resource requirements (Example 7-7).
+
+##### Example 7-7. Kueue ClusterQueue and LocalQueue creation
+
+```yaml
+# ClusterQueue with topology-aware resource flavors
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: topology-aware-cluster-queue
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+    flavors:
+    # The premium flavor listed first so Kueue tries this flavor first
+    - name: gpu-nvlink-infiniband
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 16
+      ...
+    # When premium quota is exhausted, this second flavor is used
+    - name: gpu-standard-ethernet
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 32
+      ...
+  flavorFungibility:
+    # This option allows fallback to the next flavor when the first is exhausted
+    whenCanBorrow: TryNextFlavor
+    whenCanPreempt: Preempt
+---
+# LocalQueue for team access
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: team-queue
+spec:
+  clusterQueue: topology-aware-cluster-queue
+```
+
+Finally, run the job against a local queue (Example 7-8).
+
+##### Example 7-8. PyTorchJob creation integrated with Kueue
+
+```yaml
+# PyTorchJob that will use topology-aware flavor selection
+# (for TrainJob, apply this label to the TrainJob metadata)
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: llm-training
+  labels:
+    # This label triggers the Kueue admission controller and
+    # binds the job to a specific queue
+    kueue.x-k8s.io/queue-name: team-queue
+spec:
+  ...
+```
+
+#### NVIDIA KAI Scheduler
+
+KAI Scheduler provides the **most sophisticated** GPU topology awareness, with native understanding of NVIDIA interconnects — **NVLink**, **NVSwitch**, **NVLink bridges** — and their relationship to network fabrics like **InfiniBand**. It integrates tightly with the **[NVIDIA GPU Operator](#nvidia-gpu-operator)** to access detailed GPU information and make topology-aware decisions, **limiting the need for manual labeling**.
+
+The scheduler **analyzes GPU topology** when placing jobs, **auto-co-locating** workers on nodes with optimal network configuration — e.g., preferring to place an eight-GPU job on a **single node** with **NVSwitch** connectivity rather than spreading across nodes over **InfiniBand**. Where **Kueue** manages topology at the **admission layer** via `ResourceFlavor`s (deciding which hardware **tier** to use), **KAI Scheduler** integrates topology optimization **directly into scheduling decisions** alongside gang scheduling and fair-share — ensuring topology-optimized placements **don't violate quota policies** or create fragmentation.
+
+This deep, NVIDIA-specific integration makes KAI Scheduler the natural choice for **large-scale NVIDIA GPU clusters** where training performance depends critically on **interconnect selection** — especially combined with NVIDIA features like **Multi-Instance GPU (MIG)** partitioning and **fractional GPU allocation** (see [GPU Sharing and Sub-GPU Allocation](#gpu-sharing-and-sub-gpu-allocation)).
+
+#### Volcano
+
+Volcano includes **topology-aware scheduling plug-ins** that optimize placement based on hardware topology from **node labels**. Like Kueue's `ResourceFlavor` approach, administrators must **label nodes** with topology characteristics (e.g., `gpu-interconnect: nvlink`, `network-fabric: infiniband`, `rack-id: rack-1`), which Volcano's topology plug-ins consume to **score nodes higher** when they provide optimal interconnect bandwidth for the job's GPU needs.
+
+But where **Kueue** uses `ResourceFlavor`s as **admission-time abstractions** (delegating actual placement to the underlying scheduler), **Volcano** integrates topology scoring **directly into its scheduling decisions**, automatically co-locating workers on nodes **within the same rack** or with **direct NVLink** connectivity — **without requiring explicit affinity rules**.
+
+#### Making the right choice
+
+For organizations requiring **advanced** topology awareness, **layering** solutions creates comprehensive topology-aware gang scheduling. A common architecture combines **Kueue's admission control** with a topology-aware scheduler like **Volcano** or **KAI Scheduler**: Kueue manages **job-level admission** through `ResourceFlavor` topology selection, while the underlying scheduler handles **detailed topology-optimized pod placement**. This **separation of concerns** lets administrators enforce **topology policies at the admission layer** (jobs requesting premium interconnects must have appropriate quotas) while **delegating placement optimization** to specialized schedulers with deep topology understanding.
+
+Administrators configure topology by **labeling nodes** accordingly (rack ID, network-fabric type, GPU-interconnect capabilities) and creating topology-aware configurations in their chosen scheduler. Different GPU vendors provide tools to simplify this labeling; the **NVIDIA** suite in particular is advanced and comprehensive.
+
+While the schedulers above focus on topology awareness for placing pods **across nodes** based on GPU interconnect, topology also matters at the **individual-node level**, where **CPU and device locality** affect performance. Kubernetes addresses this through the **Topology Manager** component (see sidebar).
+
+> **KUBERNETES TOPOLOGY MANAGER**
+>
+> The **[Topology Manager](https://kubernetes.io/docs/tasks/administer-cluster/topology-manager/)** is a **Kubelet component** running on every node that **complements scheduler-level topology policies** by coordinating resource allocation for **optimal hardware locality** within an individual pod.
+>
+> A key concern for optimal hardware usage on modern **multisocket** servers is the **Non-Uniform Memory Access (NUMA)** architecture: each CPU socket has its **own local memory**, and reaching memory attached to a **different socket** incurs **higher latency** — critical for GPU-intensive workloads, where **cross-NUMA** access can significantly degrade performance.
+>
+> Before Topology Manager, the **CPU Manager** and **Device Manager** made allocation decisions **independently**, potentially assigning CPUs from one NUMA node and GPUs from another to the same pod, forcing **cross-NUMA memory traffic** (Figure 7-3).
+>
+> Topology Manager fixes this by enabling **CPU and device (including GPU) topology awareness** per pod, ensuring the CPUs and GPUs allocated to a pod are **NUMA-local** to minimize memory-access latency.
+>
+> It supports several **policies**:
+>
+> - **`best-effort`** — attempts NUMA alignment without enforcing it
+> - **`restricted`** — admits a pod only when resources can be properly aligned
+> - **`single-numa-node`** — requires **all** pod resources to come from a **single NUMA node**; the **strictest** policy, guaranteeing optimal locality but potentially **reducing scheduling flexibility** in resource-constrained clusters
+>
+> ![NUMA architecture within a single multisocket server](<assets/NUMA architecture within a single multisocket server.png>)
+>
+> **Figure 7-3. NUMA architecture within a single multisocket server: local versus cross-NUMA memory access latency**
+
+While topology-aware scheduling optimizes **individual job placement** for performance, it doesn't address the fundamental challenge of **fairly allocating scarce GPU resources** across **multiple competing teams** in a shared cluster.
+
+### Quota Management and Multitenancy: GPU as a Service
+
+Gang scheduling ensures all pods of a distributed job schedule together, and topology-aware scheduling optimizes their **placement** on hardware with optimal interconnects — but these mechanisms address only **how individual jobs are executed**. They don't address **who gets access** to scarce GPUs when multiple teams compete for capacity.
+
+Operating a **shared GPU cluster** as a **multitenant platform** requires **sophisticated quota management** to ensure **fair allocation** across teams while **maximizing overall GPU utilization** — something standard Kubernetes **`ResourceQuota`s cannot adequately handle** for AI/ML workloads.
+
+Traditional Kubernetes quotas operate at the **namespace level** with **hard limits** that block workloads once exhausted. For **fixed, scarce** resources this leads to **poor utilization** in practice: one team may have **unused quota** (its data scientists idle) while another team's jobs **queue indefinitely** despite urgent training deadlines — expensive GPUs **sitting unused** because rigid quota boundaries prevent dynamic sharing.
+
+**GPU as a Service (GPUaaS)** architectures address this with **hierarchical quota management** featuring **borrowing**, **preemption**, and **fairness** policies: teams can **burst beyond** their guaranteed allocations when cluster capacity is available, while **no team can monopolize** resources when demand exceeds supply. The main goal is to **maximize GPU usage opportunistically** while still **guaranteeing each team's designed quota on demand**.
+
+#### Comparing Quota Management and Multitenancy Solutions
+
+Several scheduling solutions provide GPU quota management, each with different approaches to **allocation**, **fairness**, and **multitenancy**. Understanding how each handles **quota enforcement** and **resource borrowing** helps administrators select technologies matching their organizational requirements for **fair GPU sharing** (Table 7-4).
+
+##### Table 7-4. Quota management and multitenancy solutions
+
+| Solution | Quota-management capability | Multitenancy approach | Implementation approach | Best suited for |
+| --- | --- | --- | --- | --- |
+| **Kueue** | **Hierarchical quota** with **borrowing** and **preemption** | Namespace-scoped **`LocalQueue`s** mapped to cluster-wide **`ClusterQueue`s**; **cohort**-based sharing across teams; **priority classes** | Admission controller with `ClusterQueue`/`LocalQueue` model, cohort borrowing, priority-based preemption | Multitenant environments needing flexible quota sharing and borrowing **without scheduler replacement** |
+| **NVIDIA KAI Scheduler** | **Project-based** GPU quotas with **fairness** algorithms | **`Project` CRD** isolates teams with dedicated quotas; hierarchical queues for department/team org; fair-share prevents monopolization | Integrated scheduler with `Project` CRD, fair-share scheduling, GPU-specific optimizations | GPU-heavy clusters needing tight coupling of quota and **GPU-aware** scheduling (fractional GPUs, MIG) |
+| **Volcano** | **Queue-based** quotas with **proportional** allocation | Multiple queues with independent limits, queue priorities, namespace→queue mapping for isolation | `Queue` CRD with limits, **weights** for proportional sharing, reclaim policies for preemption | Batch workloads needing **integrated** queue management + scheduling in one component |
+
+#### Kueue
+
+Kueue offers a comprehensive quota system built specifically for **batch workloads** like training jobs, with a **two-tier** architecture separating **cluster-wide resource governance** from **team-level queue management**.
+
+At the **cluster level**, **`ClusterQueue`s** define **resource pools** with quota limits (CPU, memory, GPUs) plus policies for how resources are allocated under contention. Administrators create `ClusterQueue`s representing different **tiers** — e.g., a **`gpu-training`** queue with **32 H100s** for production, a **`gpu-development`** queue with **8 GPUs** for experimentation, and a **`gpu-spot`** queue using **spot instances** for cost-sensitive jobs. Each specifies **nominal quotas** (guaranteed resources) and **borrowing limits** (max temporarily borrowable from idle queues), enabling **flexible capacity sharing** that improves utilization **without sacrificing fairness guarantees**. **`LocalQueue`s** provide the **team-facing** interface, mapping to specific `ClusterQueue`s for **namespace-scoped** submission with automatic quota enforcement.
+
+The **cohort** feature implements **resource borrowing** by grouping `ClusterQueue`s into sophisticated multitenant sharing policies. Each `ClusterQueue` contributes its reserved quota to the **cohort total**, so total capacity is the **sum** of all members. When **Team A** has pending work but has exhausted its **10-GPU** quota, Kueue lets it **borrow idle capacity** from Team B's and Team C's quotas, **up to the cohort limit** — then **immediately preempts** those borrowed GPUs when B or C submit new jobs needing their guaranteed quota. This **dynamic sharing** dramatically improves utilization versus hard boundaries: GPUs are **never idle while jobs are pending**, yet each team can **always access its nominal quota**. Kueue also supports **hierarchical queues** that model complex **organizational structure** (departments, project teams, resource pools).
+
+Example 7-9 combines all of these features: **cohort**, **nominal quota**, **borrowing limits**, and **priority classes**.
+
+##### Example 7-9. Kueue quota management with cohorts and priority classes
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: team-a-queue
+spec:
+  cohort: shared-gpu-cohort
+  resourceGroups:
+  - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+    flavors:
+    # Using a built-in ResourceFlavor that matches all nodes.
+    - name: default-flavor
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 10
+        borrowingLimit: 22
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    reclaimWithinCohort: Any
+    withinClusterQueue: LowerPriority
+---
+# High-priority class for production workloads
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: WorkloadPriorityClass
+metadata:
+  name: production-priority
+spec:
+  # Specifying a high value makes this class higher priority
+  value: 10000
+  description: "High priority for production training jobs"
+---
+# Production PyTorchJob from Team A (high priority)
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: production-llm-training
+  namespace: team-a
+  labels:
+    # The definition of the LocalQueue is skipped here for brevity
+    kueue.x-k8s.io/queue-name: team-a-training-queue
+    kueue.x-k8s.io/priority-class: production-priority
+  ...
+```
+
+What to notice:
+
+- **`cohort: shared-gpu-cohort`** — multiple `ClusterQueue`s in the **same cohort** enable **cross-team borrowing**; total capacity is the **sum** of the member quotas.
+- **`queueingStrategy: BestEffortFIFO`** — processes workloads **first-in, first-out** while making a best effort to pack resources efficiently; when quota is available, jobs are admitted in **submission order**.
+- **`reclaimWithinCohort: Any`** — lets **any** team **preempt borrowed** resources when it needs its nominal quota back.
+- **`withinClusterQueue: LowerPriority`** — lets **higher-priority** workloads in the **same** `ClusterQueue` preempt **lower-priority** ones when quota is exhausted.
+- **`kueue.x-k8s.io/priority-class: production-priority`** — this production job is admitted **before** experimental jobs and can **preempt** them if necessary.
+
+> **TIP — Kueue fair-share**
+>
+> Kueue's **fair-share** algorithm considers each team's **recent consumption history** and **current queue depth**, prioritizing teams that have **consumed fewer resources recently** or **waited longer** for admission. Its queuing strategy **balances fairness** (everyone gets access) **with efficiency** (preferring larger jobs that can use resources effectively).
+>
+> **Priority classes** let urgent production jobs **preempt** lower-priority experiments, enabling **SLA-style** preferential access during peak demand while still sharing capacity at other times.
+
+#### NVIDIA KAI Scheduler
+
+KAI Scheduler implements **GPU-specific quota management** with **hierarchical queue structures** designed for large-scale GPU clusters, providing **fair-share scheduling** across teams with **GPU topology awareness** integrated into quota-allocation decisions.
+
+Unlike Kueue (an **admission-controller layer** that works with any underlying scheduler), KAI Scheduler is a **complete scheduler replacement** handling **both quota enforcement and pod placement** in a single component. This enables **tighter integration** between quota policies and GPU-specific optimizations like **fractional GPU allocation** and **Multi-Instance GPU (MIG)** support.
+
+The trade-off: adopting it requires **replacing the default scheduler entirely**. Kueue, by contrast, can run **alongside** `kube-scheduler` or be **layered on top of** specialized schedulers like KAI Scheduler itself — creating architectures where **Kueue manages quota and admission control** while **KAI Scheduler optimizes GPU placement**.
+
+#### Volcano
+
+Volcano implements its **own queue abstraction** with quota management through **`Queue` CRDs** that define resource limits and priorities — an alternative to Kueue's `ClusterQueue`/`LocalQueue` model. Volcano queues include **reclaim policies** (preempting lower-priority jobs when higher-priority workloads arrive) and **proportional allocation** that divides cluster capacity across queues by **configured weights**.
+
+Unlike Kueue (which **separates** admission control from scheduling mechanics and works as a layer **above** the scheduler), Volcano implements **both** queue management and gang scheduling in a **single** scheduler component — a **monolithic** approach that **requires replacing `kube-scheduler` entirely** but offers **tighter integration** between quota policies and scheduling decisions.
+
+#### Making the right choice
+
+The right quota approach depends on **organizational requirements** and **existing infrastructure**:
+
+- **Kueue** excels in **cloud-native** environments that prefer to **keep the default Kubernetes scheduler**, providing **battle-tested**, **GPU-vendor-agnostic** admission control. It integrates seamlessly with **Kubeflow Trainer** and other Kubernetes-native tooling, with a clean separation between **policy (quota management)** and **mechanism (scheduling)**.
+- **NVIDIA KAI Scheduler** suits **GPU-heavy** deployments where GPU-specific optimizations justify **scheduler replacement** — particularly at **thousands of GPUs**, where **fractional allocation** and **topology-aware placement** provide measurable efficiency gains.
+- **Volcano** offers a **complete** scheduling solution for organizations willing to **replace `kube-scheduler`** in exchange for **integrated** gang scheduling and quota management in a single component.
+
+Administrators should weigh **layering Kueue over their chosen scheduler** (maintaining flexibility) against **adopting an integrated scheduler** with built-in quota management (reducing architectural complexity) — remembering that Kueue can **complement** GPU-aware schedulers like KAI Scheduler by handling **admission control** while the scheduler optimizes **GPU placement**.
+
+Understanding how Kueue's **`ResourceFlavor` selection** interacts with **priority classes** is essential for configuring effective quota policies (see sidebar).
+
+> **KUEUE PRIORITY CLASSES AND `ResourceFlavor`**
+>
+> Kueue evaluates `ResourceFlavor`s **in the order they appear** in the `ClusterQueue`'s `flavors` list:
+>
+> 1. **First attempt** — try the **first** flavor listed (e.g., `gpu-nvlink-infiniband`). If sufficient GPUs exist in **nominal quota**, admit the workload to it.
+> 2. **Automatic fallback** — if the first flavor's quota is exhausted, Kueue automatically **tries the next** flavor (e.g., `gpu-standard-ethernet`).
+> 3. **Borrowing behavior** — **`flavorFungibility.whenCanBorrow`** controls what happens when **borrowing from the cohort** is possible but nominal quota is exhausted:
+>     - **`MayStopSearch`** (default) — if borrowing is feasible in the current flavor, **use it** (stop searching for other flavors).
+>     - **`TryNextFlavor`** — even if borrowing is possible, **keep evaluating** the next flavor to **prefer nominal quota over borrowed** resources.
+> 4. **Node-selector injection** — once a flavor is chosen, Kueue **injects its `nodeLabels` as node selectors**, ensuring pods schedule only on **topology-appropriate** nodes.
+>
+> Flavor **order = preference**: premium topology first, standard topology as fallback.
+>
+> **How does this relate to priority classes?** The **`WorkloadPriorityClass`** CRD serves a **different** purpose than flavor selection:
+>
+> - **`ResourceFlavor` selection** — determines **which topology/hardware** a workload gets (controlled by **flavor order** and availability).
+> - **Priority classes** — determine **which workload is admitted first** when several are pending (controlled by the **priority value**).
+>
+> When multiple training jobs queue for resources, Kueue uses priority to decide **admission order**:
+>
+> - **Higher-priority** workloads are **admitted first** when quota becomes available.
+> - **Preemption** — high-priority workloads can **evict** running low-priority ones to reclaim quota.
+> - **Same priority** — **FIFO** ordering within the level.
+> - **Fair sharing** — prevents monopolization by ordering on **historical usage**, favoring queues that have consumed fewer resources, so **underutilized teams still make progress** even in busy clusters.
+
+With **gang scheduling** ensuring complete allocations, **topology-aware** placement optimizing GPU interconnects, and **quota management** enabling fair multitenant access, the **scheduling infrastructure is complete**. Yet even optimally scheduled distributed training jobs hit a critical performance bottleneck: **network communication between workers during gradient synchronization**.
 
 [Back to Contents](#contents)
 
