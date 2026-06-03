@@ -167,6 +167,15 @@
      - [Making the right choice](#making-the-right-choice-3)
      - [Using Secondary Network Interfaces in Kubernetes](#using-secondary-network-interfaces-in-kubernetes)
      - [Bridging HPC and Kubernetes: Slurm and Slinky](#bridging-hpc-and-kubernetes-slurm-and-slinky)
+   - [Storage for Training](#storage-for-training)
+   - [Training Job Security](#training-job-security)
+     - [Security Guidelines for Ray](#security-guidelines-for-ray)
+     - [Security Guidelines for PyTorch](#security-guidelines-for-pytorch)
+   - [Observability of Training Jobs](#observability-of-training-jobs)
+     - [Metrics Collection for Distributed Training](#metrics-collection-for-distributed-training)
+     - [Logging Across Distributed Workers](#logging-across-distributed-workers)
+     - [Tracing Distributed Training Operations](#tracing-distributed-training-operations)
+   - [Lessons Learned](#lessons-learned-1)
 9. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -9597,6 +9606,8 @@ The primary risk of descheduling is **job disruption**: evicting pods from long-
 > - **Never** enable **both** `HighNodeUtilization` and `LowNodeUtilization` simultaneously — they have **opposing goals** and will conflict.
 > - **Verify via monitoring**: if the **eviction count rises continuously** without node-consolidation progress, an **eviction loop** likely exists and the policy needs correcting.
 
+[Back to Contents](#contents)
+
 ### Gang Scheduling
 
 The scheduler optimizations above (bin packing for cost efficiency, descheduler for dynamic re-optimization) address **how individual pods are placed and maintained** on nodes. Distributed training jobs introduce a fundamentally different challenge: **scheduling all components of a multi-pod job together as an atomic unit**. The default **per-pod** model works efficiently for containerized apps and microservices, but it **breaks down** for distributed training, where the scheduler has **no awareness** that multiple pods belong to a single coordinated workload. Each pod schedules **independently**, so the scheduler may successfully place **seven of eight** workers — tying up GPU resources while the job **deadlocks** waiting for the missing worker that cannot be scheduled due to resource exhaustion. This is **resource fragmentation**.
@@ -9783,6 +9794,8 @@ A common (and **recommended**) scenario combines **Kueue** for **admission contr
 > While **`PyTorchJob`** is specialized for distributed **training**, LWS mainly targets distributed **inference** — especially **multihost** inference where the LLM is **sharded and run across multiple devices on multiple nodes**. This scenario has the **same gang-scheduling challenge** as a distributed training job.
 
 While the gang-scheduling solutions discussed here ensure distributed training jobs receive **complete** resource allocations, they **don't** address **where** those resources sit within the cluster's **physical infrastructure**. Placing pods across nodes with **different GPU interconnect technologies** can dramatically impact training performance — making **topology awareness** the next critical scheduling consideration.
+
+[Back to Contents](#contents)
 
 ### Topology-Aware Scheduling
 
@@ -9995,6 +10008,8 @@ While the schedulers above focus on topology awareness for placing pods **across
 
 While topology-aware scheduling optimizes **individual job placement** for performance, it doesn't address the fundamental challenge of **fairly allocating scarce GPU resources** across **multiple competing teams** in a shared cluster.
 
+[Back to Contents](#contents)
+
 ### Quota Management and Multitenancy: GPU as a Service
 
 Gang scheduling ensures all pods of a distributed job schedule together, and topology-aware scheduling optimizes their **placement** on hardware with optimal interconnects — but these mechanisms address only **how individual jobs are executed**. They don't address **who gets access** to scarce GPUs when multiple teams compete for capacity.
@@ -10139,6 +10154,8 @@ Understanding how Kueue's **`ResourceFlavor` selection** interacts with **priori
 > - **Fair sharing** — prevents monopolization by ordering on **historical usage**, favoring queues that have consumed fewer resources, so **underutilized teams still make progress** even in busy clusters.
 
 With **gang scheduling** ensuring complete allocations, **topology-aware** placement optimizing GPU interconnects, and **quota management** enabling fair multitenant access, the **scheduling infrastructure is complete**. Yet even optimally scheduled distributed training jobs hit a critical performance bottleneck: **network communication between workers during gradient synchronization**.
+
+[Back to Contents](#contents)
 
 ### Network Optimization for Distributed Training
 
@@ -10400,6 +10417,246 @@ Slurm **dominates HPC worldwide**, running the largest supercomputing centers wi
 Organizations with **existing HPC infrastructure** or needs for Slurm's advanced features (complex GPU topology requirements, proven fair-share policies, detailed accounting) may find **Slinky a pragmatic migration path** — while cloud-native teams should recognize that **Kubernetes is actively adopting** these HPC patterns through **gang-scheduling plug-ins**, **GPU device plug-ins**, and **topology-aware scheduling** proposals. The **convergence of HPC and Kubernetes** marks the evolution of AI training infrastructure, each ecosystem learning from the other's strengths.
 
 With **scheduling**, **topology awareness**, **quota management**, and **high-performance networking** in place, the training platform still needs **reliable storage** to support the full job lifecycle — particularly **checkpoint management** and **recovery from preemption**.
+
+[Back to Contents](#contents)
+
+### Storage for Training
+
+Reliable **persistent storage** is critical for distributed training, especially in **GPU-as-a-Service** environments where quota management and preemption enable dynamic resource sharing. When you implement **resource borrowing** and **priority-based preemption** (see [Quota Management and Multitenancy: GPU as a Service](#quota-management-and-multitenancy-gpu-as-a-service)), lower-priority jobs may be **paused mid-execution** to reclaim GPUs for higher-priority work, then **resumed later** when resources free up. Without robust **checkpoint storage**, a preempted job would **lose all training progress**, forcing expensive recomputation.
+
+Administrators must therefore provision storage that supports **frequent checkpoint operations**, enables **recovery from preemption or failure**, and provides **shared access** to training datasets across multiple concurrent jobs.
+
+Several storage technologies fit distributed training, each with distinct trade-offs in **performance**, **scalability**, and **operational complexity** (Table 7-6).
+
+##### Table 7-6. Storage solutions for distributed training
+
+| Solution | Access modes | Performance | Operational complexity | Best suited for |
+| --- | --- | --- | --- | --- |
+| **Network File System (NFS)** | RWX, RWO, ROX | Good sequential read; **degrades** under high concurrency or random I/O | **Low** (integrates with existing enterprise NFS) | Shared datasets and checkpoints in on-prem deployments with existing NFS |
+| **Distributed file systems** (Ceph/CephFS, GlusterFS, OpenShift Data Foundation) | RWX, RWO, ROX | **High throughput**, scales horizontally, resilient to node failure | **High** (dedicated storage nodes, capacity planning, distributed-systems expertise) | Large-scale platforms with dedicated infra teams running many concurrent jobs |
+| **Cloud managed file storage** (Amazon EFS, Google Filestore, Azure Files) | RWX, RWO, ROX | Consistent performance, automatic scaling | **Low** (fully managed, no infrastructure to operate) | Cloud-native platforms prioritizing **simplicity over cost**; teams without storage expertise |
+| **Object storage** (S3, GCS, MinIO, Ceph RGW) | **API-based** (no POSIX mount) | **Highest scalability**, parallelized downloads across workers, no shared-storage bottleneck | **Medium** (S3-API integration, no filesystem mount) | Large datasets (**TB+**) with streaming loaders (PyTorch `DataLoader`, TensorFlow `tf.data`); cost-sensitive workloads |
+| **Local NVMe** | RWO (node-local) | **Microsecond** latency, multi-GB/s throughput | **High** (data staging; copy checkpoints to durable storage; **lost on pod rescheduling**) | Data staging for maximum I/O; jobs tolerating restaging with robust remote-checkpoint strategies |
+
+A production storage architecture usually **combines** several solutions:
+
+- **object storage** for large immutable datasets with streaming APIs
+- **distributed filesystems or cloud managed storage** for shared checkpoints needing **`ReadWriteMany` (RWX)** access across distributed workers
+- optionally, **local NVMe** for staging datasets to maximize GPU utilization
+
+The **critical requirement** is **RWX-capable storage** for checkpoints and model artifacts, so **multiple worker pods on different nodes** can access shared state during distributed training and the job can **resume after preemption**.
+
+When sizing storage, account not just for the **final model artifacts** but for **all intermediate checkpoints** generated during training. A practical rule of thumb:
+
+```text
+storage ≈ 2 × base_model_size + checkpoint_overhead
+```
+
+covering the base model, intermediate checkpoints (frameworks typically save **every N steps**), and final outputs. For example, training **Llama 3.1 8B with LoRA adapters** and frequent checkpointing typically needs **~100 GB**, while **full fine-tuning of a 70B** model may need **500 GB or more**, depending on checkpoint frequency and retention policies.
+
+With storage provisioned for checkpointing and recovery, administrators must also address **security** concerns that arise from the **performance-focused design** of distributed training frameworks — particularly in **multitenant** environments where teams share the same GPU cluster.
+
+[Back to Contents](#contents)
+
+### Training Job Security
+
+Distributed frameworks like **Ray** and **PyTorch Distributed** introduce security challenges that extend **beyond** traditional Kubernetes workload security. The root cause is a **design decision that prioritizes performance over built-in isolation**.
+
+These frameworks assume they run within a **trusted network** where participants are **already authenticated**, rather than using application-level security mechanisms. That suited the original **research / single-tenant** use cases but **does not match** a production **multitenant** Kubernetes cluster.
+
+Both Ray and PyTorch provide **limited built-in authentication/authorization**, especially for **communication between distributed components**. Any process that can open a network connection to a Ray cluster or PyTorch job can **execute arbitrary code with full application privileges**. By default they send messages **unencrypted**, accept connections from **any network source**, and run workloads **without security checks** — treating **network reachability as implicit authorization**.
+
+Default configurations also **lack communication encryption**, and the **`cloudpickle`-based serialization** mechanism (well known to be insecure, as it can **execute arbitrary Python code**) further widens the attack surface.
+
+Administrators must recognize these as **fundamental design choices** favoring training performance over isolation. The frameworks explicitly document that distributed features are *"intended for internal communication only"* and *"not built for use in untrusted environments."* Retrofitting strong security boundaries would impose **performance penalties** that negate their core value proposition.
+
+So securing distributed training must rely on **infrastructure-level controls**:
+
+- **Network isolation** via Kubernetes **`NetworkPolicy`** becomes the **primary** mechanism, creating **trusted enclaves** where only authorized pods within the same training job can communicate.
+- **Optional encryption** can be layered — **TLS** for Ray, or **encrypted CNI plug-ins** for PyTorch — providing **defense in depth** while accepting performance overhead.
+
+Treat distributed training frameworks as **inherently insecure** components that become secure **only when wrapped** in properly designed infrastructure controls, with security boundaries enforced at the **network and namespace** level.
+
+#### Security Guidelines for Ray
+
+**Ray** is a distributed computing framework commonly used for **reinforcement learning**, **hyperparameter tuning**, and distributed training. Its security model reflects a **performance-first** philosophy: it expects a **trusted network** with **trusted code**, providing **no built-in access controls or code isolation**. This applies across the whole ecosystem — any client with network access to Ray services can execute arbitrary code via **Ray jobs**, the **Ray Client API**, and **Dashboard REST endpoints**.
+
+The first action is to enable **TLS authentication for gRPC channels**, following Ray's dedicated guide (configure TLS as **`rayStartParams`** in the `RayCluster` custom resource, with TLS certificates mounted as **Kubernetes secrets**). This shrinks the attack surface but **does not replace** network isolation.
+
+Deploy each Ray cluster in a **dedicated namespace** and enforce **infrastructure-level controls**. The primary mechanism is **`NetworkPolicy`**: **deny all ingress by default** to head and worker pods, then explicitly allow only the necessary communication:
+
+- **worker→head** on Ray's internal ports (**6379** Global Control Service/GCS, **8265** dashboard, **10001** Ray client server)
+- **pod-to-pod within the same Ray cluster** for object-store access
+- **carefully controlled access** to the Ray Client/Jobs API through **authentication proxies**
+
+See Example 7-13.
+
+##### Example 7-13. NetworkPolicy configuration for Ray cluster isolation
+
+```yaml
+# Deny all ingress traffic by default for the Ray namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ray-default-deny
+  namespace: ray-cluster-team-a
+spec:
+  # Empty selector applies to all pods in the namespace, denying all ingress
+  podSelector: {}
+  policyTypes:
+  - Ingress
+---
+# Allow worker-to-head communication on Ray internal ports
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ray-worker-to-head
+  namespace: ray-cluster-team-a
+spec:
+  podSelector:
+    matchLabels:
+      # Select Ray head node pods to receive traffic from workers
+      ray.io/node-type: head
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          # Allow ingress only from pods with the same cluster label,
+          # ensuring isolation between Ray clusters
+          ray.io/cluster: ray-cluster-team-a
+    ports:
+    # Port 6379 for Ray GCS server
+    - protocol: TCP
+      port: 6379
+    # Port 8265 for Ray dashboard
+    - protocol: TCP
+      port: 8265
+    # Port 10001 for Ray client server
+    - protocol: TCP
+      port: 10001
+---
+# Allow pod-to-pod communication within the same Ray cluster
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ray-intra-cluster
+  namespace: ray-cluster-team-a
+spec:
+  podSelector:
+    matchLabels:
+      ray.io/cluster: ray-cluster-team-a
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          # Object store requires cluster-internal access
+          ray.io/cluster: ray-cluster-team-a
+---
+# Allow controlled access to the Ray Client/Jobs API through an auth proxy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ray-api-access
+  namespace: ray-cluster-team-a
+spec:
+  podSelector:
+    matchLabels:
+      ray.io/node-type: head
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    # Only allow access from the authentication proxy in a separate namespace
+    - namespaceSelector:
+        matchLabels:
+          name: auth-proxy-namespace
+      podSelector:
+        matchLabels:
+          app: oauth2-proxy
+    ports:
+    # Dashboard access through the authentication proxy only
+    - protocol: TCP
+      port: 8265
+```
+
+What to notice:
+
+- **`ray-default-deny`** — an empty `podSelector` denies **all ingress** in the namespace by default.
+- **`ray-worker-to-head`** — allows ingress to **head** pods only from pods carrying the **same `ray.io/cluster` label**, on Ray's internal ports (6379 / 8265 / 10001).
+- **`ray-intra-cluster`** — permits **cluster-internal** pod-to-pod traffic required by the **object store**.
+- **`ray-api-access`** — exposes the dashboard (8265) **only** through an **`oauth2-proxy`** living in a separate auth namespace.
+
+#### Security Guidelines for PyTorch
+
+**PyTorch Distributed** is the most widely used framework for distributed deep learning, powering large-scale training worldwide. Its **Distributed Data Parallel (DDP)** replicates models across processes that synchronize gradients via collective backends — **NCCL** for GPU-to-GPU, **Gloo** for CPU.
+
+PyTorch shares Ray's critical limitation: the security policy explicitly states distributed features are *"intended for internal communication only"* and *"not built for use in untrusted environments."* It provides **no built-in authorization**, sends messages **unencrypted** by default, and accepts connections from **any network source** — anyone with network access can **execute arbitrary code with full privileges**. **Unlike Ray, PyTorch Distributed has no built-in TLS encryption**, making **network-level isolation the only effective control**.
+
+Securing it on Kubernetes means implementing **`NetworkPolicy`** boundaries aligned with the framework's security assumptions. Use **label selectors** to scope policies — e.g., **`pytorch-job-name=my-training-job`** to select a job's pods — allowing **intra-job** communication while blocking external traffic. Follow the same pattern as the Ray example: **deny all ingress by default**, then allow only:
+
+- **pod-to-pod within the same `PyTorchJob`** (NCCL uses **dynamic port ranges**, so all TCP between job pods must be allowed)
+- **ingress from the Kubeflow Trainer's namespace** to the **rank-0** worker
+
+[Back to Contents](#contents)
+
+### Observability of Training Jobs
+
+Observability for distributed training presents challenges **beyond traditional application monitoring**: administrators must instrument systems that track **training progress**, **resource utilization**, and **job health** across **dozens-to-hundreds of ephemeral pods** running a **coordinated** workload.
+
+Unlike stateless microservices (where per-instance monitoring suffices), distributed training demands **correlated observability across all worker pods**. A **single slow worker** can stall the whole job's progress; one node's GPU may be **underutilized** while others run efficiently; **gradient-synchronization bottlenecks** only surface when examining communication **across the full worker set**.
+
+Training jobs also run for **extended periods (hours to weeks)**, so it's essential to capture both **real-time operational metrics** (to detect immediate issues) and **historical training metrics** (to analyze convergence, debug failed experiments, and tune hyperparameters across runs).
+
+Administrators should implement observability spanning **three dimensions**:
+
+- **Application-level training metrics** — model performance and convergence
+- **Infrastructure metrics** — resource utilization (e.g., GPU) and job health
+- **Distributed-systems metrics** — communication patterns and coordination overhead
+
+#### Metrics Collection for Distributed Training
+
+GPU metrics were already covered in [GPU Usage Monitoring](#gpu-usage-monitoring); this section focuses on the other components.
+
+**Training metrics** capture **actual model performance and learning progress**, revealing whether runs are **converging** toward the desired accuracy or **diverging** from hyperparameter misconfiguration. Modern frameworks integrate with **experiment-tracking** systems that record **training loss**, **validation loss**, **accuracy**, **learning-rate schedules**, and custom application metrics. **TensorBoard**, originally part of the TensorFlow ecosystem, has become the **de facto standard** for visualizing training metrics in **PyTorch** too: training code logs via **`torch.utils.tensorboard.SummaryWriter`** or **`tf.summary`**, and TensorBoard server instances read those logs to provide **web dashboards** of metric trends over steps and epochs. On Kubernetes, TensorBoard typically runs as a **separate deployment/pod** mounting the **same persistent volume** where training jobs write logs, enabling **real-time** monitoring while jobs execute across distributed workers. TensorBoard works **within a single run**; comparing metrics **across runs** requires tools like **MLflow** or **Weights & Biases**.
+
+**Job-level metrics** — the **Kubeflow Trainer** operator simplifies tracking the whole job: monitoring **worker-pod status**, **replica counts**, and status conditions (**`Created`**, **`Running`**, **`Succeeded`**, **`Failed`**). Each job's pods produce traditional metrics exportable to **Prometheus**, and the job emits **Kubernetes Events** for its lifecycle.
+
+#### Logging Across Distributed Workers
+
+Logging distributed training is complex because meaningful analysis requires **correlating logs from many parallel worker pods** that often emit **near-identical messages** at slightly different timestamps.
+
+The most straightforward approach uses **centralized logging** — all pod logs collected into a searchable aggregation system (**Elasticsearch**, **Loki**, **CloudWatch Logs**), **tagged by job name, worker rank, and pod name** to enable filtering and correlation.
+
+In PyTorch, standard practice is to have **only rank-0** emit detailed training logs (epoch progress, loss values, checkpoint operations), while other workers **suppress output** or log **only error conditions** — reducing volume and avoiding duplicate information. This usually gives good visibility, but **debugging failures** sometimes requires examining logs from **all** workers to identify which rank failed. So a good practice is to **always collect logs from all workers** while **defaulting UI filters to rank-0**.
+
+At scale, **log volume** becomes the main challenge — generic full-text search across many jobs doesn't scale. This makes **structured logging** critical: training code should emit **JSON** logs with common fields (**`job_name`**, **`worker_rank`**, **`step_number`**, **`epoch`**, **`loss_value`**, …). Frameworks like **Fluent Bit** or **Fluentd** can **parse and enrich** logs with pod metadata (namespace, node name, GPU device IDs), creating comprehensive, queryable records.
+
+#### Tracing Distributed Training Operations
+
+**Distributed tracing** may be needed to surface bottlenecks tied to **coordination or communication** patterns.
+
+PyTorch offers built-in profiling via the **PyTorch Profiler** (**`torch.profiler`**), instrumenting training code to capture detailed performance traces: **CPU operations**, **GPU kernel execution**, **memory allocations**, and — crucially for distributed training — **collective operations** like **all-reduce** and **all-gather**.
+
+Profiler results visualize in **TensorBoard's profiling plug-in**: **timeline** views of GPU utilization over time, **stack traces** identifying bottlenecks in training code, and a **distributed view** of communication patterns across ranks. This helps data scientists optimize **batch sizes**, adjust **gradient-accumulation** strategies, or pinpoint **network bottlenecks** throttling throughput.
+
+For lower-level analysis at the **CUDA kernel** level, **NVIDIA Nsight Systems** profiles the GPU workload itself. This is typically **reserved for targeted performance optimization** rather than routine monitoring, since trace files can reach **gigabytes** for long sessions and the **profiling overhead** itself impacts training performance.
+
+[Back to Contents](#contents)
+
+### Lessons Learned
+
+This chapter explored the **operational foundations** required to run production-scale AI training on Kubernetes — from **scheduling** and **networking** to **storage** and **security**.
+
+- **Production training ≠ stateless apps.** Operating training platforms demands fundamentally different approaches than traditional stateless deployments. **Network requirements must be decided at cluster-provisioning time**, with choices strictly tied to **GPU models and interconnect topology**.
+- **Gang + topology-aware scheduling are nonnegotiable.** The default scheduler's per-pod model creates **resource fragmentation** when jobs receive **partial allocations**, wasting expensive GPUs.
+- **Security and storage can't be retrofitted.** Storage needs **tiered** solutions: **object storage** for datasets, **distributed filesystems** for shared checkpoints with **RWX** access enabling **resumption after preemption**, and optionally **local NVMe** for staging. Distributed frameworks are **insecure by design** and become safe only when wrapped in **network/namespace** controls.
+- **Treat infrastructure design as product thinking.** Measure success by **training-job success rate** and **time-to-result**, not just infrastructure uptime. The scheduling, security, storage, and observability choices in this chapter collectively define the **developer experience** for data scientists — treat them as **customers** whose workflow efficiency directly affects how fast the organization iterates on model development and ships AI capabilities to production.
+
+> **Part III wrap-up:** With the infrastructure for tuning in place, you can now **customize foundation models** and **run training workloads at scale**. The next part shifts perspective **from models to applications** — building complete AI-driven systems that orchestrate **LLMs** alongside **vector databases**, **tool invocations**, and **agentic workflows**.
 
 [Back to Contents](#contents)
 
