@@ -156,6 +156,17 @@
      - [NVIDIA KAI Scheduler](#nvidia-kai-scheduler-2)
      - [Volcano](#volcano-2)
      - [Making the right choice](#making-the-right-choice-2)
+   - [Network Optimization for Distributed Training](#network-optimization-for-distributed-training)
+     - [Comparing Network Technologies for GPU Communication](#comparing-network-technologies-for-gpu-communication)
+     - [NVLink and AMD Infinity Fabric](#nvlink-and-amd-infinity-fabric)
+     - [NVSwitch](#nvswitch)
+     - [InfiniBand](#infiniband)
+     - [RoCE](#roce)
+     - [Standard Ethernet](#standard-ethernet)
+     - [GPUDirect RDMA](#gpudirect-rdma)
+     - [Making the right choice](#making-the-right-choice-3)
+     - [Using Secondary Network Interfaces in Kubernetes](#using-secondary-network-interfaces-in-kubernetes)
+     - [Bridging HPC and Kubernetes: Slurm and Slinky](#bridging-hpc-and-kubernetes-slurm-and-slinky)
 9. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -10128,6 +10139,267 @@ Understanding how Kueue's **`ResourceFlavor` selection** interacts with **priori
 > - **Fair sharing** — prevents monopolization by ordering on **historical usage**, favoring queues that have consumed fewer resources, so **underutilized teams still make progress** even in busy clusters.
 
 With **gang scheduling** ensuring complete allocations, **topology-aware** placement optimizing GPU interconnects, and **quota management** enabling fair multitenant access, the **scheduling infrastructure is complete**. Yet even optimally scheduled distributed training jobs hit a critical performance bottleneck: **network communication between workers during gradient synchronization**.
+
+### Network Optimization for Distributed Training
+
+Throughout the topology-aware scheduling discussion, we kept referencing interconnect technologies — **NVLink**, **InfiniBand**, **RoCE** — as critical factors in scheduler placement. This section zooms in on **network communication itself**, one of the **most critical performance bottlenecks** in distributed deep learning. Different parallelism strategies (**data**, **tensor**, **pipeline** — explained in detail in [Model Parallelism](#model-parallelism)) each generate **distinct communication patterns** with different performance characteristics and network requirements.
+
+Frameworks like **PyTorch FSDP** and **DeepSpeed** execute **collective communication** operations — **all-reduce**, **all-gather**, **reduce-scatter**, and **point-to-point** transfers — during **every training iteration**, producing traffic patterns that differ **fundamentally** from traditional application workloads. Understanding these patterns and their requirements lets administrators **match network topology to workload characteristics**.
+
+> **COLLECTIVE COMMUNICATION OPERATIONS**
+>
+> Distributed training relies on three fundamental collective patterns:
+>
+> - **All-reduce** — each worker computes gradients locally, then **all workers combine** them (sum or average) and **distribute the result back** to everyone. The **most common** operation in **data-parallel** training, ensuring identical gradient updates before the optimizer step.
+> - **All-gather** — each worker contributes its data and **all workers receive the full concatenated set**. Used in **model-parallel** training where workers hold different shards and must exchange **activation tensors** or partial results.
+> - **Broadcast** — one worker (typically **rank-0**) sends **identical data** to all others. Used to distribute **initial weights**, **hyperparameters**, or **checkpoint data**.
+>
+> These operations execute **synchronously**, stalling **all** workers until they complete — which is why **latency and bandwidth** directly bottleneck training throughput.
+
+A typical job with **8 nodes / 64 GPUs** might synchronize **billions of parameters every few seconds**, generating sustained traffic of **hundreds of gigabits per second**, with communication latency directly hurting throughput as **GPUs idle** waiting for synchronization.
+
+Hardware vendors sell specialized **"AI nodes"** — **NVIDIA DGX**, **Dell PowerEdge XE**, **HPE Cray EX** — bundling up to **eight high-end GPUs** per node with CPUs, memory, and optimized **intra-node interconnects** like **NVLink** (hundreds of GB/s between GPUs in the same server). This solves the **single-node** bottleneck through integrated hardware design. The challenge **intensifies as training scales beyond a single node**.
+
+Standard Kubernetes networking is designed for **microservices** — limited east-west traffic, north-south API calls — and **fails to deliver** the needed performance. Default CNI plug-ins like **OVN-Kubernetes** add **network-virtualization overhead** that further degrades high-bandwidth training. The traditional **TCP/IP stack** involves **kernel context switches** and **buffer copies**, and standard Ethernet bandwidth becomes the **final bottleneck** for collective operations.
+
+> **EAST-WEST AND NORTH-SOUTH NETWORK TRAFFIC**
+>
+> Data-center traffic is categorized by **direction**:
+>
+> - **North-south** — between **clients outside** the data center and **services inside** (users hitting a web app, external API calls). It **crosses the perimeter** firewall, "entering" and "exiting" the data center.
+> - **East-west** — between **services within** the data center (microservice-to-microservice calls, DB queries). It flows **laterally** across the internal network, never leaving the data center.
+>
+> Traditional Kubernetes networking optimizes for microservices: **predominantly north-south** (serving external requests) plus **moderate east-west**. Distributed training **inverts** this — **massive east-west** traffic for gradient synchronization between worker pods, with **minimal north-south** needs.
+
+So administrators building production training platforms must implement **specialized network configurations** that **bypass the standard kernel stack** and leverage **high-performance interconnects** originally developed for **HPC**. The industry is directly applying **decades of supercomputing network experience** to AI scalability challenges, since distributed training exhibits the **same communication patterns** HPC has long addressed.
+
+> While most of these notes focus on **software-level** configuration and tooling, this section describes the **hardware options** that must be considered during **cluster node setup**.
+
+#### Comparing Network Technologies for GPU Communication
+
+Knowing the performance characteristics of each network technology is essential for selecting appropriate infrastructure and configuring optimal communication paths (Table 7-5).
+
+##### Table 7-5. Network technologies for GPU communication
+
+| Technology | Scope | Bandwidth | Latency | Best suited for |
+| --- | --- | --- | --- | --- |
+| **NVLink / AMD Infinity Fabric** | Intra-node GPU↔GPU point-to-point | **900 GB/s–1.8 TB/s** aggregate per GPU (NVLink 4.0–5.0); up to **896 GB/s** (MI300X) | Microseconds | Direct GPU-to-GPU within a node; 2–4 GPU configurations |
+| **NVSwitch** | Intra-node GPU interconnect **fabric** | **600–900 GB/s** per GPU (full mesh) | Microseconds | 8–16 GPU servers needing full-mesh connectivity; DGX systems |
+| **InfiniBand** | Inter-node **RDMA** fabric | **200–400 GB/s** per port | Sub-microsecond | Large-scale HPC training clusters; largest models across dozens of nodes; maximum performance |
+| **RoCE** (RDMA over Converged Ethernet) | Inter-node **RDMA over Ethernet** | **100–400 GB/s** per port | Low microseconds | High performance without dedicated InfiniBand; converged networks carrying mixed traffic |
+| **Standard Ethernet** | Inter-node **TCP/IP** | **10–25 GB/s** typical (up to 100 GB/s) | Tens–hundreds of microseconds | Smaller-scale jobs; communication-light workloads; no specialized networking |
+| **GPUDirect RDMA** | Enhancement for InfiniBand/RoCE | **40–60% latency reduction** vs traditional paths | N/A (latency optimization) | Communication-bound training needing direct GPU↔NIC transfers without CPU involvement |
+
+#### NVLink and AMD Infinity Fabric
+
+High-speed **point-to-point** GPU↔GPU interconnects deliver the **highest-bandwidth, lowest-latency** direct GPU connections, bypassing the **PCIe (Peripheral Component Interconnect Express)** limitations that constrain traditional GPU communication.
+
+**NVLink** is NVIDIA's proprietary high-speed interconnect creating direct **GPU↔GPU** and **GPU↔CPU** channels via point-to-point links. Modern data-center GPUs like **H100** support **NVLink 4.0** — **900 GB/s** aggregate bidirectional bandwidth per GPU across **18 links** — letting gradient synchronization complete in **microseconds rather than milliseconds**. It's typically deployed in **2–4 GPU** configurations where direct links give optimal performance for smaller-scale training.
+
+**AMD Infinity Fabric** is AMD's equivalent for its **Instinct MI-series** GPUs (MI250X, MI300X), providing high-bandwidth GPU↔GPU and GPU↔CPU communication comparable to NVLink — ~**900 GB/s** bidirectional in 8-GPU **MI300X** configurations — with direct memory access between GPUs over point-to-point links optimized for **small-scale multi-GPU servers**.
+
+Both are **limited to specific server configurations**: GPUs must be **physically connected** via proprietary cables or integrated backplanes, making them primarily **intra-node** technologies. Notable exceptions are NVIDIA's **DGX SuperPOD** and AMD's **OAM (Open Accelerator Module)**-based systems that extend these interconnects to **small-scale multinode** training.
+
+#### NVSwitch
+
+For larger configurations needing **full-mesh** connectivity across **eight or more** GPUs in a single server, switching fabrics like **NVIDIA NVSwitch** go beyond point-to-point links to create **nonblocking** paths between all GPUs simultaneously.
+
+**NVSwitch** is the switching infrastructure enabling **full-mesh GPU↔GPU connectivity** within servers of **8–16 GPUs**, each GPU reaching up to **900 GB/s** aggregate bandwidth to the switch fabric. Unlike point-to-point NVLink (which directly connects GPU **pairs**), NVSwitch is a **centralized fabric** where **NVLink is the physical link** connecting each GPU to the switch, and the switch provides **nonblocking paths** between any pair.
+
+This appears in **NVIDIA DGX** systems and other high-end training servers, enabling the **all-to-all** patterns required when synchronizing gradients across many GPUs at once **without bottlenecks**. The full-mesh topology ensures **all-reduce** and **all-gather** run at **consistent bandwidth** regardless of which GPUs participate, eliminating the **hot-spot contention** that would arise if many GPUs funneled through a single point-to-point link.
+
+#### InfiniBand
+
+**InfiniBand** is the **gold standard** for **multinode** GPU communication in HPC and large-scale AI training, providing **Remote Direct Memory Access (RDMA)** with **sub-microsecond latency** and bandwidth scaling to **400 GB/s per port**.
+
+It's a **dedicated high-speed fabric** (originally designed for HPC clusters) that lets GPUs and CPUs **directly read/write remote-node memory** without involving the OS kernel — eliminating the **context switches** and **buffer copies** that plague TCP/IP networking.
+
+InfiniBand fabrics scale to **thousands of nodes** via switches offering **full bisection bandwidth**, so communication between **any** node pair hits **full line rate** regardless of topology — critical for large jobs where **all-reduce** must aggregate gradients across dozens or hundreds of GPUs simultaneously. The trade-off: it requires **dedicated infrastructure separate from standard Ethernet**, increasing **capital cost and operational complexity** — making it most appropriate where the scale **justifies the investment**.
+
+#### RoCE
+
+**RDMA over Converged Ethernet (RoCE)** brings RDMA capabilities to **standard Ethernet**, a compromise between InfiniBand's performance and Ethernet's **ubiquity and cost-effectiveness**. It implements the **same RDMA programming interface** as InfiniBand but places RDMA packets over **Ethernet frames**, letting organizations reuse **existing Ethernet switching** while still getting the **kernel-bypass** and **zero-copy** benefits of RDMA.
+
+**RoCEv2** (the current standard as of early 2026) encapsulates RDMA traffic in **UDP/IP** packets, adding **routing** capabilities that InfiniBand's Layer-2 communication lacks — at **slightly higher latency** than native InfiniBand. Modern RoCE adapters deliver **100–400 GB/s per port** at **low-microsecond** latency, approaching InfiniBand for many workloads while running over **converged networks** that also carry standard TCP/IP traffic.
+
+Because UDP/IP avoids TCP overhead, a packet **may be lost**, triggering expensive **application-level retransmissions**. Mitigating this requires **lossless Ethernet** configurations such as **Priority Flow Control (PFC)** and **Enhanced Transmission Selection (ETS)**.
+
+#### Standard Ethernet
+
+**Ethernet with TCP/IP** remains the **most accessible** option for distributed training, providing adequate performance for **smaller-scale** jobs or organizations without specialized networking infrastructure.
+
+Kubernetes' default networking (via CNI plug-ins like **Calico**, **Cilium**, **Flannel**) runs over standard Ethernet, delivering **10–100 GB/s** depending on adapter and switch capabilities, at **tens-to-hundreds of microseconds** latency depending on topology and congestion.
+
+Though far slower than InfiniBand or RoCE, it stays viable at smaller scales. For **data-parallel** training, standard Ethernet typically suffices for **2–8 nodes** when communication overhead stays **below ~15%** of total step time. Profile your workload by measuring the ratio of **all-reduce time to computation time** — exceeding **~20–25%** communication overhead signals the need for **RDMA-capable** networking. The threshold varies with **model size** and **parallelization strategy**: **pipeline** parallelism generates **less** traffic than **tensor** parallelism, while **gradient accumulation** can reduce synchronization frequency at some **convergence trade-off**.
+
+Its advantage is **simplicity**: no special hardware beyond commodity adapters, no complex fabric configuration, and **out-of-the-box** integration with Kubernetes networking.
+
+#### GPUDirect RDMA
+
+**GPUDirect RDMA** enables **direct memory access between GPUs and network adapters**, eliminating the **CPU involvement** and **memory copies** that add latency to traditional network paths.
+
+GPU↔GPU communication is already optimized by the technologies above, but **inter-node** communication must still traverse the **kernel and a memory copy**. GPUDirect RDMA **bypasses** these steps by letting the **NIC read from and write to GPU memory directly** without CPU involvement — dramatically improving distributed-training performance.
+
+It works with **both InfiniBand and RoCE** fabrics, cutting communication latency by **40–60%** versus traditional paths. However, it requires **specific hardware** (RDMA-capable adapters like **NVIDIA Mellanox ConnectX**), **GPU drivers with GPUDirect support** enabled, and proper **NCCL** configuration in training frameworks — making setup **more complex**.
+
+#### Making the right choice
+
+![GPU network stack](<assets/GPU network stack.png>)
+
+**Figure 7-4. GPU network stack: intra-node NVLink/NVSwitch and inter-node InfiniBand/RoCE/Ethernet options**
+
+Administrators must balance **performance requirements** against **infrastructure cost** and **operational complexity**, with **parallelism strategy** (see [Model Parallelism](#model-parallelism)) a key factor in the decision:
+
+- **Data parallelism** (the most common strategy) — for **large models across dozens of nodes**, seriously consider **InfiniBand + GPUDirect RDMA** for the superior bandwidth that accelerates **gradient all-reduce**; with existing high-performance Ethernet, **RoCE + GPUDirect RDMA** approaches InfiniBand **without wholesale network replacement**. For **smaller** jobs (**2–8 nodes**), optimizing **standard Ethernet with 100 GB/s adapters** and proper Kubernetes networking gives meaningful gains without specialized expertise.
+- **Tensor parallelism** — **NVLink/NVSwitch become essential**, not optional: the latency-sensitive **per-layer all-gather/reduce-scatter** operations make these workloads **impractical on standard Ethernet** and challenging even on InfiniBand across nodes. Tensor parallelism usually stays **within one node** (8–16 GPUs on NVSwitch) or **2–4 node** InfiniBand clusters where **sub-microsecond** latency is achievable.
+- **Pipeline parallelism** — the **sequential stage-to-stage** communication benefits more from **topology-aware scheduling that co-locates adjacent stages** (minimizing hops) than from raw bandwidth. **RoCE or optimized Ethernet** can suffice, as point-to-point stage transfers are **moderate bandwidth** and tolerate **higher latency** than tensor parallelism.
+- **Hybrid parallelism** (data + tensor + pipeline) — **InfiniBand + GPUDirect RDMA** is the practical choice, since these workloads need **both high bandwidth** (data-parallel gradient sync) **and low latency** (tensor-parallel layer comms), with careful **topology-aware scheduling** to group tensor-parallel GPUs on **NVSwitch domains** and spread data-parallel replicas across the **InfiniBand fabric**.
+
+Whatever you choose (InfiniBand, RoCE, or optimized Ethernet), implementing these high-performance fabrics in Kubernetes requires **configuring secondary network interfaces** beyond the cluster's standard CNI networking.
+
+#### Using Secondary Network Interfaces in Kubernetes
+
+Kubernetes originally designed pod networking around a **single interface per pod**, providing connectivity through the cluster's CNI plug-in — but distributed training needs **dedicated additional interfaces** and **specialized fabrics** like InfiniBand or RoCE.
+
+**[Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni)** removes this limitation by letting pods attach **multiple interfaces** simultaneously: the **primary** continues using the cluster's standard CNI, while **secondary** interfaces provide **dedicated paths** for training-framework communication over specialized networks.
+
+> **TIP — what is CNI?**
+>
+> **[CNI (Container Network Interface)](https://github.com/containernetworking/cni)** is a **CNCF specification** defining a standardized interface between **container runtimes** and **network plug-ins** for configuring network interfaces in Linux containers.
+>
+> CNI plug-ins implement the Kubernetes network model — pod-to-pod and pod-to-external connectivity — each responsible for **creating interfaces**, **assigning IP addresses**, and establishing connectivity per cluster requirements. The **pluggable** architecture lets clusters use different implementations (**Calico**, **Cilium**, **Flannel**), each offering the same core functionality plus optional extras like **network policies**, **encryption**, or **optimized data paths**.
+
+Multus acts as a **meta-plug-in** that **delegates** interface creation to other CNI plug-ins based on **`NetworkAttachmentDefinition` (NAD)** custom resources specifying how secondary interfaces are configured.
+
+For InfiniBand, for example, the NAD configures secondary interfaces attached to each node's **`ib0`** InfiniBand device, assigning IP addresses and enabling direct RDMA access (e.g., via an `rdmaIsolation: false` setting for **GPUDirect** scenarios) — see Example 7-10.
+
+##### Example 7-10. NetworkAttachmentDefinition for IP-over-InfiniBand (IPoIB) interfaces
+
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: ib-network
+spec:
+  config: '{
+    "cniVersion": "0.3.1",
+    "type": "ipam",
+    "master": "ib0",
+    "ipam": {
+      "type": "whereabouts",
+      "range": "10.0.0.0/24",
+      "exclude": [ "10.0.0.1/32" ]
+    }
+  }'
+```
+
+What to notice:
+
+- **`"type": "ipam"`** — use the **IPAM** plug-in to handle IP-address assignment.
+- **`"type": "whereabouts"`** — use the **[whereabouts](https://github.com/k8snetworkplumbingwg/whereabouts)** plug-in for cluster-wide IPAM.
+
+Administrators deploy **Multus as a DaemonSet** across all nodes, then create **NAD** resources describing the secondary networks available for attachment (e.g., an InfiniBand network using the **IPoIB** CNI plug-in). When training pods request attachments via the **`k8s.v1.cni.cncf.io/networks`** annotation, Multus creates and configures the additional interfaces inside the pod namespace per the matching NAD.
+
+**RDMA** is more involved: it requires an RDMA-capable interface, and training frameworks must access **RDMA devices** (typically exposed as **`/dev/infiniband/`** device files) that provide kernel-bypass communication. A specialized **RDMA CNI plug-in** works together with Multus to configure **RDMA device permissions** and ensure pods can reach the right devices. Finally, the **RDMA device plug-in** makes the RDMA interface visible as a **schedulable resource**, so deployments can explicitly request it — e.g., **`rdma/hca: 1`** for one RDMA host channel adapter.
+
+Even with the cluster correctly configured, you must ensure the **framework communication library** (primarily **[NCCL](https://developer.nvidia.com/nccl)**, used by NVIDIA for PyTorch workloads) **discovers and uses** the high-performance interfaces rather than defaulting to the primary Kubernetes network.
+
+NCCL **auto-detects** interfaces and prefers **RDMA-capable** ones when available, but you can configure it explicitly through environment variables — **`NCCL_IB_HCA`**, **`NCCL_SOCKET_IFNAME`**, **`NCCL_NET_GDR_LEVEL`** — for **deterministic control** over which paths collective operations use (Example 7-11).
+
+> Coordinate **interface naming** so secondary interfaces have **consistent, predictable names across all nodes** — this lets a single job configuration specify the correct interface **without per-node customization**.
+
+##### Example 7-11. PyTorchJob configuration with a secondary network
+
+```yaml
+# For TrainJob, configure these settings in the ClusterTrainingRuntime template
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: llm-training-ib
+spec:
+  pytorchReplicaSpecs:
+    master:
+      ...
+      template:
+        metadata:
+          annotations:
+            k8s.v1.cni.cncf.io/networks: ib-network
+        spec:
+          containers:
+          - name: pytorch
+            ...
+            env:
+            # Detailed info about detected network interfaces and more
+            - name: NCCL_DEBUG
+              value: "INFO"
+            # Which InfiniBand adapters NCCL should use
+            - name: NCCL_IB_HCA
+              value: "mlx5_0,mlx5_1"
+            # GID index for InfiniBand (3 = RoCEv2 mode on Ethernet)
+            - name: NCCL_IB_GID_INDEX
+              value: "3"
+            # Maximum GPUDirect RDMA optimization (direct GPU-to-NIC transfers)
+            - name: NCCL_NET_GDR_LEVEL
+              value: "5"
+            # Use the secondary interface instead of the default eth0
+            - name: NCCL_SOCKET_IFNAME
+              value: "net1"
+            resources:
+              requests:
+                ...
+                # Require two RDMA host channel adapters per pod
+                rdma/hca: 2
+              ...
+            securityContext:
+              capabilities:
+                add: ["IPC_LOCK"]
+    ...
+```
+
+What to notice:
+
+- **`k8s.v1.cni.cncf.io/networks: ib-network`** — instructs **Multus** to attach the secondary network defined by the **`ib-network`** NAD.
+- **`IPC_LOCK` capability** — lets the container **lock memory pages** (prevent swapping to disk), **essential for RDMA**, which requires **pinned memory buffers**.
+
+> **SECONDARY NETWORK OPTIMIZATION AND TROUBLESHOOTING**
+>
+> Beyond basic configuration, several optimizations improve secondary-network performance:
+>
+> - **NCCL topology awareness** — set **`NCCL_TOPO_FILE`** to give NCCL detailed GPU and network-adapter topology, enabling optimal path selection. Auto-detection works for standard setups but may miss the fastest paths in complex multi-GPU, multi-NIC servers. Generate topology files with **`nvidia-smi topo -m`** per node and deliver them to pods via **ConfigMaps**.
+> - **Network adapter tuning** — RDMA adapters expose many tunables. For **Mellanox ConnectX**, consider **adaptive routing** (`--set_adaptive_routing` in the subnet manager) to balance load across multiple InfiniBand paths, and set an appropriate **MTU** (typically **4,096** for InfiniBand) to cut packet overhead.
+> - **NUMA awareness** — on multisocket nodes, pin training pods to **CPUs local to the GPUs and NICs** they use, minimizing cross-socket memory traffic. The **Kubernetes Topology Manager** enables NUMA-aware scheduling, and NCCL respects **CPU affinity**.
+> - **Network isolation** — deploy training on **dedicated VLANs or InfiniBand partitions** isolated from other cluster traffic to prevent congestion-induced latency variation. Kubernetes **NetworkPolicies** provide application-layer isolation, but **physical segregation** guarantees bandwidth.
+> - **Verification and troubleshooting** — secondary-network setup is non-trivial, so verify NCCL detects and uses the expected configuration (Example 7-12). Benchmark training **with and without** optimized networking to **quantify** improvements; realistic benchmarks using representative architectures show whether the added complexity is **worth the operational overhead**.
+
+##### Example 7-12. Troubleshooting commands for a secondary network
+
+```bash
+# Check that a secondary interface was created on the primary node
+kubectl exec -n %NAMESPACE% llm-training-ib-master-0 -- ip addr show net1
+
+# Verify RDMA devices are accessible
+kubectl exec -n %NAMESPACE% llm-training-ib-master-0 -- ls /dev/infiniband/
+
+# Examine NCCL debug output to confirm InfiniBand usage
+# "Using network IB" and "NET/IB/GDRDMA" indicate InfiniBand with GPUDirect RDMA
+kubectl logs -n %NAMESPACE% llm-training-ib-master-0 | grep "NCCL INFO"
+```
+
+#### Bridging HPC and Kubernetes: Slurm and Slinky
+
+While **Kubernetes** dominates **cloud-native** workloads, traditional **High-Performance Computing (HPC)** environments have **decades** of refinement managing large-scale scientific and computational workloads through specialized workload managers like **[Slurm](https://slurm.schedmd.com/)** (Simple Linux Utility for Resource Management). As AI training increasingly **resembles HPC batch jobs** — gang scheduling, multinode coordination, GPU resource management, topology-aware placement — there's growing interest in **bringing HPC scheduling expertise into Kubernetes**.
+
+Slurm **dominates HPC worldwide**, running the largest supercomputing centers with mature capabilities Kubernetes is only **beginning to match**: native **gang scheduling** (all-or-nothing allocation), **network topology-aware** placement (optimal GPU interconnect bandwidth), sophisticated **accounting** (tracking GPU-hours for charge-back and fair-share policies), and **plug-in architectures** for complex resource-selection strategies. The HPC community's experience managing the **largest AI training jobs** offers valuable lessons for Kubernetes-based platforms.
+
+**[Slinky](https://github.com/SlinkyProject)** is **SchedMD's** suite of projects for **bridging the Slurm and Kubernetes ecosystems** — running Slurm-managed workloads on Kubernetes infrastructure, or leveraging Slurm's scheduling alongside Kubernetes orchestration. It provides:
+
+- a **Slurm Operator** managing Slurm clusters as **Kubernetes custom resources** with dynamic scaling
+- a **REST client** for integrating Slurm with Kubernetes controllers and webhooks
+- a **Prometheus exporter** for unified monitoring across both platforms
+
+Organizations with **existing HPC infrastructure** or needs for Slurm's advanced features (complex GPU topology requirements, proven fair-share policies, detailed accounting) may find **Slinky a pragmatic migration path** — while cloud-native teams should recognize that **Kubernetes is actively adopting** these HPC patterns through **gang-scheduling plug-ins**, **GPU device plug-ins**, and **topology-aware scheduling** proposals. The **convergence of HPC and Kubernetes** marks the evolution of AI training infrastructure, each ecosystem learning from the other's strengths.
+
+With **scheduling**, **topology awareness**, **quota management**, and **high-performance networking** in place, the training platform still needs **reliable storage** to support the full job lifecycle — particularly **checkpoint management** and **recovery from preemption**.
 
 [Back to Contents](#contents)
 
