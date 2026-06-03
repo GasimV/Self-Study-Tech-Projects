@@ -130,7 +130,20 @@
          - [Ray vs Kubeflow Trainer — code delivery differences](#ray-vs-kubeflow-trainer--code-delivery-differences)
        - [Unsloth](#unsloth)
    - [Customization Lessons Learned](#customization-lessons-learned)
-8. [High-Value Recall Checklist](#high-value-recall-checklist)
+8. [Job Scheduling Optimization](#job-scheduling-optimization)
+   - [Kubernetes Scheduler Optimization](#kubernetes-scheduler-optimization)
+     - [Core Kubernetes Scheduler](#core-kubernetes-scheduler)
+     - [Resource Bin Packing Strategy](#resource-bin-packing-strategy)
+     - [Dynamic Scheduling with Descheduler](#dynamic-scheduling-with-descheduler)
+   - [Gang Scheduling](#gang-scheduling)
+     - [PyTorch Rendezvous and Gang Scheduling](#pytorch-rendezvous-and-gang-scheduling)
+     - [Comparing Gang Scheduling Solutions](#comparing-gang-scheduling-solutions)
+     - [Coscheduling plug-in (PodGroup CRD)](#coscheduling-plug-in-podgroup-crd)
+     - [Kueue](#kueue)
+     - [NVIDIA KAI Scheduler](#nvidia-kai-scheduler)
+     - [Volcano](#volcano)
+     - [Making the right choice](#making-the-right-choice)
+9. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -9425,6 +9438,327 @@ Training job management requires **different operational patterns** than inferen
 #### Recall prompt
 
 *Given a stable internal knowledge base, 10 GPUs, and a need to serve five fine-tuned variants of one model, which customization technique would you choose and why — and which Kubernetes framework would you reach for to run the training?*
+
+[Back to Contents](#contents)
+
+## Job Scheduling Optimization
+
+Model training spans the **entire LLM lifecycle** — from pre-training, through alignment, to customization — but the previous chapter focused on **[model customization](#model-customization)**, the most common and practical entry point for organizations working with LLMs. It introduced the customization techniques and frameworks (like **[Kubeflow Trainer](#kubeflow-trainer)**) used to run distributed training jobs on Kubernetes. Running those jobs at scale, however, hands the **platform administrator** a new set of operational challenges that go well beyond the basic configuration of a single training job.
+
+The **[Kubernetes and GPUs](#kubernetes-and-gpus)** material focused mainly on **inference** production workloads, and there is significant overlap with **GPU management** here. But even setting GPUs aside, **long-running customization jobs differ from traditional Kubernetes workloads** in several critical ways:
+
+- **Resource intensive** — they need specialized hardware (**GPUs**) across **multiple nodes** for extended periods, sometimes **days or even weeks**.
+- **Strong interdependencies** — uncommon for typical Kubernetes workloads, **all pods in a distributed job must be scheduled together** (*gang scheduling*).
+- **Network-heavy** — they generate an enormous amount of data shared across the network, making **network performance a critical bottleneck**.
+- **Costly** — in both time and resources, so **reliable, efficient resource utilization is critical**.
+- **GPU scarcity** — GPUs are scarce and expensive in most clusters, demanding **sophisticated quota management and scheduling logic** to prevent underutilization while ensuring **fair access** across multiple teams and projects.
+
+The combination of these defines the set of challenges **every Kubernetes platform administrator must address**.
+
+This chapter explores those production-scale challenges by covering the optimizations and configurations required to operate a **robust model customization platform** on Kubernetes:
+
+- **Scheduler optimization** — **bin packing** for cost-efficient GPU utilization, and the **descheduler** for dynamic re-optimization as cluster state evolves
+- **Gang scheduling** — ensuring all components of a distributed training job are scheduled together
+- **Topology-aware scheduling** — optimizing GPU interconnect placement
+- **Quota management** — fair resource allocation across teams
+- **Network optimizations** (reducing communication bottlenecks), **multiuser security**, **storage strategies** for large datasets and model artifacts, and **observability** for long-running training workloads
+
+The goal is to take the principles from the previous chapter and turn them into a **production-ready platform** capable of supporting **enterprise-scale model customization workflows** while maintaining the operational standards expected of modern Kubernetes environments.
+
+> **NOTE — "training job" as an umbrella term**
+>
+> Throughout this chapter, **training job** refers to **all forms of LLM model customization** — fine-tuning and the other techniques from [Model Customization](#model-customization) — because they share the same platform requirements: **gang scheduling** for distributed execution, **high-performance networking** for gradient synchronization, **GPU resource management**, and **robust observability**.
+>
+> While the data-science techniques differ, the **infrastructure challenges and operational patterns remain consistent** across all model customization approaches for LLMs.
+>
+> This focus is **specific to LLMs**: traditional predictive models (classification, regression, time-series forecasting) are typically much smaller and often train efficiently on a **single GPU or CPU**, so they don't need the specialized infrastructure described here.
+
+[Back to Contents](#contents)
+
+### Kubernetes Scheduler Optimization
+
+The Kubernetes scheduler is a **flexible, pluggable** component whose configuration can be tuned to optimize pod placement for different workload requirements. GPU training platforms exploit this flexibility through strategies like **bin packing** (consolidate workloads to cut cost) combined with **dynamic rescheduling** (maintain that optimization as the cluster changes). This section covers the **core scheduling mechanics**, **bin packing** for cost efficiency, and the **descheduler** for continuous optimization.
+
+#### Core Kubernetes Scheduler
+
+The **[Kubernetes scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)** makes its decision **independently for each pod**, through a **two-phase** process:
+
+1. **Filtering (candidate selection)** — eliminates nodes that **cannot** satisfy the pod's requirements: insufficient CPU, memory, or GPU resources, or failing **taints, tolerations, and affinity rules** (see [Node affinity](#node-affinity)).
+2. **Scoring (node ranking)** — ranks the remaining candidate nodes using **weighted criteria** (resource balance, pod spreading, affinity preferences) to select the **optimal placement**.
+
+Once a node is selected, the scheduler performs the **binding** operation to assign the pod to that node. Binding **concludes the scheduling phase**, and the **Kubelet** running on that node takes over to start the container.
+
+> The **Kubelet** is the agent running on each Kubernetes node, responsible for **executing the containers** on that node according to the specifications provided by the control plane.
+
+![Kubernetes scheduler](<assets/Kubernetes scheduler.png>)
+
+**Figure 7-1. Kubernetes scheduler**
+
+#### Resource Bin Packing Strategy
+
+By default the scheduler **spreads pods across nodes** to improve availability. GPU training platforms often benefit from the **opposite** approach: **packing pods tightly onto fewer nodes** to maximize utilization and enable **cost-effective cluster autoscaling**. This is particularly valuable for GPU clusters where a node can cost **$10–30 per hour** — consolidating workloads onto fully-utilized nodes creates **"empty" nodes** that autoscalers can safely **drain and remove**.
+
+Bin packing is implemented through the scheduler's **`NodeResourcesFit`** scoring plug-in. Its **`MostAllocated`** strategy scores nodes **higher when they already hold more allocated resources**, favoring **consolidation** over the default **`LeastAllocated`** spreading behavior (see Example 7-1).
+
+##### Example 7-1. Scheduler configuration for bin packing
+
+```yaml
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+- schedulerName: binpack-scheduler
+  pluginConfig:
+  - name: NodeResourcesFit
+    args:
+      scoringStrategy:
+        type: MostAllocated
+        resources:
+        - name: nvidia.com/gpu
+          weight: 5
+        - name: cpu
+          weight: 1
+        - name: memory
+          weight: 1
+```
+
+What to notice:
+
+- **`schedulerName: binpack-scheduler`** — a **custom scheduler name** that training jobs reference to opt into bin-packing behavior
+- **`type: MostAllocated`** — scores nodes higher when they **already have more resources allocated**, favoring consolidation
+- **`weight: 5` on `nvidia.com/gpu`** — the **higher GPU weight** prioritizes **GPU bin packing** over CPU and memory, reflecting the **higher cost and scarcity** of GPU resources
+
+Administrators must **balance** bin packing's cost efficiency against **reduced availability**: a single node failure now affects **more training jobs**, and resource contention can create **CPU, memory, or network bottlenecks** even when GPU resources are available. Bin packing particularly suits **cost-sensitive batch training** that tolerates interruption through **checkpoint-and-resume** workflows, while production platforms often run **multiple scheduler profiles** — bin packing for experimental jobs, spreading for **critical workloads** requiring resilience.
+
+#### Dynamic Scheduling with Descheduler
+
+Bin packing optimizes the **initial** pod placement, but that optimization **degrades over time** as workloads terminate and new jobs arrive at different rates across nodes. The **[Kubernetes descheduler](https://github.com/kubernetes-sigs/descheduler)** (available as a **separate installation**) addresses this by continuously evaluating placement and **evicting pods** from suboptimally placed locations so the scheduler can **reschedule** them against the **current** cluster state and policies. Where the scheduler **reacts** to new-pod creation events, the descheduler **proactively** identifies existing pods that violate placement policies or contribute to **resource fragmentation**, then evicts them to trigger a rescheduling that improves overall cluster efficiency.
+
+The descheduler runs as a **separate component** — typically a **`CronJob`** for periodic optimization or a **`Deployment`** for continuous monitoring — applying configurable **strategy plug-ins**, defined through a **`DeschedulerPolicy`** custom resource, to identify pods for eviction. When it evicts a pod, it simply **deletes** the pod; the pod's controller (`ReplicaSet`, `StatefulSet`, or for training jobs the **Kubeflow Trainer**) **immediately recreates** it, and the scheduler then re-places it according to current policies and cluster state. This eviction-and-reschedule cycle **respects [PodDisruptionBudgets (PDBs)](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)**, ensuring the descheduler never violates availability constraints or disrupts critical workloads beyond configured tolerances — making **PDBs the primary mechanism for protecting gang-scheduled training jobs** from premature eviction (Example 7-2).
+
+##### Example 7-2. PodDisruptionBudget protecting a gang-scheduled training job
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: llm-training-pdb
+spec:
+  # Ensures all workers remain running simultaneously (gang scheduling requirement)
+  minAvailable: 4
+  selector:
+    matchLabels:
+      # All pods belonging to the same training job
+      scheduling.x-k8s.io/pod-group: llm-training-group
+```
+
+Several descheduler strategies address different optimization goals; they are configured in the **`profiles[].plugins`** section of the `DeschedulerPolicy` resource (see Table 7-1).
+
+##### Table 7-1. Descheduler strategies for GPU training platforms
+
+| Strategy | Behavior | Scheduling-policy alignment | Best suited for |
+| --- | --- | --- | --- |
+| **`HighNodeUtilization`** | Evicts pods from **underutilized** nodes to consolidate workloads onto **fewer** nodes | **Must** pair with the **`MostAllocated`** (bin packing) scheduler strategy to avoid eviction loops | Cost-optimized GPU clusters using autoscaling; batch training tolerating disruption; maximizing GPU utilization density |
+| **`LowNodeUtilization`** | Evicts pods from **overutilized** nodes (above target threshold) onto **underutilized** ones (below threshold), enabling node scale-down | **Must** pair with the **`LeastAllocated`** (spreading) scheduler strategy to avoid eviction loops | Triggering **scale-down** with cluster autoscaling by concentrating workloads; inverse of `HighNodeUtilization` with different threshold semantics |
+| **`RemovePodsViolatingNodeAffinity`** | Evicts pods whose **node affinity** rules no longer match their current node | Works with **any** scheduler; enforces declarative placement constraints | **Dynamic GPU infrastructure** where node labels change (GPU-type upgrades, topology reconfigurations); enforcing GPU-model requirements |
+| **`RemovePodsViolatingInterPodAntiAffinity`** | Evicts pods violating **anti-affinity** rules to achieve intended spreading | Works with **any** scheduler; corrects suboptimal initial placements | Training jobs requiring **fault tolerance** through replica spreading; avoiding co-location of related pods |
+
+The primary risk of descheduling is **job disruption**: evicting pods from long-running LLM training jobs forces expensive **checkpoint-and-resume** cycles that can delay completion by **hours or days**. Administrators mitigate this through **deployment frequency** (run infrequently during maintenance windows versus continuously for maximum efficiency), **PodDisruptionBudgets** (protect critical jobs from eviction), and **namespace segmentation** (exclude production training namespaces while optimizing experimental ones). Validate that the **optimization benefit** (reduced node cost from better bin packing) **exceeds the disruption cost** (training time lost to checkpointing).
+
+> **WARNING — keep descheduler and scheduler policies aligned**
+>
+> The descheduler's strategy **must align** with the scheduler's placement policy, or the system enters an **eviction loop**: the descheduler evicts a pod that the scheduler immediately places back on the same node, only to be evicted again.
+>
+> - Using **`HighNodeUtilization`**? The scheduler must use **`MostAllocated`** (bin packing).
+> - Using **`LowNodeUtilization`**? The scheduler must use **`LeastAllocated`** (spreading).
+> - **Never** enable **both** `HighNodeUtilization` and `LowNodeUtilization` simultaneously — they have **opposing goals** and will conflict.
+> - **Verify via monitoring**: if the **eviction count rises continuously** without node-consolidation progress, an **eviction loop** likely exists and the policy needs correcting.
+
+### Gang Scheduling
+
+The scheduler optimizations above (bin packing for cost efficiency, descheduler for dynamic re-optimization) address **how individual pods are placed and maintained** on nodes. Distributed training jobs introduce a fundamentally different challenge: **scheduling all components of a multi-pod job together as an atomic unit**. The default **per-pod** model works efficiently for containerized apps and microservices, but it **breaks down** for distributed training, where the scheduler has **no awareness** that multiple pods belong to a single coordinated workload. Each pod schedules **independently**, so the scheduler may successfully place **seven of eight** workers — tying up GPU resources while the job **deadlocks** waiting for the missing worker that cannot be scheduled due to resource exhaustion. This is **resource fragmentation**.
+
+Large-scale LLM training requires an **all-or-nothing** approach because frameworks like **PyTorch** use a **rendezvous mechanism** where all workers must **discover each other** and **synchronize at a barrier** before training can begin. Similarly, **DeepSpeed** and others establish **communication barriers** during each training iteration to coordinate **gradient synchronization**. If even a single worker is missing, the **rendezvous barrier cannot complete**, deadlocking the entire job while it **consumes GPU resources** on already-scheduled workers. Meanwhile, a cluster is designed to serve **multiple concurrent users** submitting jobs simultaneously, expecting a **fair scheduling policy** that guarantees execution within a certain **time/SLO**.
+
+**Gang scheduling**, also known as **coscheduling**, ensures all pods of the same distributed job are scheduled together as a **single atomic unit** — **either all are scheduled or none are**. It uses a **queue** where pods remain **pending without reserving resources** until the scheduler can guarantee that **sufficient resources exist** across the cluster to satisfy the **complete** job requirement.
+
+The gang scheduling problem is **not new** to Kubernetes nor specific to distributed training, but it **affects training more** because of **GPU scarcity and cost**. Kubernetes is **pluggable**, and several projects address this challenge.
+
+#### PyTorch Rendezvous and Gang Scheduling
+
+PyTorch's distributed training relies on a **rendezvous** that combines **peer discovery** with **barrier synchronization**. When a job starts, all workers connect to a **rendezvous backend** (typically a TCP-based key-value store or **etcd**) to:
+
+- **discover** all other workers in the training job
+- **agree** on the complete set of participants and assign **ranks** (`0` to `world_size - 1`)
+- **synchronize at a barrier** — no worker proceeds until **all** workers arrive
+- **exchange connection information** for peer-to-peer communication
+
+This rendezvous barrier is **atomic and blocking**: if the scheduler places **seven of eight** workers but the eighth cannot be scheduled due to fragmentation, the **seven scheduled workers wait indefinitely** at the barrier. Those **seven GPUs remain allocated but idle**, consuming cost while producing **no training progress**.
+
+Gang scheduling solves this by ensuring **all eight workers schedule simultaneously or none schedule at all**, preventing partial deployments that deadlock at rendezvous. While PyTorch's **elastic training** (**`torch.distributed.elastic`**) can handle **dynamic** worker sets, most LLM training uses **static** configurations where the worker count is **fixed** and all must be present.
+
+#### Comparing Gang Scheduling Solutions
+
+Several approaches implement gang scheduling on Kubernetes, each operating at a **different layer** of the stack and serving **different use cases** (Table 7-2). Understanding the distinctions helps administrators select the appropriate technology for their training workloads.
+
+##### Table 7-2. Gang scheduling solutions
+
+| Solution | Primary goal | Architecture layer | Project / community | Best suited for |
+| --- | --- | --- | --- | --- |
+| **Coscheduling plug-in** (`PodGroup` CRD) | Enable gang-scheduling semantics in the **default** Kubernetes scheduler | **Scheduler extension** (extends `kube-scheduler` via the plug-in framework) | Kubernetes SIGs | General-purpose batch workloads requiring all-or-nothing scheduling (training jobs, Spark, etc.) |
+| **Kueue** | Job-level **resource management** and **admission control** | **Admission controller + queue management** (above the scheduling layer) | Kubernetes SIGs | Multitenant environments needing quota management, priority queues, resource borrowing, and fair-share scheduling |
+| **NVIDIA KAI Scheduler** | **GPU-optimized** scheduler for AI/ML workloads | **Alternative scheduler** designed for GPU clusters | NVIDIA ecosystem (originally run:ai) | Large-scale GPU clusters (thousands of nodes), dynamic GPU allocation, hierarchical queues, fairness across AI/ML teams |
+| **Volcano** | **Batch scheduling** with advanced job management | **Alternative scheduler** (replaces or complements `kube-scheduler`) | CNCF sandbox | High-performance batch scheduling for HPC and AI/ML with advanced policies (fair-share, bin packing) |
+
+The Kubernetes community is pursuing **native** gang scheduling support through **[KEP-4671](https://github.com/kubernetes/enhancements/issues/4671)**. It introduces a new core **`Workload`** type that enables **all-or-nothing** scheduling semantics **directly in the scheduler**, allowing pods to be scheduled together as a group. The aim is a **standard framework** for tightly coupled workloads like distributed training, where all workers must start **simultaneously** to avoid deadlock at framework synchronization points. Once approved and implemented, alternative schedulers like **Volcano** and **KAI Scheduler** will need to update their implementations to support the standardized **`Workload`** API for compatibility with the broader ecosystem. While still in the **proposal stage**, this native support would eliminate the need for external plug-ins or custom schedulers for **basic** gang-scheduling use cases — though the solutions described here remain valuable for production deployments today and offer additional features like **advanced queue management** and **GPU-specific optimizations**.
+
+#### Coscheduling plug-in (PodGroup CRD)
+
+The coscheduling plug-in provides the **most direct path** to gang scheduling for **existing** clusters, **extending** the default scheduler without requiring a full replacement.
+
+Installation requires the administrator to install the **[`scheduler-plugins`](https://github.com/kubernetes-sigs/scheduler-plugins)** package and **enable the coscheduling plug-in** in the `kube-scheduler` configuration. Afterward, you define a **`PodGroup`** object representing the scheduling unit and **label every pod** that is part of the same training job with **`scheduling.x-k8s.io/pod-group: <groupId>`** to have them managed as a single unit (see Example 7-3). This **preserves existing scheduler behavior** for non-gang-scheduled workloads while adding coscheduling **only where needed** — easing adoption and limiting impact on a production cluster.
+
+The `PodGroup` CRD is a **very simple abstraction** for grouping different deployments, but it remains **low-level**: it **cannot** manage job-level **quotas**, **prioritization**, or any other advanced scheduling policy.
+
+##### Example 7-3. PodGroup configuration
+
+```yaml
+apiVersion: scheduling.x-k8s.io/v1alpha1
+kind: PodGroup
+metadata:
+  name: llm-training-group
+spec:
+  minMember: 4
+  scheduleTimeoutSeconds: 300
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: llm-training-0
+  labels:
+    scheduling.x-k8s.io/pod-group: llm-training-group
+    job-role: leader
+spec:
+  ...
+```
+
+What to notice:
+
+- **`minMember: 4`** — the **minimum number of pods** the scheduler must schedule together. Distributed jobs commonly have a **driver and workers**, and this value must account for **both**. Because each pod is created independently, it tells the scheduler the **expected minimum group size**.
+- **`scheduleTimeoutSeconds: 300`** — the **maximum time to wait** for all pods to become schedulable.
+- **`name: llm-training-0`** — the **first workload pod**; other pods follow the same pattern with **matching `pod-group` labels**.
+- **`scheduling.x-k8s.io/pod-group`** — all pods sharing this label value are treated as a **single atomic scheduling unit**, while keeping **independent deployment specs**.
+- **`job-role: leader`** — **not** part of the `PodGroup` design, but a **best practice** to clarify the role each pod plays.
+
+#### Kueue
+
+The **[Kueue](https://kueue.sigs.k8s.io/)** project operates at a **higher abstraction** than scheduler plug-ins, providing **job-level admission control**: it decides whether the cluster should **admit** a workload based on **available quota** and **queue priority**. When Kueue admits a job, it ensures all **required resources exist**, complementing the **low-level gang-scheduling** mechanisms that guarantee atomic scheduling.
+
+Kueue's biggest value is **multitenant resource management**: **hierarchical quotas**, **priority-based queuing**, **resource borrowing** between teams, and **fairness policies** that prevent any single tenant from monopolizing cluster resources. Reach for Kueue when managing **shared training clusters across multiple teams** — it provides the **policy layer** (who gets resources, and when) that enables a more generic **GPU-as-a-Service** use case, covered in "Quota Management and Multitenancy: GPU as a Service".
+
+Kueue also integrates seamlessly with **Kubeflow Trainer**, **RayJob**, and other AI projects, making it a natural choice for training-job orchestration. The end-to-end flow involves **distinct personas**: the **platform administrator** configures global rules in a **`ClusterQueue`** and creates the **`LocalQueue`** the **data scientist** uses to access the assigned quota and provision the workload (see Figure 7-2).
+
+When you submit a job with Kueue integration (via the **`kueue.x-k8s.io/queue-name`** label), Kueue automatically creates a custom resource of type **`Workload`** to manage admission control. This `Workload` is **separate** from your actual job (`TrainJob`, `Job`, etc.) and tracks the **resource requirements and admission status**. To check status after submission:
+
+- **Check the `Workload` object**: `kubectl get workloads -n <namespace>` shows whether the job is **admitted** or **queued**.
+- **Check the actual job**: `kubectl get trainjob <name> -n <namespace>` shows job status, but it will remain **suspended** until Kueue admits it.
+- **Understand the flow**: job submitted → Kueue creates `Workload` → `Workload` queued → quota available → `Workload` admitted → job **unsuspended** → pods created.
+
+![Kueue overview: concepts and personas](<assets/Kueue overview - concepts and personas.png>)
+
+**Figure 7-2. Kueue overview: concepts and personas**
+
+The `Workload` status conditions show messages like **`QuotaReserved`** (when admitted) or **`InsufficientQuota`** (when queued), helping you understand **why a job isn't running yet** (see Example 7-4).
+
+##### Example 7-4. Status of a Kueue Workload object
+
+```yaml
+status:
+  conditions:
+  - type: Admitted
+    status: "True"
+    reason: "QuotaReserved"
+    message: "The workload is admitted and quota is reserved"
+  admission:
+    clusterQueue: "ai-training-cluster-queue"
+    podSetAssignments:
+    - count: 1
+      flavors:
+        nvidia.com/gpu: gpu-training-flavor
+      name: head
+    - count: 1
+      flavors:
+        nvidia.com/gpu: gpu-training-flavor
+      name: worker
+```
+
+#### NVIDIA KAI Scheduler
+
+**[NVIDIA KAI Scheduler](https://github.com/NVIDIA/KAI-Scheduler)** is the **open source** version of the core scheduling engine developed by **run:ai** (acquired by NVIDIA). It works **only with NVIDIA hardware** and takes a different, **centralized** approach by focusing on **GPU-aware optimizations** — **fractional allocation**, **time slicing**, and **hierarchical queue management** with **fairness policies**. These combine with **gang scheduling** integrated with **GPU topology-aware placement** (**NVLink** connectivity) to **co-locate** distributed training jobs.
+
+KAI Scheduler supports gang scheduling, usually via **explicit integration** with an aggregated deployment API (see [Kubeflow Trainer](#kubeflow-trainer)) rather than by aggregating independent pods. As an **alternative Kubernetes scheduler**, its main goal is **minimizing idle GPU cost** with **built-in Kubeflow integration**. Example 7-5 shows the configuration using a **`PyTorchJob`** resource; when using **`TrainJob`**, these settings (annotations and `schedulerName`) are configured in the **`ClusterTrainingRuntime`** template.
+
+##### Example 7-5. KAI Scheduler usage with gang scheduling (PyTorchJob)
+
+```yaml
+# project with GPU quota
+apiVersion: kai.run.ai/v1
+kind: Project
+metadata:
+  name: ml-team-a
+spec:
+  gpuQuota: 8
+---
+# Distributed training job with gang scheduling
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: llm-training
+  namespace: ml-team-a
+  annotations:
+    kai.run.ai/project: ml-team-a
+spec:
+  pytorchReplicaSpecs:
+    master:
+      replicas: 1
+      template:
+        spec:
+          schedulerName: kai-scheduler
+  ...
+```
+
+What to notice:
+
+- **`gpuQuota: 8`** — a **project-level GPU quota** (eight GPUs total) for **fair-share** scheduling.
+- **`kai.run.ai/project: ml-team-a`** — the annotation **binds the job to the project** defined above for **quota accounting**.
+- **`schedulerName: kai-scheduler`** — must be set so KAI provides **GPU-aware placement and gang scheduling**.
+
+> **NOTE — `PyTorchJob` vs `TrainJob` in these examples**
+>
+> The examples in this chapter use **`PyTorchJob`** resources from the **Kubeflow Training Operator** (**`kubeflow.org/v1`** API) to demonstrate scheduling and network configuration at the **Kubernetes-resource level**.
+>
+> The previous chapter introduced Kubeflow Trainer's higher-level **`TrainJob`** abstraction (**`trainer.kubeflow.org/v1alpha1`** API), but the **scheduling concepts shown here apply equally to both**. `TrainJob` resources create **`JobSet`** workloads internally, and configurations such as **scheduler selection**, **Kueue labels**, **network annotations**, and **NCCL environment variables** are specified in the **`ClusterTrainingRuntime`/`TrainingRuntime`** templates. This separation lets **administrators** configure these production optimizations in **runtime templates** while **data scientists** focus on training logic through the **SDK**.
+
+#### Volcano
+
+The **[Volcano](https://volcano.sh/)** project is a **CNCF sandbox** project originally created by **Huawei**. It provides a comprehensive **batch scheduling system** for **HPC, AI/ML, and big data** workloads (e.g., **Apache Spark**) that **entirely replaces `kube-scheduler`** with a **monolithic** solution integrating **queue management**, **gang scheduling**, and **topology-aware placement**.
+
+Volcano introduces **`Queue`**, **`PodGroup`**, and **`Job`** CRDs to describe and handle **advanced scheduling algorithms** and **reclaim policies** for **preempting lower-priority jobs**, making it suitable for production environments running **complex batch workflows** across major frameworks like **TensorFlow**, **PyTorch**, and **Apache Spark**. However, adopting Volcano requires **replacing the default scheduler entirely**, making it **more invasive** than layering **Kueue** over `kube-scheduler` with the coscheduling plug-in — so it may **not be applicable** to existing production clusters where traditional workloads are already present.
+
+#### Making the right choice
+
+This section introduced several techniques for gang scheduling on Kubernetes, along with their pros and cons. In a real-world production cluster, however, it is very common to **combine** different solutions.
+
+A common (and **recommended**) scenario combines **Kueue** for **admission control and quota management** with AI-specialized deployment APIs like **`PyTorchJob`** (see [Kubeflow Trainer](#kubeflow-trainer)) or **`LeaderWorkerSet`**. For example, the **NVIDIA KAI Scheduler** can replace the default scheduler to provide **GPU-aware optimizations** while still leveraging the **admission management** provided by the Kueue layer.
+
+> **NOTE — LeaderWorkerSet (LWS) solves a different problem**
+>
+> The **[LeaderWorkerSet (LWS)](https://github.com/kubernetes-sigs/lws)** project can be used together with specialized schedulers because it addresses a **different** problem: managing workloads with an **inherent leader-worker topology** rather than just ensuring **atomic scheduling**.
+>
+> While LWS **assumes** gang-scheduling semantics (all pods in a group are scheduled together or not at all), its primary value is a **workload API that understands the leader-worker pattern** common in AI/ML **inference**, where a **leader** pod coordinates work distribution to **worker** pods and both must be **co-located or efficiently networked**. This makes LWS **specialized for AI/ML** compared with the more generic **`PodGroup`** API.
+>
+> While **`PyTorchJob`** is specialized for distributed **training**, LWS mainly targets distributed **inference** — especially **multihost** inference where the LLM is **sharded and run across multiple devices on multiple nodes**. This scenario has the **same gang-scheduling challenge** as a distributed training job.
+
+While the gang-scheduling solutions discussed here ensure distributed training jobs receive **complete** resource allocations, they **don't** address **where** those resources sit within the cluster's **physical infrastructure**. Placing pods across nodes with **different GPU interconnect technologies** can dramatically impact training performance — making **topology awareness** the next critical scheduling consideration.
 
 [Back to Contents](#contents)
 
