@@ -13,6 +13,7 @@ and transported.
 - [VoIP](#voip)
 - [SIP Trunk Provider](#sip-trunk-provider)
 - [SIP](#sip)
+  - [SIP Bot / SIP Automation Backend](#sip-bot--sip-automation-backend)
 - [RTP](#rtp)
 - [PCM](#pcm)
 - [How They Work Together](#how-they-work-together)
@@ -305,6 +306,47 @@ manager for many VoIP systems.
 
 SIP does not carry the actual voice audio. It controls the session. The media is
 usually carried separately by RTP or SRTP.
+
+### SIP Bot / SIP Automation Backend
+
+A SIP bot is backend software that automates SIP-related call-control tasks that
+a human operator, agent, or telephony administrator might otherwise perform
+manually. It is not a separate protocol. It is application code that speaks SIP,
+connects to a PBX or SIP trunk provider, and reacts to call events.
+
+In a Realtime AI voice call center, a SIP bot may act as the telephony control
+layer between the phone network and the AI application.
+
+Common responsibilities include:
+
+- Receiving inbound SIP calls and deciding whether to answer, reject, transfer,
+  or route them.
+- Starting outbound SIP calls for automated campaigns, callbacks, appointment
+  reminders, or support workflows.
+- Sending and responding to SIP messages such as `INVITE`, `200 OK`, `ACK`,
+  `BYE`, `REFER`, and `re-INVITE`.
+- Connecting the call media path to RTP, WebRTC, a media server, or a realtime
+  AI voice engine.
+- Coordinating speech-to-text, language model responses, text-to-speech, and
+  call state.
+- Escalating calls from an AI agent to a human agent, queue, PBX extension, or
+  external phone number.
+- Logging call metadata, recording events, enforcing business rules, and
+  integrating with CRM or ticketing systems.
+
+Example:
+
+```text
+Customer phone
+  -> PSTN / mobile network
+  -> SIP trunk provider
+  -> SIP bot / PBX integration
+  -> Realtime AI voice application
+  -> Human agent transfer if needed
+```
+
+In this model, SIP controls the call session, RTP or WebRTC carries the live
+audio (PCM), and the SIP bot automates the call handling logic around the AI service.
 
 [Back to contents](#contents)
 
