@@ -1,4 +1,4 @@
-# SIP, VoIP, PBX, PSTN, RTP, and PCM
+# SIP, VoIP, PBX, PSTN, ATS, RTP, and PCM
 
 These technologies sit at different layers of voice communication. Some describe
 the network, some describe call control, and some describe how voice is encoded
@@ -9,6 +9,7 @@ and transported.
 | Term | Full name | Layer | Main role |
 | --- | --- | --- | --- |
 | PSTN | Public Switched Telephone Network | Legacy carrier network | Traditional phone network for landline and carrier voice calls |
+| ATS | Automatic Telephone Exchange | Telephone switching system | Connects dialed numbers to receiving lines inside the PSTN or a private phone system |
 | PBX | Private Branch Exchange | Business phone system | Routes calls inside an organization and connects them to external networks |
 | VoIP | Voice over IP | Voice architecture | Sends voice calls over IP networks instead of dedicated telephone circuits |
 | SIP trunk provider | SIP trunking carrier | Carrier bridge | Connects an IP PBX to external landline and mobile networks |
@@ -40,6 +41,54 @@ between callers.
   routing.
 - Requires gateways or carrier interconnects when connecting to IP-based VoIP
   systems.
+
+## ATS
+
+ATS stands for Automatic Telephone Exchange. It is the switching system that
+automatically connects one telephone line, number, or extension to another.
+
+### What It Is
+
+An ATS is the call-switching equipment or service that receives dialed digits,
+finds the destination, and establishes the connection. In traditional public
+telephony, an ATS is part of the PSTN. In an organization, the same idea is
+usually called a PBX or PABX.
+
+The simple distinction is:
+
+- PSTN is the wider public telephone network.
+- ATS is the switching system inside that network, or inside a private
+  organization, that directs calls.
+
+### Main Responsibilities
+
+- Receives dialed digits or signaling information.
+- Identifies the destination line, number, route, or extension.
+- Reserves or selects the path needed for the call.
+- Connects the caller to the recipient.
+- Releases the connection when the call ends.
+
+### ATS Types
+
+| Type | Description | Typical use |
+| --- | --- | --- |
+| Public local ATS | Carrier-operated exchange serving a town, district, or neighborhood | Connects local landline subscribers and routes calls to other exchanges |
+| Private/local ATS | Organization-owned exchange, commonly called PBX or PABX | Office, factory, hotel, school, or campus extensions |
+| Virtual ATS | Cloud-hosted exchange, usually based on VoIP and SIP | Hosted business phone systems without on-premises switching hardware |
+
+### ATS vs PSTN
+
+PSTN is the network. ATS is one of the switching systems that makes the network
+usable.
+
+```text
+PSTN = the road network
+ATS  = the exchange/router that decides where a call goes
+```
+
+When a landline user dials a number, the local ATS receives the digits, selects
+the route, and connects the caller through the PSTN to the destination exchange
+or line.
 
 ## PBX
 
@@ -295,8 +344,19 @@ trunk provider bridges the IP voice network to the PSTN.
 SIP phone
   -> IP PBX
   -> SIP trunk provider
-  -> PSTN gateway
+  -> PSTN gateway / ATS
   -> Landline or mobile phone
+```
+
+For a traditional landline call, the ATS is the system that performs the actual
+switching inside the PSTN.
+
+```text
+Landline phone
+  -> Local ATS
+  -> PSTN
+  -> Destination ATS
+  -> Receiving phone
 ```
 
 ## Example Business Call Flow
@@ -322,9 +382,11 @@ Call signaling:        SIP
 Media transport:       RTP
 Audio encoding:        PCM / codecs
 Legacy carrier side:   PSTN
+Telephone switching:   ATS
 ```
 
 In short, PBX decides how business calls are routed, VoIP carries voice over IP
 networks, a SIP trunk provider connects the IP PBX to external phone networks,
 SIP controls the call session, RTP transports the live media, PCM represents the
-digital audio foundation, and PSTN connects to the traditional telephone world.
+digital audio foundation, PSTN connects to the traditional telephone world, and
+ATS performs the switching that connects dialed numbers to receiving lines.
