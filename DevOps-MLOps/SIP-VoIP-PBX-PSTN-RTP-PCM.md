@@ -24,7 +24,7 @@ and transported.
 | Term | Full name | Layer | Main role |
 | --- | --- | --- | --- |
 | PSTN | Public Switched Telephone Network | Legacy carrier network | Traditional phone network for landline and carrier voice calls |
-| ATS | Automatic Telephone Exchange *(Avtomatik Telefon Stansiyası)* | Telephone switching system | Connects dialed numbers to receiving lines inside the PSTN or a private phone system |
+| ATS | Automatic Telephone Exchange *(Automatic Telephone Station or Автоматическая Телефонная Станция or Avtomatik Telefon Stansiyası)* | Telephone switching system | Connects dialed numbers to receiving lines inside the PSTN or a private phone system |
 | PBX | Private Branch Exchange | Business phone system | Routes calls inside an organization and connects them to external networks |
 | VoIP | Voice over IP | Voice architecture | Sends voice calls over IP networks instead of dedicated telephone circuits |
 | SIP trunk provider | SIP trunking carrier | Carrier bridge | Connects an IP PBX to external landline and mobile networks |
