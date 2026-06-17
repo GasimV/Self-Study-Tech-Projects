@@ -4,6 +4,21 @@ These technologies sit at different layers of voice communication. Some describe
 the network, some describe call control, and some describe how voice is encoded
 and transported.
 
+## Contents
+
+- [Quick Summary](#quick-summary)
+- [PSTN](#pstn)
+- [ATS](#ats)
+- [PBX](#pbx)
+- [VoIP](#voip)
+- [SIP Trunk Provider](#sip-trunk-provider)
+- [SIP](#sip)
+- [RTP](#rtp)
+- [PCM](#pcm)
+- [How They Work Together](#how-they-work-together)
+- [Example Business Call Flow](#example-business-call-flow)
+- [Layer Relationship](#layer-relationship)
+
 ## Quick Summary
 
 | Term | Full name | Layer | Main role |
@@ -16,6 +31,8 @@ and transported.
 | SIP | Session Initiation Protocol | Signaling | Starts, manages, and ends VoIP sessions |
 | RTP | Real-time Transport Protocol | Media transport | Carries live audio or video packets after a call is established |
 | PCM | Pulse Code Modulation | Audio encoding | Converts analog voice into digital audio samples |
+
+[Back to contents](#contents)
 
 ## PSTN
 
@@ -41,6 +58,8 @@ between callers.
   routing.
 - Requires gateways or carrier interconnects when connecting to IP-based VoIP
   systems.
+
+[Back to contents](#contents)
 
 ## ATS
 
@@ -89,6 +108,8 @@ ATS  = the exchange/router that decides where a call goes
 When a landline user dials a number, the local ATS receives the digits, selects
 the route, and connects the caller through the PSTN to the destination exchange
 or line.
+
+[Back to contents](#contents)
 
 ## PBX
 
@@ -142,6 +163,8 @@ For external calls to landline or mobile numbers, the PBX needs a carrier
 connection. In modern VoIP deployments, that carrier connection is usually a SIP
 trunk provider.
 
+[Back to contents](#contents)
+
 ## VoIP
 
 VoIP stands for Voice over IP. It is the overall method of carrying voice calls
@@ -181,6 +204,8 @@ internet.
 3. RTP carries the encoded audio packets.
 4. SIP ends the call when either side hangs up.
 ```
+
+[Back to contents](#contents)
 
 ## SIP Trunk Provider
 
@@ -257,6 +282,8 @@ API-oriented platforms such as Telnyx SIP Trunking or Twilio Elastic SIP
 Trunking, but the administrator is responsible for trunk configuration, codecs,
 security, dial plans, and interoperability testing.
 
+[Back to contents](#contents)
+
 ## SIP
 
 SIP stands for Session Initiation Protocol.
@@ -278,6 +305,8 @@ manager for many VoIP systems.
 
 SIP does not carry the actual voice audio. It controls the session. The media is
 usually carried separately by RTP or SRTP.
+
+[Back to contents](#contents)
 
 ## RTP
 
@@ -302,6 +331,8 @@ RTP commonly runs over UDP because live conversation prioritizes low delay over
 perfect retransmission. A small amount of packet loss is usually better than
 waiting too long for missing packets to be resent.
 
+[Back to contents](#contents)
+
 ## PCM
 
 PCM stands for Pulse Code Modulation.
@@ -323,6 +354,8 @@ into digital samples.
 Standard telephony audio commonly samples voice 8,000 times per second. G.711,
 one of the most common VoIP codecs, is based on PCM and produces a 64 kbps audio
 stream before packet overhead.
+
+[Back to contents](#contents)
 
 ## How They Work Together
 
@@ -359,6 +392,8 @@ Landline phone
   -> Receiving phone
 ```
 
+[Back to contents](#contents)
+
 ## Example Business Call Flow
 
 ```text
@@ -371,6 +406,8 @@ Landline phone
 7. PCM-based audio may be encoded using a codec such as G.711.
 8. When the call ends, SIP sends a BYE message and the RTP stream stops.
 ```
+
+[Back to contents](#contents)
 
 ## Layer Relationship
 
@@ -390,3 +427,5 @@ networks, a SIP trunk provider connects the IP PBX to external phone networks,
 SIP controls the call session, RTP transports the live media, PCM represents the
 digital audio foundation, PSTN connects to the traditional telephone world, and
 ATS performs the switching that connects dialed numbers to receiving lines.
+
+[Back to contents](#contents)
