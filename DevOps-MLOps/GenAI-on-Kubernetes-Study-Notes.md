@@ -176,7 +176,20 @@
      - [Logging Across Distributed Workers](#logging-across-distributed-workers)
      - [Tracing Distributed Training Operations](#tracing-distributed-training-operations)
    - [Lessons Learned](#lessons-learned-1)
-9. [High-Value Recall Checklist](#high-value-recall-checklist)
+9. [AI-Driven Applications](#ai-driven-applications)
+   - [Architectural Patterns](#architectural-patterns)
+     - [Kubernetes Workload Types](#kubernetes-workload-types)
+     - [Chat Applications](#chat-applications)
+     - [Backend AI Services](#backend-ai-services)
+       - [Scheduled batch jobs](#scheduled-batch-jobs)
+       - [Continuous control loops](#continuous-control-loops)
+       - [Multistep tool automation](#multistep-tool-automation)
+   - [Retrieval-Augmented Generation](#retrieval-augmented-generation)
+     - [RAG Components](#rag-components)
+     - [Document Ingestion](#document-ingestion)
+     - [User Query Processing](#user-query-processing)
+     - [RAG on Kubernetes](#rag-on-kubernetes)
+10. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -10657,6 +10670,302 @@ This chapter explored the **operational foundations** required to run production
 - **Treat infrastructure design as product thinking.** Measure success by **training-job success rate** and **time-to-result**, not just infrastructure uptime. The scheduling, security, storage, and observability choices in this chapter collectively define the **developer experience** for data scientists — treat them as **customers** whose workflow efficiency directly affects how fast the organization iterates on model development and ships AI capabilities to production.
 
 > **Part III wrap-up:** With the infrastructure for tuning in place, you can now **customize foundation models** and **run training workloads at scale**. The next part shifts perspective **from models to applications** — building complete AI-driven systems that orchestrate **LLMs** alongside **vector databases**, **tool invocations**, and **agentic workflows**.
+
+[Back to Contents](#contents)
+
+## AI-Driven Applications
+
+Earlier chapters showed how to **deploy model servers** like **vLLM** on Kubernetes, **package model data**, and **operate inference at scale**. Building on that foundation, this chapter shifts from **serving single models** to **architecting complete AI-driven applications**, where an LLM is **just one of many components**.
+
+The focus here is **application architecture**: how requests **flow** through a system, how **context is retrieved** or **tools are invoked**, and how **state is maintained** over time. We introduce popular **architectural patterns**, the key components of AI application stacks, and the challenges of integrating LLMs into real-world applications — kept deliberately **high-level**, with deeper technical detail in the next chapter.
+
+LLMs entered mainstream software as **chatbots** (ChatGPT being the most prominent). Chat is still the **dominant interaction pattern**, but the software behind it has matured. Modern AI apps **wrap an LLM with application logic** that fetches business context, calls internal systems, and writes state. The **LLM inference service is powerful, but it does not reach into databases or call tools by itself.**
+
+**The application is in charge**, using the LLM for **generation or reasoning**. You'll see where to use **retrieval for grounding**, when to **orchestrate tool calls**, and how to **keep state across turns** without losing control of **cost, latency, and quality**.
+
+This chapter covers:
+
+- **Architectural Patterns** — two fundamental setups for embedding AI-driven applications in a wider operational landscape
+- **Retrieval-Augmented Generation** — grounding LLMs in your domain data
+- **Agentic Workflows** — orchestrating multistep, tool-using behavior
+
+By the end, you'll understand the **categories of AI-driven application** and how generative-AI workloads **integrate into broader systems**.
+
+[Back to Contents](#contents)
+
+### Architectural Patterns
+
+Before diving into typical AI-app architectures, let's recap the most important **Kubernetes workload types** so we can map them to architectural components.
+
+Mapping each responsibility to the right **Kubernetes primitive** enables **decoupled lifecycles and release cadences**. For example, **LLM serving instances** can be updated on a different schedule than the **application-logic deployment** — you can upgrade or scale one part without disrupting others, aligning with **microservice best practices** now applied to LLM-centric apps.
+
+> **NOTE — the LLM service doesn't have to live in your cluster**
+>
+> While we focus on deploying all components **within Kubernetes**, the LLM service can also run in **another cluster** or as a **managed cloud service** (OpenAI, Anthropic, Google Vertex AI). This decoupling is common in production given **GPU constraints** and offers flexibility: your **orchestrator and application logic stay in Kubernetes** while inference **scales independently as a service**. **AI gateways** (see [LLM-Aware Routing](#llm-aware-routing)) provide a unified interface to both **self-hosted and cloud** models, letting you switch between them **without changing application code**.
+
+#### Kubernetes Workload Types
+
+Here are the key Kubernetes primitives and their AI-app roles. Each is detailed in **[Kubernetes Patterns](https://www.oreilly.com/library/view/kubernetes-patterns-2nd/9781098131678/)**; the corresponding patterns are noted in *italics*:
+
+- **`Deployment`** — **stateless, always-on** services: the main application backend or an event-driven orchestrator. Handles rolling updates, scaling, and restarts. In an AI app, the **AI Orchestrator** handles requests/events while the **LLM inference server** (often with **GPU** requests) handles inference; both run as Deployments so they **scale independently**. *(Declarative Deployment)*
+- **`StatefulSet`** — **stateful** services needing **stable identities or persistent storage**: databases, caches, or **vector stores** holding embeddings and context. Survives restarts with data intact. *(Stateful Service)*
+- **`Job` / `CronJob`** — **one-off or scheduled** tasks: offline ingestion, report generation, periodic maintenance. CronJobs trigger Jobs on a schedule; Jobs run to completion and free resources afterward. *(Batch Job, Periodic Job)*
+- **`Ingress` / `Gateway`** — **entry point** into the cluster for client requests, routing external traffic to the right service. For AI-aware routing and scheduling, see [LLM-Aware Routing](#llm-aware-routing). *(Service Discovery)*
+
+Assigning the right primitive to each function **sets lifecycle boundaries**: stateless logic in Deployments updates and scales independently, stateful stores in StatefulSets maintain continuity, and ephemeral/scheduled work runs in Jobs that **cost only when needed**. These boundaries also imply different **SLAs and cost profiles** — a conversational API needs **low latency and high availability**, while a nightly summarization job can run with **relaxed timing**.
+
+Let's start with the most popular category: **UI-facing chat applications** like ChatGPT.
+
+#### Chat Applications
+
+The first example (Figure 8-1) is a **chat-facing application**. A user talks to a **web/mobile UI**, which calls a **conversational backend**. That backend **orchestrates the flow**: it retrieves relevant **context** from stores, calls **domain tools/APIs** when needed, builds a **prompt**, then calls the **LLM service** for generation. After the model responds, the backend **post-processes** the result, **updates per-user memory/state**, and returns the response. This split keeps the **LLM focused on generation** while the **app owns data access, side effects, and policy**.
+
+![A typical chat-like application](<assets/A typical chat-like application.png>)
+
+**Figure 8-1. A typical chat-like application**
+
+This **request-response** system shows a **linear flow**: a user issues a request and waits. The flow is **synchronous from the user's perspective**, even if many steps happen behind the scenes. The **LLM is one component**; the **backend owns the conversation logic**.
+
+A typical sequence for a single query (with the relevant Kubernetes workload type in parentheses):
+
+1. **Gateway/Ingress** routes the user's request to the backend. *(Ingress, Gateway)*
+2. The **AI Orchestrator** controls the chat logic — retrieving context (for **RAG**), assembling the prompt, and calling the LLM. For **agentic** workflows it may invoke tools based on the LLM's output, requiring **multiple LLM calls in a loop**. This is the **"brain"** of the app (e.g., using **LangChain** to manage prompt, memory, and tools). *(Deployment)*
+3. The **LLM service** performs inference and returns the output. Isolating it in its own service lets you **scale/update the model independently** — typically on **GPU nodes** with **autoscaling**. *(Deployment)*
+4. **State management** provides **conversation memory** or **retrieval indexes** in a database, cache, or vector store (e.g., **Redis/Postgres** for chat history, a **vector store** for embeddings), usually run as **StatefulSets with PersistentVolumes**. The orchestrator reads prior messages/vectors for context, then writes back the latest turn. *(StatefulSet)*
+5. **Response to client** may include **post-processing** or **final tool calls** before replying.
+
+This keeps the **LLM focused on generation** while the **app controls data access, tool use, and side effects**. The whole chain runs in a **single synchronous request cycle**, so **low latency is a priority**: to meet **SLOs** (subsecond to a few seconds), keep the **orchestrator and LLM pods running and ready** — use **autoscaling** for bursts, but don't cold-start them per request.
+
+A benefit of a **user-facing** architecture is easy participation in **distributed auth flows** like **OAuth2** (browser redirects to auth servers), making **security simpler** than for the backend services described in [Backend AI Services](#backend-ai-services).
+
+This separation lets the **conversational logic** (updated frequently as prompts and tools evolve) be **decoupled from LLM serving** (changing only on a new model/version), with the **database** as a rarely-changing dependency. Each piece **upgrades independently** — e.g., deploying a new orchestrator with improved prompt handling **without touching** the LLM deployment or wiping stored data — and each **scales by its own usage** (chat sessions mainly load the LLM and database; the orchestrator is lighter, compute-bound, and needs fewer replicas).
+
+#### Backend AI Services
+
+The second pattern is a more **interconnected microservices** architecture, where an **LLM-powered service** is part of a broader system **without a direct UI** or direct user request to an LLM. Instead, the LLM logic is **triggered by events or calls** from other services.
+
+Figure 8-2 shows an AI-driven backend doing **order risk analysis** in an ecommerce platform. An **application orchestrator** receives order events from services like **Orders**, **Payments**, and **Catalog** (e.g., to check availability or pricing changes hinting at suspicious activity), then calls an **AI risk analyzer** that uses an **LLM**, a **vector store of policy text**, and **past cases** to evaluate the order. The analyzer may also call **domain tools** (a rules engine, fraud APIs). Finally, the orchestrator **writes the decision** to a risk database and **emits events** for downstream services like **Fulfillment**. This can run **synchronously** (service calls) or **asynchronously** (event bus).
+
+![Event-driven AI service](<assets/Event-driven AI service.png>)
+
+**Figure 8-2. Event-driven AI service**
+
+In this **event-driven** architecture, the AI app **subscribes to events**, performs **multistep analysis** with an LLM, and **emits results**:
+
+1. The **message broker** receives events (**`OrderPlaced`**, **`PaymentProcessed`**) from business services; the AI orchestrator **subscribes**. On Kubernetes this might use an **event-streaming platform** in-cluster or an external bus — or **Knative Eventing** / **Dapr** pub-sub. The key point: the AI service is **triggered asynchronously**, not via an HTTP request. *(StatefulSet)*
+2. The **AI Orchestrator** wakes on relevant events. On `OrderPlaced`, it gathers data from multiple sources (order details, payment history, product info), then calls an **AI risk analyzer** that uses an **LLM plus a vector store** of policy documents and past fraud cases. It may also call **non-AI tools** (rules engine, third-party fraud API). This is an **agent-like workflow** encapsulated in a **single microservice**. *(Deployment)*
+3. The **LLM and tools** run as **separate deployments or external APIs**. The **vector DB** for retrieval is a **StatefulSet with a PVC**, acting as a knowledge base to **ground** the LLM's decision. Domain tools are separate services via their own APIs — occasionally even a **Kubernetes Job** for a compute-heavy async step, though usually just HTTP/gRPC calls. The key difference from the chat pattern: these calls are **not user-initiated** but part of a **backend flow**. *(Deployment)*
+4. **State outputs** persist decisions to a datastore and **emit new events**. The outcome (approve/flag, risk score) is written to a **risk database** (another **StatefulSet**), and an event like **`OrderFlagged`** is produced for downstream services. *(StatefulSet)*
+5. **Downstream services react** — halting fulfillment, triggering reviews — as other Deployments or Jobs handling events.
+
+This follows a **short think-act-observe loop**: receive an input event, use the LLM to **plan and possibly act**, update state, await the next input. It's effectively an **autonomous agent within the microservice ecosystem**, operating under **defined guardrails** with **auditable results**. The orchestrator can **scale out** under high event load (though ordered processing may need coordination). Mind **idempotency and reliability**: handle **duplicate events or failures gracefully** — a **message queue** can buffer events while a new pod starts. This trades **slightly more latency** (eventual consistency) for **looser coupling and better throughput**, and is often **more cost-efficient**: no work without events, and you can even **scale to zero** with **KEDA** or **Knative**.
+
+For releases, many parts update **independently** (orchestrator logic, LLM serving stack, data stores, brokers) — so **clear interfaces** (event schemas, API contracts) are crucial to upgrade one service **without breaking the pipeline**, echoing traditional microservice best practices applied to LLM-centric functionality.
+
+This backend pattern also has **variations** not tied to an immediate external stimulus. These **headless services** can run **asynchronously** on their own or within larger background workflows — **scheduled jobs**, **long-running agent loops**, or **on-demand batch tasks**.
+
+##### Scheduled batch jobs
+
+To kick off **ingestion**, **nightly summaries**, or **periodic fine-tuning**, use **`CronJob`s** that update vector stores or derived artifacts. Figure 8-3 shows a CronJob firing up an ingestion job.
+
+The **document-ingestion** phase of a RAG pipeline (described in "Document Ingestion") is a good example: a **CronJob** periodically processes new documents, generates **embeddings**, and updates the **vector store** — rather than doing it in the request path, keeping user-facing parts fast.
+
+![Scheduled batch jobs](<assets/Scheduled batch jobs.png>)
+
+**Figure 8-3. Scheduled batch jobs**
+
+A typical batch sequence:
+
+1. An **external data source** provides datasets/worklists pulled in by the CronJob (files in object storage, API endpoints with new data, time-based triggers).
+2. The **CronJob** schedules processing on a regular interval (nightly, hourly), creating **Job** instances with retry policies and resource limits. *(CronJob)*
+3. The **batch worker Job** runs the processing logic — load data, invoke the LLM (a model API or a local smaller model), write results, then exit. With **no user waiting**, schedule for **off-peak hours** or **lower-priority nodes** to cut cost; resources free on completion. *(Job)*
+4. The **LLM service** performs inference for the batch worker — the **same LLM deployment** used elsewhere, for consistent serving. *(Deployment)*
+5. The **vector store** holds embeddings the job updates (e.g., ingestion stores embeddings for later retrieval at query time). *(StatefulSet + PVC)*
+6. The **results database** stores outcomes (summaries, classifications, derived data) for downstream queries. *(StatefulSet + PVC)*
+7. **External object storage** may receive reports/artifacts/files for other systems or download.
+
+**CronJobs and Jobs** are the natural primitives here — **failure retries**, **per-run logs**, and **per-run resource isolation**. You might allocate **more memory or a GPU** for a nightly job without holding that allocation all day.
+
+##### Continuous control loops
+
+Instead of time-based triggers, **control loops** run **continuously**, watching for conditions or iteratively working a task. Figure 8-4 shows a polling, asynchronous setup.
+
+For instance, an **ambient agent** (described in "Ambient Agents") monitors a data stream (logs, social media, IoT sensor readings) and, on an anomaly or keyword, uses an LLM to analyze and maybe **trigger an alert**. Unlike the event-driven service in Figure 8-2, this agent **polls for work in a loop** (polling a source or awaiting callbacks) rather than reacting to pushed events.
+
+![Asynchronous agents](<assets/Asynchronous agents.png>)
+
+**Figure 8-4. Asynchronous agents**
+
+The continuous control-loop architecture:
+
+1. An **external data feed** provides the stream the agent monitors (change feed, API endpoint, log stream).
+2. The **async agent loop** runs continuously in a **Deployment**, polling the feed and deciding when to act — check input; if interesting, call LLM/tools; produce output; repeat. It's conceptually like a **Kubernetes controller** (a reconciliation loop), except with an **LLM in the decision**. It can also be passively user-facing (e.g., an always-connected **Slack bot** that replies when mentioned). *(Deployment)*
+3. The **LLM service** provides inference as the agent observes data. *(Deployment)*
+4. The **vector store** holds embeddings/reference data the agent may query (policies, past cases, KB articles). *(StatefulSet + PVC)*
+5. The **results database** stores the agent's decisions/actions/observations — an **audit trail** other systems can query. *(StatefulSet + PVC)*
+6. **External output** (artifacts, reports, files) may go to object storage.
+7. **Notifications/webhooks** let the agent **alert external systems** when it acts.
+
+For **always-on agents**, a **Deployment** fits — often **one replica**, still with **auto-restart** on failure. To enforce a single copy, use **leader election** or a **singleton** pattern (replica count 1, no autoscaling; or a size-1 StatefulSet, though its stable identity is usually unneeded). More singleton strategies are in **[Kubernetes Patterns](https://www.oreilly.com/library/view/kubernetes-patterns-2nd/9781098131678/)**.
+
+##### Multistep tool automation
+
+An async workflow can also accomplish a **complex multistep goal without human intervention**. Figure 8-5 shows a **multistep agent** that **plans and executes** a sequence of actions.
+
+For example, an agent tasked to **generate and send a weekly summary email** plans: query a database, ask an LLM to summarize key points, maybe generate a graph via a plotting tool, then send the email via an **SMTP (Simple Mail Transport Protocol)** service.
+
+![Multistep tool automation](<assets/Multistep tool automation.png>)
+
+**Figure 8-5. Multistep tool automation**
+
+A multistep automation sequence:
+
+1. A **trigger** starts the workflow — a **CronJob** (scheduled, e.g., weekly reports) or an **API call** (on-demand).
+2. The **multistep agent** orchestrates via a **plan-act-observe loop**, keeping **internal state** of its progress: decide the next action, execute, observe the result, update the plan. Implement as a **Job** (run-to-completion, simplest) or a temporary **Deployment**. *(Job or Deployment)*
+3. The **LLM service** provides reasoning/generation — called **multiple times** (create the initial plan, generate content like summaries, decide next steps from observations). *(Deployment)*
+4. The **knowledge base (vector store)** provides context/reference info to **ground** decisions. *(StatefulSet + PVC)*
+5. **External tools** let the agent act on the world — databases to query, plotting libraries, SMTP services, other APIs. The **ReAct pattern** and **multiagent coordination** (see "Agentic Workflows") live here, as **application-level control flows** in your orchestration service.
+6. The **task-state database** tracks progress and decisions — an **audit trail** enabling **recovery/restart**. *(StatefulSet + PVC)*
+7. **Notifications / external consumers** receive the final output or status updates.
+
+The key point: these agents **don't map to distinct Kubernetes resource kinds** — you run them **within Deployment or Job workloads**. Architecturally, decide whether each multistep process runs **synchronously** (holding a user request open) or **asynchronously** (off the request path); **long multistep agents** are usually safer **asynchronous**, notifying the user/system when done.
+
+**Asynchronous patterns** give flexibility with resource usage: run non-urgent work at **lower priority** or on **spare capacity** (e.g., **spot instances**). Conversely, a **critical ambient agent** (e.g., watching for security intrusions) is treated like any important service — **highly available and fast**, possibly a dedicated pod keeping the **LLM loaded in memory**. **Always-on agents** incur **constant cost** (the pod runs continuously); **event-triggered jobs** cost **only per use** — the classic **cost-vs-responsiveness** trade-off. Set these **lifecycle boundaries intentionally**: which processes spin up **on demand** (to save money) versus which stay **pre-warmed and waiting** (to meet latency targets).
+
+With the popular architectures covered, the next sections focus on the **AI Orchestrator** component central to any AI application — starting with a technique for **grounding LLMs in your domain data**.
+
+[Back to Contents](#contents)
+
+### Retrieval-Augmented Generation
+
+**Retrieval-augmented generation (RAG)** is a design pattern that **grounds an LLM's output in external data** by fetching relevant information **at inference time** and including it in the prompt. Instead of relying solely on the model's **fixed training data**, we give the model an **"open book"** during question answering. The result: **fewer hallucinations** and answers reflecting the **latest, domain-specific knowledge** — even when the base model's training data is stale. We introduced RAG briefly in [Retrieval-Augmented Generation (RAG)](#retrieval-augmented-generation-rag) as an alternative to model customization; here we go deeper into its **implementation on Kubernetes**.
+
+It helps to contrast RAG with **fine-tuning** (see [Fine-Tuning](#fine-tuning)). Fine-tuning teaches new information by **updating model weights** — ideal for **style, tone, or stable domain patterns** you want embedded in the model. But it's **resource-intensive and slow**, and you must **repeat it for every new data update**. RAG sidesteps retraining by **injecting knowledge at query time**: update a **vector database** with new documents, and the next query can immediately retrieve and use them. This makes RAG **flexible for dynamic knowledge bases** — a big reason it's popular in enterprises.
+
+RAG and tuning are **complementary, not mutually exclusive**. Core knowledge that rarely changes can be **baked into a smaller fine-tuned model** (reducing prompt size), while RAG supplies **current or user-specific data** outside the model's built-in knowledge. Since **large context windows carry memory and latency costs**, minimizing prompt size helps. Many teams combine both: **bake long-lived knowledge into a tuned model**, and use **RAG for dynamic or user-specific facts** — balancing **accuracy and efficiency**.
+
+Crucially, RAG works with **any base model** (original or fine-tuned) because it operates **purely through the prompt interface**. All prompt-based techniques — RAG, tool usage — are compatible with a fine-tuned model as the LLM backend.
+
+RAG has **two distinct phases** (Figure 8-6). Ingestion prepares knowledge for retrieval:
+
+- **Document ingestion** — parses, chunks, embeds, and stores domain documents in a vector database (see [Document Ingestion](#document-ingestion)).
+- **User query processing** — embeds the user's prompt, retrieves similar chunks, optionally reranks, and assembles the final prompt to the LLM (see [User Query Processing](#user-query-processing)).
+
+![The two RAG phases: document ingestion and user query processing](<assets/The two RAG phases - document ingestion and user query processing.png>)
+
+**Figure 8-6. The two RAG phases: document ingestion and user query processing**
+
+A RAG setup consists of several cooperating components. Before we operate them on Kubernetes, let's look at their responsibilities.
+
+#### RAG Components
+
+A typical RAG architecture comprises distinct services that map well to **microservice boundaries**. An earlier RAG pipeline overview and Figure 8-6 showed the core building blocks; here we examine each component, then [RAG on Kubernetes](#rag-on-kubernetes) maps them to the proper workload types.
+
+- **Vector database** — a specialized store for **high-dimensional vectors (embeddings)**, holding your knowledge base in vector form for **fast nearest-neighbor search**. It returns the documents/snippets most similar to a query vector — the **"memory"** RAG queries for context. (See the **Vector Databases in a Nutshell** sidebar.)
+- **Embedding model** — converts text (or other modalities) into **embedding vectors** during ingestion and at query time. The **same** model encodes each document chunk (stored in the vector DB) and the user's query (so we search for nearby vectors). **Embedding quality** directly drives retrieval relevance — semantically similar documents should map to **nearby vectors** in the high-dimensional space. You might use an open source **sentence transformer**, a proprietary API (e.g., OpenAI embeddings), or the LLM's own embeddings. **Use the same embedding model for indexing and querying** — it can differ from the generation LLM (many systems pair a **small specialized embedding model** for retrieval with a **larger LLM** for generation). If you change the embedding model, **re-embed your documents**.
+- **Reranker** *(optional)* — improves the relevance of retrieved results. A **second-stage model or heuristic** orders/filters the initial vector-search results by likely usefulness — from a simple **similarity-score / recency / source-trust** ranking to a **cross-encoder** or the LLM itself scoring each candidate snippet against the question. It boosts answer quality by keeping only the **most pertinent** pieces in the final prompt, at the cost of **extra complexity and latency**.
+- **AI Orchestrator** — the **glue** of the RAG system (the central role common to all AI apps; see [Architectural Patterns](#architectural-patterns)). On each request it: **embeds the query**, runs the **vector similarity search**, optionally calls the **reranker**, **constructs the augmented prompt** with retrieved text, calls the **LLM service**, and **post-processes/returns** the result. It can be a custom REST service, an API layer like **[Llama Stack](https://github.com/meta-llama/llama-stack)**, or a framework that manages chains of calls like **[LangChain](https://www.langchain.com/)**. It also implements **app-specific rules/guardrails** (e.g., handling "no relevant documents found" or enforcing required sources) and often **source attribution** — preserving chunk metadata (URLs, titles, timestamps) through retrieval/ranking and emitting **citations** (footnotes, inline, or a references list) for transparency and verification.
+- **LLM service** — generates the final answer from the orchestrator-assembled prompt (question + retrieved context). In RAG, the LLM's job is **constrained to generation** — it relies on the **provided context** for facts rather than internal knowledge. This can be an in-cluster model deployment (see [Model Server](#model-server)) or an external API. Treat it like any dependent service: send a request, get a response, then deliver it (after formatting/verification).
+
+> **VECTOR DATABASES IN A NUTSHELL**
+>
+> A **vector database** (vector store) specializes in **fast similarity search**, so a RAG pipeline can fetch the chunks most similar to a query and pass them to the LLM. An **embedding model** maps documents and queries into a single **high-dimensional vector** where **semantic neighbors lie close together**, and similarity is typically scored with **cosine similarity**.
+>
+> **Cosine similarity** measures how much two vectors point the **same direction**: picture two arrows from the origin forming angle θ — similarity is **cos θ** (**1.0** same direction, **0.0** perpendicular, **−1.0** opposite). This **orientation focus** suits text embeddings because **scaling a vector doesn't change its meaning**, while direction preserves semantics.
+>
+> **Hybrid search** combines **dense vector matching** with **lexical ranking** (e.g., **BM25**) to capture both **semantic relatedness** and **exact-token** signals — fusing scores or running a two-stage pipeline with an optional reranker, which helps for **rare terms, identifiers, and exact phrases** while keeping semantic recall high.
+>
+> Modern systems accelerate search with **approximate nearest-neighbor (ANN)** indexes and add **filtering, durability, and distribution** for production SLAs. Vector search **predates LLMs** (recommendations, multimedia deduplication); breakthroughs like **HNSW** graphs and **[FAISS](https://github.com/facebookresearch/faiss)** made **billion-scale** similarity practical by trading exactness for speed (results are **approximately** correct, not guaranteed exact nearest neighbors).
+>
+> Popular options: open source **[Milvus](https://milvus.io/)**, **[Weaviate](https://weaviate.io/)**, and **[Qdrant](https://qdrant.tech/)**; the managed service **[Pinecone](https://www.pinecone.io/)**; **PostgreSQL** via **[pgvector](https://github.com/pgvector/pgvector)**; and **Elasticsearch** via dense vectors.
+
+These components map well to **microservice boundaries** — the vector DB one service, the LLM another — so each scales and is managed independently. Next, let's walk the two RAG phases: **document ingestion** and **user query processing**.
+
+#### Document Ingestion
+
+Document ingestion is the **offline process** that prepares external data for retrieval: take raw documents and convert them into **embeddings stored in the vector database** — building the **knowledge index** your app later queries. It can run **up front** (indexing a corpus before launch) and **continually** as new data arrives.
+
+The ingestion pipeline runs **asynchronously and independently** from query processing — **no blocking relationship**. Users can query the vector DB **while ingestion runs**, and new documents become searchable **as soon as their embeddings are written**. On Kubernetes, implement ingestion as **Jobs or CronJobs** processing documents in batches. Within a job, the steps (**parse, chunk, embed, store**) can run **sequentially in one container** for simplicity, or be **distributed across worker pods** with message queues for high throughput. Results are written **incrementally**, so newly indexed documents are searchable **without waiting for the whole batch**.
+
+A typical pipeline involves several steps (Figure 8-7).
+
+![RAG document ingestion](<assets/RAG document ingestion.png>)
+
+**Figure 8-7. RAG document ingestion**
+
+1. **Collect and parse documents** — gather source data (text files, **PDFs**, DB records, web pages, transcripts) and **parse each into plain text**, often with custom code or libraries. One option is **[Docling](https://github.com/docling-project/docling)**, an open source document-parsing framework for AI workflows that ingests heterogeneous sources (PDFs, Word, HTML, scanned images) into **structured, machine-readable text** while preserving metadata like headings and page numbers. Consistent structured output **reduces preprocessing complexity**.
+2. **Chunk and preprocess** — embedding whole documents is rarely ideal (too long, multi-topic). Break them into **manageable, topically coherent chunks** that fit the prompt alongside the question. Split by **paragraphs/headings**, or use **semantic / sentence-boundary** chunking to avoid breaking context mid-thought. Docling can derive chunks from **document structure** (sentences, paragraphs, section headers, tables, captions) rather than arbitrary windows, with **overlap and max-size** controls to tune **recall vs prompt budget**, and emits **stable IDs and clean metadata** (source, timestamp, version, section, page) for provenance and query-time filtering. **Different strategies fit different intents** — small **sentence-level** chunks for FAQ-style lookup, larger **heading-aligned** segments for policies/manuals where broader context matters. Lifecycle management includes **invalidating/re-embedding** documents when they change. Metadata (title, date, author, section headings, tags) helps later **filtering** and **source identification**.
+3. **Embed the chunks** — turn each chunk into a numeric vector via the **embedding model** (typically high-dimensional) — e.g., the sentence-transformers model **[`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)** or a managed API like OpenAI's **`text-embedding-ada-002`**. **Use the same embedding model for indexing and querying** (see [RAG Components](#rag-components)). Run in **batches** (e.g., 1,000 chunks) with **GPU/parallelism** to speed things up. (See the **Vector Databases in a Nutshell** sidebar for background on how embeddings represent semantic meaning as vectors.)
+4. **Store vectors in the database** — insert each vector with an **identifier and metadata**. The ID links back to the original document/chunk; metadata may include the **raw text** or a reference to fetch it from a content store. Some designs store only an ID and **fetch text on demand**; others store the **text payload** directly for fast retrieval — choose by your **latency/storage** trade-off. The vector DB is now ready to answer similarity queries.
+
+To make it concrete: a **support chatbot** for an ecommerce platform might ingest **FAQ pages, product manuals, return policies, troubleshooting guides** — convert PDFs/HTML to text, chunk by section, embed each, and store vectors with metadata like `source: Product Manual X` and `section: 2.1 Installation`. After ingestion, the store may hold **tens of thousands of vectors**, each a piece of knowledge from your documentation.
+
+Ingestion can be **continuous**: a **CronJob** periodically fetches new/changed documents, embeds, and **upserts** them, and **event-driven reindexing** can fire whenever a document changes. The operational takeaway: the **vector DB content is not static** — it should **evolve with your data**, with the jobs/processes to manage that evolution.
+
+#### User Query Processing
+
+Once the vector DB is loaded with knowledge, the RAG system can **serve user queries**. This pipeline runs **on every request**: fetch the most relevant knowledge for the query, incorporate it into the LLM's prompt, and return the answer. Figure 8-8 shows the components.
+
+![RAG user query processing pipeline](<assets/RAG user query processing pipeline.png>)
+
+**Figure 8-8. RAG user query processing pipeline**
+
+1. **User query arrives** — a user or upstream service asks a question (e.g., *"How do I reset my device?"*). It hits the app's API and the **orchestrator** takes over.
+2. **Embed the query** — the orchestrator uses the **same embedding model as ingestion** to encode the query into a vector in the **same vector space** as the documents (a fast operation).
+3. **Vector search for relevant docs** — a **similarity search** returns the **top-k nearest neighbors** (by cosine similarity/distance), often with metadata and, per config, the stored text payload. Apply **metadata filters** or **hybrid retrieval** with a lexical scorer to capture rare terms, identifiers, or exact phrases while maintaining semantic recall.
+4. **Rerank or filter results** *(optional)* — a reranker scores each retrieved chunk in the query's context so you keep only the best few within the **prompt budget**. Simple **minimum-similarity thresholds** or **recency boosts** help too; many systems do well with **vector search alone** under tight latency budgets. By the end you have a small set of context snippets ready to augment the prompt.
+5. **Construct the prompt with retrieved context** — the orchestrator inserts the retrieved texts and the question into a **template** (Example 8-1). The wording and how context is presented can be tuned; the point is to **ground** the model with facts — e.g., the manual paragraph containing the reset steps.
+
+##### Example 8-1. Template to build the prompt from RAG documents
+
+```text
+Use the following context to answer the question.
+If the context doesn't have the answer,
+say you don't know.
+
+Context:
+{retrieved_text}
+
+Question: {user_question}
+Answer:
+```
+
+What to notice:
+
+- **`{retrieved_text}`** — placeholder replaced by the **documents retrieved from the vector store**.
+- **`{user_question}`** — parameter replaced with the **actual user query**.
+
+6. **LLM generates an answer** — the orchestrator sends the composed prompt to the **LLM service** (a call to the model inference server). Because the relevant snippet is included, the model **doesn't have to invent facts** — it just articulates the answer (e.g., *"To reset your device, hold the power button for 10 seconds until the LED blinks,"* mirroring the docs).
+7. **Post-process and return the response** — typical steps: **formatting**, **attaching source citations** from metadata, **enforcing guardrails**, and **truncating** to size limits. The final answer is delivered back through the API or UI.
+
+From the user's perspective this pipeline is **invisible** — they simply get a helpful answer that references the right information. **Vector search is usually fast** enough that **LLM generation dominates latency**, so a well-implemented RAG pipeline still feels **real-time**. If **no strong context** is found, the orchestrator should **abstain gracefully** rather than risk a hallucination. With these steps, the response is **grounded in your knowledge base** and stays aligned with **up-to-date facts**.
+
+#### RAG on Kubernetes
+
+Let's map the [RAG Components](#rag-components) onto Kubernetes and operate them as one **production-grade system**. A production RAG stack is a set of cooperating services with **distinct lifecycles and SLOs** that fit cleanly into **Deployments, StatefulSets, Services, and Jobs** — Kubernetes lets each piece scale independently, roll out safely, and standardize configuration and security across environments.
+
+##### Table 8-1. RAG components deployed in Kubernetes
+
+| Component | K8s primitive | Type | Resources | Storage |
+| --- | --- | --- | --- | --- |
+| **Vector database** | StatefulSet + PVC | Stateful | High RAM/CPU, fast volumes | Persistent volumes |
+| **Embedding** | Deployment / sidecar / in-process | Stateless | CPU for light models; GPU optional | None |
+| **Orchestrator/API** | Deployment + Service (+ Ingress) | Stateless | CPU and moderate RAM | None |
+| **Ingestion** | CronJob / Job | Batch | CPU, GPU optional | Reads/writes vector store |
+
+Now each component in more depth (with the associated *[Kubernetes Patterns](https://www.oreilly.com/library/view/kubernetes-patterns-2nd/9781098131678/)* noted in italics):
+
+- **Vector database** — the backbone of retrieval; run it as a **StatefulSet with a PVC per replica** so shards have **stable identities** and data **persists across restarts**. If the vendor offers an **operator**, adopt it to encapsulate setup/upgrades; **size memory** so hot indexes stay resident while enabling **ANN** indexes for scale. Expose it on a **cluster-internal Service**, restrict access with **NetworkPolicies**, and treat it like any critical database with **snapshots and tested restores**. Maps to the *Stateful Service* and *Service Discovery* patterns.
+- **Embedding service** — deploy by performance/ops needs (Figure 8-9): the common production setup is a **lightweight model server as a Deployment** (scale independently, CPU or GPU); for small, efficient models, **in-process within the orchestrator** avoids a network hop and keeps latency low; a middle ground is a **sidecar** in the orchestrator pod (shared fate, independent model versioning). Some databases embed **in the database** at write/query time (e.g., **Weaviate** vectorizer modules, **Postgres + pgvector** via SQL triggers), aligning ingestion and retrieval encoders but increasing coupling between database and model. Whichever pattern, **enforce a single embedding model and configuration** for both ingestion and query-time encoding.
+- **AI Orchestrator** — the **"brain"** (encode the query, retrieve, optionally rerank, build the prompt, call the LLM); run it as a **stateless Deployment** behind a **ClusterIP Service** or, if user-facing, an **Ingress/API gateway**. Instrument it well — **propagate trace context** across calls to measure end-to-end latency and find bottlenecks. Keep **prompt templates, thresholds, retrieval params** in **ConfigMaps** (tune without code changes) and **credentials in Secrets** (see the *Secure Configuration* pattern). Scale with the **horizontal pod autoscaler** for steady load, and **Knative/KEDA** for event-driven bursts or **scale-to-zero** for idle paths (see the *Elastic Scale* pattern).
+- **Reranker** *(optional)* — if precision matters, run a **cross-encoder** or heavier reranker as its **own Deployment** and call it **selectively** for high-stakes queries to balance cost and latency (the *Stateless Service* pattern). Simple heuristics can stay in the orchestrator; a separate service lets you tune **resources and release cadence** independently, keeping the faster path for most traffic.
+- **Batch ingestion jobs** — ingestion is **ongoing**, not one-time. Schedule **CronJobs** to fetch new/updated sources; parse, chunk, embed; and **upsert** into the vector DB. For near-real-time pipelines, use **event-driven jobs** triggered by file uploads or DB updates — ingestion models nicely as an **Event Mesh** endpoint (**Knative Eventing**). Use **resource requests/limits** so ingestion doesn't **starve user-facing services**, and **separate namespaces/node pools** for stricter isolation. Treat ingestion as a **first-class workload** (monitoring, retries) so the vector DB stays fresh. See the *Batch Job* and *Periodic Job* patterns.
+
+![Multiple ways to deploy an embedding service](<assets/Multiple ways to deploy an embedding service.png>)
+
+**Figure 8-9. Multiple ways to deploy an embedding service**
+
+With RAG we saw how to **ground LLMs in trusted knowledge** and operate the supporting components on Kubernetes. We now turn to **agentic workflows**, where the model not only **consumes context** but also **plans actions, chooses tools, and iterates toward goals** in short **think-act-observe loops**.
 
 [Back to Contents](#contents)
 
