@@ -189,6 +189,13 @@
      - [Document Ingestion](#document-ingestion)
      - [User Query Processing](#user-query-processing)
      - [RAG on Kubernetes](#rag-on-kubernetes)
+   - [Agentic Workflows](#agentic-workflows)
+     - [Agentic Frameworks and Runtimes](#agentic-frameworks-and-runtimes)
+     - [OpenAI's Responses API](#openais-responses-api)
+     - [Agents on Kubernetes](#agents-on-kubernetes)
+     - [Multiagent Systems](#multiagent-systems)
+     - [Ambient Agents](#ambient-agents)
+   - [Lessons Learned](#lessons-learned-2)
 10. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -10966,6 +10973,257 @@ Now each component in more depth (with the associated *[Kubernetes Patterns](htt
 **Figure 8-9. Multiple ways to deploy an embedding service**
 
 With RAG we saw how to **ground LLMs in trusted knowledge** and operate the supporting components on Kubernetes. We now turn to **agentic workflows**, where the model not only **consumes context** but also **plans actions, chooses tools, and iterates toward goals** in short **think-act-observe loops**.
+
+[Back to Contents](#contents)
+
+### Agentic Workflows
+
+**Agentic apps** wrap the inference calls to a model in a **small control loop** that can **plan, call tools, observe results, and iterate** until a goal is met.
+
+The control loop (Figure 8-10) generally contains these steps:
+
+- **Perceive** — read new signals: user input, tool output, and conversation state.
+- **Think** — plan the next step, decide whether a tool is needed, and shape the next prompt turn.
+- **Act** — execute an action: call a tool, run code, fetch data, or draft a candidate answer.
+- **Observe** — capture the tool result or user follow-up and normalize it into the working context.
+- **Reflect** — check progress against the goal, revise the plan, and decide to **stop or continue**.
+- **Remember** — store short-term scratchpad items and long-term facts in **external memory**.
+
+![Agentic control loop](<assets/Agentic control loop.png>)
+
+**Figure 8-10. Agentic control loop**
+
+This flow refines the well-known **ReAct loop** (see sidebar). It applies to **simple agents** and is the foundation for more complex scenarios — **multiagents** (see [Multiagent Systems](#multiagent-systems)) and **ambient agents** (see [Ambient Agents](#ambient-agents)).
+
+> **THE REACT LOOP**
+>
+> The **ReAct** pattern interleaves **chain-of-thought (CoT) reasoning** with **tool actions** so the model can **think, act, observe, and repeat** in a compact loop. Introduced by Yao et al. in **["ReAct: Synergizing Reasoning and Acting in Language Models"](https://arxiv.org/abs/2210.03629)**, it showed that models **reduce hallucinations** and **improve success rates** when they alternate reasoning with calls to external sources (e.g., a search API). The LLM emits intermediate **thoughts** and, when needed, an **action with JSON arguments**; the tool executes, the **observation** is appended to context, and the model continues until a **stop condition**. In production you **don't expose CoT** to users — keep traces internal or replace them with summaries — but the control flow stays the same. **Log each thought, action, and observation** as structured records to debug behavior later and correlate cost with quality.
+
+Let's focus on the **Act** step, since it's where the agent brings in information **not in the model's training data** — too new, or domain-specific. These actions are called **tools**, ranging from simple web searches to API calls to enterprise backend services. Tool use comes in **two execution paths** you can mix in one workflow:
+
+- **Client-executed function tools** — the model emits a **function call with JSON arguments**; your client code performs the action and posts the result back, keyed by a **`call_id`**. This is the **portable baseline** for fine-grained control and audit in your control plane (Example 8-2). This multistep interaction requires the agentic flow to be **stateful** (to keep conversation history). Client-side tool calling is **fragile** — every framework expects the tool-call request in a different format.
+- **Server-executed tools** — the **agent runtime** (LangChain, CrewAI, or similar) executes tools on your behalf, including remote **Model Context Protocol (MCP)** servers. MCP — covered in "The Model Context Protocol" (next chapter) — is the **de facto standard** for tool interaction, enabling far better domain-knowledge integration than client-side calling, with **tool calling and discovery** handled largely server-side.
+
+##### Example 8-2. Client-side function calling with OpenAI's Responses API
+
+```bash
+# Initial request including a description of available tools
+curl https://api.openai.com/v1/responses \
+  -d '{
+    "input": [
+      {"role": "user", "content": "Do I need an umbrella in Berlin today?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get the weather information for a city and ISO date.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "date": { "type": "string", "format": "date" }
+          },
+          "required": ["city", "date"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+
+# Part of the returned response, asking the client for a tool call
+{
+  ...
+  "output": [
+    ... ,
+    {
+      "type": "function_call",
+      "call_id": "call_wx_1",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"Berlin\",\"date\":\"2025-09-20\"}"
+    }
+  ],
+  "status": "incomplete"
+}
+
+# Part of the second client request, holding the result of the tool call
+curl https://api.openai.com/v1/responses \
+  ...
+  -d '{
+    "input": [
+      ...,
+      {
+        "type": "function_call_output",
+        "call_id": "call_wx_1",
+        "output":
+          "{\"precipitation_chance\":0.80,
+            \"summary\":\"Heavy rain expected in the afternoon.\"}"
+      }
+    ]
+  }'
+```
+
+What to notice:
+
+- The **user query** (`"Do I need an umbrella in Berlin today?"`) plus a **client-side tool definition** (**`"type": "function"`**) are sent in the initial request.
+- The server responds with **`"type": "function_call"`**, asking the client to call the tool, and a **`call_id`** (`call_wx_1`) — the **correlation ID** linking the call to its result.
+- The **second request** returns the tool result via **`function_call_output`** (matched by `call_id`), so the model can continue and finish.
+
+Originally, **client-side tool calling** is performed by the **caller of the agentic loop**, which takes over responsibility for the actual call: when the LLM decides in its reasoning phase that a tool is needed (based on the tool's description and metadata), it **returns control to the caller**, which calls the tool and returns the results in the next step of this multiturn conversation.
+
+The rest of this chapter builds from here: [OpenAI's Responses API](#openais-responses-api) digs into state, events, and approvals; [Agentic Frameworks and Runtimes](#agentic-frameworks-and-runtimes) compares client-side libraries with server-side runtimes; [Multiagent Systems](#multiagent-systems) scales the loop across teams of agents; and [Ambient Agents](#ambient-agents) makes the loop event-driven on Kubernetes.
+
+#### Agentic Frameworks and Runtimes
+
+Building an agentic workflow from scratch is hard, so **frameworks and runtimes** simplify it. Broadly: **client-side agentic libraries** embedded in your code, and **server-side agentic runtimes** exposed as services. The classification matters more than the details here, since our focus is operating agentic systems on Kubernetes.
+
+- **Client-side agentic frameworks** — run the loop **inside your own application** for full control and easy debugging, at the cost of managing orchestration. **[LangChain](https://www.langchain.com/)** offers abstractions for prompts, memory, and tools (Python and JavaScript) with a broad ecosystem for web search, databases, and REPLs; **[LangChain4j](https://github.com/langchain4j/langchain4j)** brings similar capabilities to Java and is integrated into **[Quarkus](https://quarkus.io/)** with native agentic support; **[LangGraph](https://www.langchain.com/langgraph)** models steps as a **graph**, making branching and concurrent subtasks explicit and observable; **[CrewAI](https://www.crewai.com/)** focuses on **multiagent collaboration** via role-based agents that message and delegate (and implements custom REST endpoints, blurring the client/server line). Because these libraries live in **your runtime**, you own the loop (call the LLM, run tools, feed results back, decide when to stop) — maximum control, more complexity. In production these "client-side" frameworks still run in **containerized microservices on Kubernetes**, subject to the same packaging, scaling, and observability practices as your other workloads.
+- **Server-side agentic runtimes** — **backend services** that encapsulate the loop behind an API: a client sends **one request** and the backend performs **multiturn reasoning and tool use**. **OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses)** provides stateful multiturn interactions, integrated tools, structured outputs, event streaming, and **pause-and-resume** for human-in-the-loop. It supports **server-executed tools** (including remote MCP) and **client-executed function tools** when you need actions in your control plane. **[Llama Stack](https://github.com/meta-llama/llama-stack)** is an **open, self-hostable** runtime with both an Agents API and an OpenAI-compatible endpoint (including a Responses-style flow), so you can run agentic backends on Kubernetes with your own models. **[vLLM](https://github.com/vllm-project/vllm)** works on an OpenAI-compatible server with tool calling and structured output — check current docs for Responses parity over time.
+
+The practical distinction is **where the orchestrator runs**. **Server-side** runtimes hide the loop behind a network API (simpler clients, centralized scaling and governance); **client-side** frameworks keep logic local (maximum customization and composability). You can **mix both** — e.g., use LangChain in your app while targeting a Llama Stack backend for inference and server-side tools, or keep tools local as client-executed functions even when planning happens server-side.
+
+#### OpenAI's Responses API
+
+OpenAI's **Responses API** is designed for agentic workflows in a **single, stateful API call**, adding features that simplify agent development: **automatic conversation state** across turns, **structured outputs**, **integrated tool usage**, **streaming** of intermediate tool events, and **built-in error handling**.
+
+You send the **user input** plus a **catalog of tools** with **JSON Schemas**, and the service can autonomously **sequence tool calls**, feed observations back, and return a final answer. **Two execution paths coexist**: **server-side tools** run within OpenAI's runtime (including tools accessed via **MCP** — more in "The Model Context Protocol"), streaming events and the final answer **without a client-side loop**; **client-executed function tools** let the model emit a call with name and JSON arguments that **your service** performs, resuming when you post the result so the model can continue and finish.
+
+> **NOTE — inference platforms are absorbing orchestration**
+>
+> As of early 2026, there's a growing tendency to **hand more functional responsibility to the inference platforms**. For example, **vLLM** began incorporating the **Responses API** — including **tool and MCP server calling** — a domain previously reserved for dedicated orchestrating middleware like **Llama Stack**.
+
+The Responses interface is becoming a **de facto standard**, formalized by the **Open Responses** initiative as an open specification, with several compatible backends: **Llama Stack** ships an OpenAI-compatible interface and a (usable but still-evolving) Responses implementation for **self-hosted** agent runtimes on Kubernetes without changing client code; **vLLM** has added a Responses entry point and is progressing rapidly as of early 2026; and **[LiteLLM](https://github.com/BerriAI/litellm)** provides a proxy exposing a **`/responses`** endpoint that routes to multiple providers as a compatibility layer while the servers mature.
+
+The takeaway is **portability**: standardize client code on the Responses API while choosing **where to run the loop** — OpenAI's cloud, a self-hosted Llama Stack, or a vLLM service on your cluster — and **swap** as operational needs evolve.
+
+**Human-in-the-loop** fits naturally: **pause** on model-requested actions to ask for approval, collect additional inputs, or escalate to a reviewer before resuming, and enforce **approval gates** for sensitive tools so the model can't proceed until you confirm. With remote providers via MCP, the API can surface explicit **approval requests**, giving an **auditable checkpoint** before any side effect happens.
+
+In short, Responses provides **agentic reasoning as a service** while you control **which tools exist, which calls execute on your side, and when to require approval** — and the growing set of compatible backends makes it a pragmatic choice for **portable agent architectures**.
+
+#### Agents on Kubernetes
+
+[Agentic Frameworks and Runtimes](#agentic-frameworks-and-runtimes) categorized the libraries and API services for agentic workflows. Here we focus on **deployment models** for agent-enabled applications and **Kubernetes-native integrations**, kept high level (deeper operational details in the **next chapter**).
+
+Kubernetes is a natural home for agentic systems: it provides **composable building blocks** for the **orchestrator, tools, and memories**.
+
+Kubernetes-native integrations bring agents into the **control plane** via **CRDs and controllers**. As of early 2026 this space evolves quickly; one of the more mature projects is **[Kagent](https://kagent.dev/)** (started by Solo.io, now growing in the **CNCF** community). Kagent is a **Kubernetes-native operator** that lets you **declare agents, tools, and exposure modes as custom resources**, then reconciles them into runnable pods. It leans into **protocol compatibility** — register **MCP-compatible tool servers** and expose **A2A skills** without leaving the control plane — and you manage agents with the same **GitOps and security** practices as deployments and jobs.
+
+Example 8-3 shows the intent: define the reasoning loop, attach tools via MCP, and publish an A2A skill, while the operator handles pods, configuration, and status.
+
+##### Example 8-3. Kagent agent definition
+
+```yaml
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: k8s-a2a-agent
+  namespace: kagent
+spec:
+  description: An example agent
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a helpful Kubernetes agent.
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: kagent-tool-server
+          kind: RemoteMCPServer
+          toolNames:
+            - k8s_get_resources
+  a2aConfig:
+    skills:
+      - id: get-resources
+        name: Get Resources
+        inputModes: ....
+        outputModes: ....
+```
+
+What to notice:
+
+- **`modelConfig: default-model-config`** — reference to the agent's model configuration.
+- **`systemMessage`** — the agent's **system prompt**.
+- **`tools`** — the list of tools to use; here **`type: McpServer`** references an **MCP server** declared in a separate **`RemoteMCPServer`** resource.
+- **`a2aConfig`** — configuration for connecting via the **Google A2A** protocol.
+
+> **EMERGING KUBERNETES AGENT EXPERIMENTS**
+>
+> Two efforts that emerged in 2025 have gained traction toward production readiness. The Kubernetes community's **agent sandbox** explores a controller and custom resource for **isolated, stateful, singleton-style runtimes** with stronger boundaries, **persistent identity**, and **hibernate/resume** — targeting interactive or untrusted agent workloads that benefit from **VM-like isolation** while staying manageable as pod-shaped resources. **Kagenti** positions itself as **framework-neutral middleware** with an operator and a uniform surface for agents, standardizing **identity, configuration, and exposure** while integrating protocol bridges such as **MCP** and **A2A**. Both are under active development — evaluate their APIs and operational fit for your environment.
+
+Not every Kubernetes agent integration uses custom resources. **Llama Stack**, a general-purpose API layer for agentic applications (with tool calling and multiturn reasoning), can use an **operator** for installation but otherwise relies on **custom configuration files** for the backend systems it uses.
+
+Most agentic platforms **converge on similar Kubernetes concepts** despite their different approaches. *(The corresponding [Kubernetes Patterns](https://www.oreilly.com/library/view/kubernetes-patterns-2nd/9781098131678/) appear in parentheses where applicable.)*
+
+- **CRDs and controllers** extend Kubernetes to **manage agents declaratively** — Kagent/Kagenti model agents as resources, managed with the same **GitOps** workflows; controllers reconcile them into pods/services, bringing infrastructure-as-code to AI systems. *(Controller, Operator, Declarative Deployment)*
+- **Long-lived stateful pods** maintain **conversational context** — agents often run as **singleton deployments** or **single-replica StatefulSets**; when scaling is needed, platforms **shard sessions** or **externalize state** for round-robin balancing. *(Singleton Service, Stateful Service)*
+- **Batch jobs** offload discrete heavy tasks from the main loop — an agent submits a **Kubernetes Job** and awaits the result, gaining **automatic retries and resource isolation**. *(Job, Periodic Job)*
+- **Event-Driven Architecture (EDA)** enables **ambient agents** — deployed as listeners reacting to **Kafka topics, Kubernetes events, or webhooks**; with **Knative Eventing** or **KEDA** they **scale from zero** when idle and burst on events. (More in [Ambient Agents](#ambient-agents).) *(Elastic Scale)*
+- **Tool integration** exposes capabilities through **standard APIs via Services** — tools run as **Deployments with ClusterIP Services**, called by DNS name; many platforms adopt **MCP** so any compliant tool works with any compatible framework. (More on operating MCP servers in "The Model Context Protocol".) *(Service Discovery, Declarative Deployment)*
+- **Persistent memory storage** lets agents **retain knowledge across restarts** — **vector databases as StatefulSets** for long-term memory; conversation history in databases with **PersistentVolumes**. *(Stateful Service)*
+- **Native Kubernetes security** controls what agents can access and do — **ServiceAccounts** (restricted permissions), **NetworkPolicies** (sandbox network access), **Secrets** (least-privilege credentials), **Namespaces** (multitenant isolation), and **admission controllers** (resource quotas, policy). *(Process Containment, Secure Configuration, Access Control, Network Segmentation)*
+- **Observability** treats agents as **measurable services** — metrics for **token counts and tool calls**, verbose **reasoning logs**, and **Kubernetes Events** for significant actions, monitored with the same dashboards and alerts as other services.
+
+In practice, successful agent deployment combines **robust containerization, careful state management, appropriate resource allocation, and comprehensive observability**. The platform becomes your **control plane for agentic AI** — managing lifecycle and resources while agents focus on **reasoning and tool orchestration**. Whether you deploy a simple ReAct loop in one container or coordinate **multiagent cohorts across namespaces** (next section), Kubernetes provides the **scheduling, networking, and storage** primitives to run agents reliably at scale.
+
+#### Multiagent Systems
+
+**Multiagent systems** assemble several **specialized agents** that collaborate toward a goal larger than any one could deliver. Each agent is an **autonomous service** with its own prompt, tools, and guardrails, accessing one or more LLMs via remote APIs. They **pass intermediate results, cross-check each other's work, and parallelize subtasks** — improving both quality and throughput. Agents are **scoped to independent tasks** so responsibilities stay clear and coupling low.
+
+Think of a **software team**: a **planner** breaks work into steps, a **coder** drafts changes, a **tester** verifies behavior, and a **reviewer** signs off. *(Several projects support this multiagent coding flow — e.g., **[Claude-Flow](https://github.com/ruvnet/claude-flow)**, a sophisticated multiagent setup using Claude as a backend model, popular as of early 2026.)* Specialization lets each agent focus on a **narrow competency** while the system as a whole moves faster and with more confidence. A key benefit: each specialist works with a **much smaller context** than a monolithic agent would need for the whole problem, which **focuses prompts, reduces token usage, and improves accuracy**. The agents coordinate through an **explicit control flow** so partial results **compose** into a coherent outcome.
+
+The heart of a multiagent system is its **coordination logic**. One common pattern is a **central orchestrator** that assigns work to role agents and aggregates outcomes — the crew-style shape where a facilitator routes coding questions to a coding agent and compliance questions to a policy agent (Figure 8-11).
+
+![Agents orchestrated by a coordinator](<assets/Agents orchestrated by a coordinator.png>)
+
+**Figure 8-11. Agents orchestrated by a coordinator**
+
+An alternative is **peer-to-peer** coordination, where agents **message one another directly**, discover capabilities dynamically, and escalate or delegate without a single hub (Figure 8-12). Google's **A2A protocol** (see "Agent-to-Agent Protocol", next chapter) formalizes this by standardizing **discovery, capability exchange via an agent card, task lifecycles, and artifact streaming** across agent boundaries, enabling interop across teams and vendors. In both models, the system **succeeds or fails on the discipline of its messages** — what's shared, when, with which guarantees — rather than on any individual prompt.
+
+![Agents triggering each other on demand](<assets/Agents triggering each other on demand.png>)
+
+**Figure 8-12. Agents triggering each other on demand**
+
+On Kubernetes, you typically model **each agent as a service-backed Deployment**, connected **synchronously** (HTTP/gRPC) or **asynchronously** (pub/sub). Alternatively, multiple agents can run in a **single pod** when a framework coordinates dialogue in-process — simpler shared state and lower latency, but **coupled lifecycles and scaling** (every agent scales together), rarely a fit beyond small, tightly bound teams. For a **distributed design**, **shared memory backends** are the glue — a **vector store, document store, or blackboard** where agents post findings, pending tasks, and artifacts — letting the system remember across boundaries while isolating each agent's runtime and quota. The usual platform concerns apply (**service discovery, retries, backoffs, circuit breakers**), because agents are **distributed systems in miniature**.
+
+A concrete example is **customer-support automation**: one agent **monitors incoming tickets**, **delegates** each to a specialist (a **NetworkTroubleshooter** or **BillingInquiry** agent), and a **Summary** agent compiles a report of what was done. The coordination logic decides **which specialist** is involved and **when the process is done**.
+
+Multiagent systems shine here but add **complexity** — ensuring agents work in harmony without stepping on each other. Careful design of **roles, communication channels, and fail-safes** (e.g., what if two agents disagree?) is required. A useful distributed-systems pattern is the **Saga pattern**: for long-running workflows with **compensation logic**, if an agent fails mid-workflow a **compensating agent rolls back or cleans up** partial work — giving **explicit rollback paths** instead of an inconsistent state.
+
+In summary, multiagent is **collaborative intelligence**: compose **small, sharp agents**, add a **coordination layer** (centralized or peer-to-peer), and back them with **shared memory** that preserves context and evidence. Done well, it's **agent orchestration** in the literal sense — many instruments, one score, clear cues.
+
+#### Ambient Agents
+
+**Ambient agents** run **continuously in the background**, reacting to **signals from their environment** rather than waiting for an interactive prompt. They live alongside your systems and act when **triggers fire** — a new file appears, a row changes, a sensor crosses a threshold, a timer goes off. They're **passive until needed**: they don't start conversations, though they **can** (but needn't) ask a human before acting.
+
+A practical example is a **Kubernetes caretaker** that monitors cluster-health signals for **crash loops or CPU pressure** and immediately investigates by querying logs and comparing recent metrics. If findings match a known pattern, it attempts a **targeted remedy** (restart a deployment, roll back a config, scale out a service), escalating to a human **only when automated actions fail** or **policy marks the situation high-risk** (Figure 8-13).
+
+![Ambient agent example watching on Kubernetes events](<assets/Ambient agent example watching on Kubernetes events.png>)
+
+**Figure 8-13. Ambient agent example watching on Kubernetes events**
+
+Ambient agents are built on **Event-Driven Architecture (EDA)**: they subscribe to **queues, webhooks, file watchers, or scheduled triggers (CronJobs)**; update their working context; decide whether to act; then **call tools**. For example, a **daily planning agent** runs every morning at 2 a.m. to analyze yesterday's activity, generate a plan for the day, and email it or post to a notification channel for review. For sensitive operations they insert **human-in-the-loop (HITL) checkpoints**: the agent **drafts a plan**, routes it to an approver, and executes only after an explicit **"go."** Tune autonomy by **policy** — **recommend only**, **approve to act**, or **auto** for low risk — and bound variation with a **determinism budget** so replays and retries behave predictably. Every action should leave an **evidence trail** (inputs, decisions, artifacts) so operations stay **auditable**.
+
+> **HUMAN IN THE LOOP**
+>
+> Human-in-the-loop is a **deliberate checkpoint** where a person reviews an agent's plan or outcome and **explicitly authorizes** the next step before the agent proceeds. Use it for **high-risk or irreversible actions**, when **policy demands oversight**, or when **signals are ambiguous and confidence is low** — e.g., pushing a production hotfix, rolling back a config that could cause downtime, approving a large financial transaction, or sending a high-volume customer notification. Feedback can come via **chat (Slack, Teams)**, where the agent posts the proposed plan and waits for an **approve/reject** reply; a more decoupled pattern emits an **approval request on a message bus** with a **correlation ID**, then listens for the corresponding decision event (possibly from a dedicated UI). For auditability, the agent should attach its **rationale and diffs**, record the **approver and decision**, and post the **final result** after execution — keeping autonomy where it's safe and moving judgment to humans where it matters most.
+
+For ambient agents, the platform concerns are the same as for any distributed system: **service discovery, retries and backoffs, circuit breakers, idempotent handlers, and clear ownership of configuration and secrets**.
+
+In practice, the best results come when ambient agents blend three disciplines: **reliable event handling with idempotent actions**, **explicit human checkpoints for irreversible changes**, and **clear Kubernetes ownership boundaries** for scaling and security. This keeps ambient agents **predictable like any other microservice**, while giving you the superpower of **proactive operations at scale**.
+
+[Back to Contents](#contents)
+
+### Lessons Learned
+
+This chapter explored how to **architect complete AI-driven applications** on Kubernetes — from chat interfaces to event-driven backends, RAG pipelines, and agentic workflows.
+
+- **Two dominant application patterns.** **Interactive chat-style** apps run **synchronous** request paths where **latency matters most** — pre-warmed LLMs, lean orchestrators, minimal round trips. **Backend event-driven** services run **asynchronously** within microservice meshes, where **idempotency, buffering, and eventual consistency** matter more than raw response time. Batch jobs, continuous control loops, and tool-driven automations sit alongside these cores, shifting **non-urgent work off the hot path** for cost efficiency.
+- **RAG needs consistency and observability.** Use **one embedding model** for both ingestion and query, choose **chunking** that matches your content, and store **provenance** for confident citation and filtering. **Vector DBs in StatefulSets** with snapshot/restore plans; **ingestion as Jobs/CronJobs** that don't starve user traffic. **Rerankers** boost precision for high-stakes queries but stay **optional**, trading cost for quality per route.
+- **Agentic workflows add explicit control loops** around models and make **tools first-class**. **Human-in-the-loop approval gates** for risky actions are **essential, not afterthoughts**. Capture **rationale and artifacts**, make every step **auditable**, and improve **portability** with standards like **MCP**.
+
+> With these patterns and boundaries in hand, the **next chapter** turns these high-level designs into **production guidance** — standing up agentic applications on Kubernetes and tackling trickier challenges like **securing MCP and A2A communications**.
 
 [Back to Contents](#contents)
 
