@@ -74,7 +74,7 @@ This pulls in both `minikube` and `kubernetes-cli` (which provides `kubectl`) an
 
 ### Setting up shortcuts and verifying the install
 
-To save keystrokes I alias `kubectl` to `k` and `minikube` to `mk`.
+The shortcuts below are **optional**. They save keystrokes by aliasing `kubectl` to `k` and `minikube` to `mk`, but they aren't required to follow along.
 
 **PowerShell** — add to your `$profile`:
 
@@ -89,6 +89,17 @@ function mk { minikube.exe $args }
 alias k='kubectl.exe'
 alias mk='minikube.exe'
 ```
+
+> **Note on scope:** these go in your PowerShell `$profile` (or `.bashrc`), so they apply to **every** session for your user account — system-wide, not tied to this folder. Windows PowerShell (`powershell.exe`) and PowerShell 7 (`pwsh.exe`) use separate profile files, so set them in whichever shell you use.
+
+> **Proceeding without the aliases:** I'm choosing to skip them and type the full commands instead. In that case, just substitute throughout the rest of this README:
+>
+> | Shortcut | Full command |
+> | --- | --- |
+> | `mk ...` | `minikube ...` |
+> | `k ...` | `kubectl ...` |
+>
+> For example, `mk start` becomes `minikube start`, and `k get nodes` becomes `kubectl get nodes`.
 
 Verify the install:
 
