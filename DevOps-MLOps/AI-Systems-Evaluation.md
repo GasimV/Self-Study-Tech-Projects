@@ -13,7 +13,14 @@
    - [Perplexity](#perplexity)
    - [Perplexity Interpretation and Use Cases](#perplexity-interpretation-and-use-cases)
    - [How to Use a Language Model to Compute a Text's Perplexity](#how-to-use-a-language-model-to-compute-a-texts-perplexity)
-4. [Notes](#notes)
+4. [Exact Evaluation](#exact-evaluation)
+   - [Functional Correctness](#functional-correctness)
+   - [Similarity Measurements Against Reference Data](#similarity-measurements-against-reference-data)
+     - [Exact Match](#exact-match)
+     - [Lexical Similarity](#lexical-similarity)
+     - [Semantic Similarity](#semantic-similarity)
+   - [Introduction to Embedding](#introduction-to-embedding)
+5. [Notes](#notes)
 
 ## Evaluation Methodology
 
@@ -322,6 +329,273 @@ where $P(x_i \mid x_1, \ldots, x_{i-1})$ denotes the **probability** that $X$ as
 
 [Back to Contents](#contents)
 
+## Exact Evaluation
+
+When evaluating models' performance, it's important to differentiate between **exact** and **subjective** evaluation.
+
+- **Exact evaluation** produces judgment **without ambiguity**. If the answer to a multiple-choice question is **A** and you pick **B**, your answer is **wrong** — no ambiguity.
+- **Subjective evaluation** depends on **who grades**. Essay grading is subjective: an essay's score depends on who grades it, and the same grader, asked twice some time apart, can give the **same essay different scores**. Grading can become *more* exact with **clear guidelines**.
+
+> As you'll see in the next section, **AI as a judge** is **subjective** — the result can change based on the **judge model** and the **prompt**.
+
+This section covers **two evaluation approaches that produce exact scores**:
+
+1. **Functional correctness**
+2. **Similarity measurements against reference data**
+
+> **NOTE — Why focus on open-ended responses?**
+>
+> This section focuses on evaluating **open-ended responses** (arbitrary text generation), not **close-ended responses** (such as classification). This is **not** because foundation models aren't used for close-ended tasks — in fact, many foundation model systems have at least a **classification component**, typically for **intent classification or scoring**. The focus is on open-ended evaluation because **close-ended evaluation is already well understood**.
+
+### Functional Correctness
+
+**Functional correctness** evaluation means evaluating a system based on **whether it performs the intended functionality**:
+
+- If you ask a model to **create a website**, does the generated website **meet your requirements**?
+- If you ask a model to **make a reservation** at a certain restaurant, does the model **succeed**?
+
+> Functional correctness is the **ultimate metric** for evaluating any application — it measures whether your application **does what it's intended to do**. However, it **isn't always straightforward to measure**, and its measurement **can't always be automated**.
+
+#### Code generation: execution accuracy
+
+**Code generation** is an example of a task where functional correctness measurement **can** be automated — sometimes called **execution accuracy**. Say you ask a model to write a Python function, `gcd(num1, num2)`, to find the greatest common denominator of two numbers. The generated code can be fed into a **Python interpreter** to check whether it's valid and, if so, whether it produces the correct result:
+
+```python
+# Given the pair (num1=15, num2=20):
+gcd(15, 20)  # must return 5 — the correct answer
+# If it returns anything else, the function is wrong.
+```
+
+Long before AI was used for writing code, **automatically verifying code's functional correctness** was standard practice in software engineering. Code is typically validated with **unit tests**, where it is executed in different scenarios to ensure it generates the expected outputs. This is how coding platforms like **LeetCode** and **HackerRank** validate submitted solutions.
+
+Popular benchmarks that use functional correctness as their metric include:
+
+- **Code generation** — OpenAI's **HumanEval** and Google's **MBPP** (Mostly Basic Python Problems Dataset).
+- **Text-to-SQL** (generating SQL from natural language) — **Spider** (Yu et al., 2018), **BIRD-SQL** (Li et al., 2023), and **WikiSQL** (Zhong et al., 2017).
+
+A benchmark problem comes with a set of **test cases**. Each test case consists of a **scenario** the code should run and the **expected output** for that scenario. Here's an example of a problem and its test cases in **HumanEval**:
+
+**Problem**
+
+```python
+from typing import List
+
+
+def has_close_elements(numbers: List[float], threshold: float) -> bool:
+    """ Check if in given list of numbers, are any two numbers closer to each
+    other than given threshold.
+    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)
+    False
+    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)
+    True
+    """
+```
+
+**Test cases** (each `assert` statement represents a test case)
+
+```python
+def check(candidate):
+    assert candidate([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) == True
+    assert candidate([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) == False
+    assert candidate([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) == True
+    assert candidate([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) == False
+    assert candidate([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) == True
+    assert candidate([1.1, 2.2, 3.1, 4.1, 5.1], 1.0) == True
+    assert candidate([1.1, 2.2, 3.1, 4.1, 5.1], 0.5) == False
+```
+
+#### The pass@k metric
+
+When evaluating a model, for each problem a number of code samples — denoted as **$k$** — are generated. A model **solves a problem** if **any** of the $k$ samples it generated **pass all** of that problem's test cases. The final score, called **`pass@k`**, is the **fraction of solved problems** out of all problems.
+
+> If there are **10 problems** and a model solves **5** with $k = 3$, then that model's **`pass@3`** score is **50%**.
+
+The **more code samples** a model generates, the **more chance** it has at solving each problem, hence the **greater** the final score. So, in expectation:
+
+$$\text{pass@1} \leq \text{pass@3} \leq \text{pass@10}$$
+
+#### Beyond code: measurable objectives
+
+Another category of tasks whose functional correctness can be automatically evaluated is **game bots**. If you create a bot to play **Tetris**, you can tell how good it is by **the score it gets**.
+
+> Tasks with **measurable objectives** can typically be evaluated using functional correctness. For example, if you ask AI to **schedule your workloads to optimize energy consumption**, the AI's performance can be measured by **how much energy it saves**.[^11]
+
+### Similarity Measurements Against Reference Data
+
+If the task you care about **can't** be automatically evaluated using functional correctness, a common approach is to evaluate AI's outputs **against reference data**. For example, to evaluate a French→English translation, you compare the generated English translation against the **correct** English translation.
+
+Each example in the reference data follows the format:
+
+```text
+(input, reference responses)
+```
+
+- An input can have **multiple reference responses** — e.g., multiple valid English translations of a French sentence.
+- Reference responses are also called **ground truths** or **canonical responses**.
+- Metrics that **require** references are **reference-based**; metrics that **don't** are **reference-free**.
+
+> Because this approach requires reference data, it's **bottlenecked** by how much and how fast reference data can be generated. Reference data is typically generated by **humans** and increasingly by **AIs**.
+
+Using **human-generated** data as the reference means we treat **human performance as the gold standard**, and AI is measured against it. Human-generated data can be **expensive and time-consuming**, leading many to use **AI** to generate reference data instead. AI-generated data might still need **human review**, but reviewing is **far less labor** than generating from scratch.
+
+Generated responses that are **more similar** to the reference responses are considered **better**. There are **four ways** to measure the similarity between two open-ended texts:
+
+1. **Asking an evaluator** (human or AI) to judge whether two texts are the same.
+2. **Exact match** — whether the generated response matches one of the reference responses **exactly**.
+3. **Lexical similarity** — how similar the generated response **looks** to the reference responses.
+4. **Semantic similarity** — how close the generated response is to the reference responses in **meaning**.
+
+> Two responses can be compared by **human** or **AI** evaluators. AI evaluators are increasingly common and are the focus of the next section.
+
+This section focuses on **hand-designed metrics**: exact match, lexical similarity, and semantic similarity. Scores by **exact matching are binary** (match or not), whereas the other two are on a **sliding scale** (e.g., between 0 and 1, or between –1 and 1). Despite the ease and flexibility of AI as a judge, hand-designed similarity measurements are **still widely used** in industry for their **exact nature**.
+
+> **NOTE — Similarity measurements have many uses beyond evaluation**
+>
+> You can also use similarity measurements for many other use cases, including:
+>
+> - **Retrieval and search** — find items similar to a query.
+> - **Ranking** — rank items by how similar they are to a query.
+> - **Clustering** — cluster items by how similar they are to each other.
+> - **Anomaly detection** — detect items that are the **least** similar to the rest.
+> - **Data deduplication** — remove items that are **too similar** to other items.
+>
+> These techniques come up again throughout the book.
+
+#### Exact Match
+
+It's considered an **exact match** if the generated response matches one of the reference responses **exactly**. Exact matching works for tasks that expect **short, exact responses** — simple math problems, common-knowledge queries, and trivia-style questions:
+
+- *"What's 2 + 3?"*
+- *"Who was the first woman to win a Nobel Prize?"*
+- *"What's my current account balance?"*
+- *"Fill in the blank: Paris to France is like ___ to England."*
+
+One **variation** accepts any output that **contains** the reference response as a match. For *"What's 2 + 3?"* with reference `"5"`, this variation accepts `"The answer is 5"` and `"2 + 3 is 5"`.
+
+> **However**, this variation can accept the **wrong** solution. For *"What year was Anne Frank born?"* the correct response is **1929** (she was born June 12, 1929). If the model outputs **"September 12, 1929"**, the correct year is included, but the output is **factually wrong**.
+
+Beyond simple tasks, exact match **rarely works**. Given the French sentence **"Comment ça va?"**, there are multiple valid English translations — *"How are you?"*, *"How is everything?"*, *"How are you doing?"* If the reference set contains only those three and the model generates **"How is it going?"**, it's marked **wrong**. The longer and more complex the original text, the more possible translations there are. It's **impossible to enumerate** all valid responses, so for complex tasks **lexical** and **semantic similarity** work better.
+
+#### Lexical Similarity
+
+**Lexical similarity** measures **how much two texts overlap**. You first break each text into smaller **tokens**.
+
+In its simplest form, lexical similarity counts **how many tokens two texts have in common**. Consider the reference response **"My cats scare the mice"** and two generated responses (assume each token is a word):
+
+| Generated response | Overlapping words | Similarity score |
+| --- | --- | --- |
+| **A.** "My cats eat the mice" | 4 of 5 | **80%** |
+| **B.** "Cats and mice fight all the time" | 3 of 5 | **60%** |
+
+Response **A** is therefore considered **more similar** to the reference.
+
+**Approximate string matching** (colloquially **fuzzy matching**) measures similarity by counting how many **edits** are needed to convert one text into another — a number called **edit distance**. The usual three edit operations are:
+
+- **Deletion:** `"brad"` → `"bad"`
+- **Insertion:** `"bad"` → `"bard"`
+- **Substitution:** `"bad"` → `"bed"`
+
+Some fuzzy matchers also treat **transposition** — swapping two letters (`"mats"` → `"mast"`) — as an edit; others count each transposition as **two** operations (one deletion + one insertion).
+
+> For example, `"bad"` is **one** edit to `"bard"` and **three** edits to `"cash"`, so `"bad"` is considered **more similar** to `"bard"` than to `"cash"`.
+
+**N-gram similarity** measures overlap based on **sequences of tokens (n-grams)** instead of single tokens. A **1-gram (unigram)** is a token; a **2-gram (bigram)** is a set of two tokens. **"My cats scare the mice"** consists of four bigrams: *"my cats"*, *"cats scare"*, *"scare the"*, *"the mice"*. You measure what percentage of n-grams in the reference responses also appear in the generated response.[^12]
+
+Common lexical-similarity metrics are **BLEU**, **ROUGE**, **METEOR++**, **TER**, and **CIDEr** — they differ in exactly how overlap is calculated. Before foundation models, **BLEU** and **ROUGE** were common, especially for translation. Since the rise of foundation models, **fewer benchmarks use lexical similarity**; examples that still do include **WMT**, **COCO Captions**, and **GEMv2**.
+
+**Drawbacks of lexical similarity:**
+
+- It requires curating a **comprehensive set of reference responses**. A good response can get a **low score** if the reference set contains nothing similar. On some benchmark examples, **Adept** found that its model **Fuyu** performed poorly **not because its outputs were wrong**, but because **correct answers were missing** in the reference data.
+- **References can be wrong.** The organizers of the **WMT 2023 Metrics shared task** reported finding **many bad reference translations**. Low-quality reference data is one reason **reference-free metrics** were strong contenders against reference-based metrics in correlation to human judgment (Freitag et al., 2023).
+- **Higher lexical similarity doesn't always mean a better response.** On **HumanEval**, OpenAI found that **BLEU scores for incorrect and correct solutions were similar** — optimizing for BLEU isn't the same as optimizing for **functional correctness** (Chen et al., 2021).
+
+![An example where Fuyu generated a correct caption but was given a low score because of the limitation of reference captions](<assets/An example where Fuyu generated a correct option but.png>)
+
+**Figure 3-5. An example where Fuyu generated a correct caption but was given a low score because of the limitation of reference captions.**
+
+#### Semantic Similarity
+
+Lexical similarity measures whether two texts **look** similar, **not** whether they **mean** the same thing:
+
+- *"What's up?"* and *"How are you?"* — **lexically different** (little word overlap), but **semantically close**.
+- *"Let's eat, grandma"* and *"Let's eat grandma"* — **lexically similar**, but mean **two completely different things**.
+
+**Semantic similarity** aims to compute similarity **in meaning**. This first requires transforming a text into a numerical representation — an **embedding**. For example, *"the cat sits on a mat"* might be represented as `[0.11, 0.02, 0.54]`. Semantic similarity is therefore also called **embedding similarity**.
+
+> The similarity between two embeddings can be computed using metrics such as **cosine similarity**. Two **identical** embeddings have a similarity of **1**; two **opposite** embeddings have a similarity of **–1**.
+
+Semantic similarity can be computed for embeddings of **any data modality**, including images and audio. For text it's sometimes called **semantic textual similarity**.
+
+> **WARNING — Is semantic similarity exact or subjective?**
+>
+> While semantic similarity is placed in the **exact** category here, it can be considered **subjective**, since **different embedding algorithms produce different embeddings**. However, given **two fixed embeddings**, the similarity score between them is computed **exactly**.
+
+Mathematically, let **$A$** be an embedding of the generated response and **$B$** be an embedding of a reference response. The **cosine similarity** between $A$ and $B$ is:
+
+$$\cos(A, B) = \frac{A \cdot B}{\lVert A \rVert \, \lVert B \rVert}$$
+
+with:
+
+- $A \cdot B$ — the **dot product** of $A$ and $B$.
+- $\lVert A \rVert$ — the **Euclidean norm** (also known as the **$L^2$ norm**) of $A$. If $A = [0.11, 0.02, 0.54]$, then $\lVert A \rVert = \sqrt{0.11^2 + 0.02^2 + 0.54^2}$.
+
+Metrics for semantic textual similarity include **BERTScore** (embeddings generated by BERT) and **MoverScore** (embeddings generated by a mixture of algorithms).
+
+> Semantic textual similarity **doesn't require** a reference set as comprehensive as lexical similarity does. However, its reliability depends on the **quality of the underlying embedding algorithm** — two texts with the same meaning can still score low if their embeddings are bad. Another drawback: the embedding algorithm might require **nontrivial compute and time** to run.
+
+### Introduction to Embedding
+
+The concept of embedding lies at the heart of **semantic similarity** and is the backbone of many topics explored throughout the book — including **vector search** (Chapter 6) and **data deduplication** (Chapter 8).
+
+Since computers work with numbers, a model must convert its input into **numerical representations** it can process. An **embedding** is a numerical representation that aims to **capture the meaning** of the original data.
+
+An embedding is a **vector**. For example, *"the cat sits on a mat"* might be represented as `[0.11, 0.02, 0.54]`. In reality, the size of an embedding vector (the number of elements) is typically between **100 and 10,000**.[^13]
+
+Models trained especially to produce embeddings include the open source **BERT**, **CLIP** (Contrastive Language–Image Pre-training), and **Sentence Transformers**. There are also **proprietary embedding models** provided as APIs.[^14]
+
+**Table 3-2. Embedding sizes used by common models.**
+
+| Model | Variant | Embedding size |
+| --- | --- | --- |
+| **Google's BERT** | BERT base | 768 |
+| | BERT large | 1024 |
+| **OpenAI's CLIP** | Image | 512 |
+| | Text | 512 |
+| **OpenAI Embeddings API** | `text-embedding-3-small` | 1536 |
+| | `text-embedding-3-large` | 3072 |
+| **Cohere's Embed v3** | `embed-english-v3.0` | 1024 |
+| | `embed-english-light-3.0` | 384 |
+
+Because models typically require their inputs to first be transformed into vector representations, many ML models — including **GPTs** and **Llamas** — also involve a step to **generate embeddings**. If you have access to the **intermediate layers** of these models, you can use them to extract embeddings. However, their quality **might not be as good** as embeddings from **specialized** embedding models.
+
+#### What makes an embedding "good"?
+
+The goal of an embedding algorithm is to produce embeddings that **capture the essence** of the original data. The vector `[0.11, 0.02, 0.54]` looks **nothing like** the text *"the cat sits on a mat"* — so how do we verify quality?
+
+> At a high level, an embedding algorithm is **good** if **more-similar texts have closer embeddings** (measured by cosine similarity or related metrics). The embedding of *"the cat sits on a mat"* should be **closer** to *"the dog plays on the grass"* than to *"AI research is super fun"*.
+
+You can also evaluate embedding quality based on its **utility for your task** — embeddings are used in **classification, topic modeling, recommender systems, and RAG**. A benchmark that measures embedding quality across multiple tasks is **MTEB** (Massive Text Embedding Benchmark, Muennighoff et al., 2023).
+
+Any data can have embedding representations: ecommerce solutions like **Criteo** and **Coveo** have embeddings for **products**; **Pinterest** has embeddings for images, graphs, queries, and even **users**.
+
+#### Joint (multimodal) embeddings
+
+A new frontier is creating **joint embeddings** for data of **different modalities**:
+
+- **CLIP** (Radford et al., 2021) — one of the first major models to map **text and images** into a joint embedding space.
+- **ULIP** (Xue et al., 2022) — unified representations of **text, images, and 3D point clouds**.
+- **ImageBind** (Girdhar et al., 2023) — a joint embedding across **six modalities**, including text, images, and audio.
+
+**CLIP** is trained using **(image, text) pairs** (the text can be a caption or comment). For each pair, a **text encoder** converts the text to a text embedding and an **image encoder** converts the image to an image embedding; both are then **projected into a joint embedding space**. The training goal is to get an image's embedding **close** to the embedding of its **corresponding text**.
+
+![CLIP architecture](<assets/CLIP architecture.png>)
+
+**Figure 3-6. CLIP's architecture (Radford et al., 2021).**
+
+> A joint embedding space that can represent data of different modalities is a **multimodal embedding space**. In a text–image joint space, the embedding of an image of a man fishing should be **closer** to the text *"a fisherman"* than to *"fashion show"*. This enables embeddings of different modalities to be **compared and combined** — for example, **text-based image search**: given a text, find the images closest to it.
+
+[Back to Contents](#contents)
+
 ## Notes
 
 The original chapter contains numerous footnotes that add color, asides, and references. They are gathered here as supplementary material rather than interspersed inline.
@@ -336,3 +610,7 @@ The original chapter contains numerous footnotes that add color, asides, and ref
 [^8]: A **nat** is the unit of entropy measured with the **natural logarithm** (base $e$). $1 \text{ nat} = \tfrac{1}{\ln 2} \approx 1.44$ bits.
 [^9]: **SFT** = Supervised Fine-Tuning; **RLHF** = Reinforcement Learning from Human Feedback. Both are **post-training** techniques that align a model to complete tasks rather than to minimize next-token loss.
 [^10]: **Quantization** lowers a model's numerical precision (e.g., from 16-bit to 4-bit) to shrink its memory footprint, which can shift perplexity **upward or downward** in ways that are hard to predict.
+[^11]: Any task with a **measurable objective** — energy saved, score achieved, latency reduced — admits functional-correctness evaluation, because success can be **read directly off the objective** rather than judged subjectively.
+[^12]: N-gram overlap is **directional**: you typically measure the fraction of the **reference's** n-grams that appear in the generated response (recall-oriented, as in ROUGE) or vice versa (precision-oriented, as in BLEU).
+[^13]: Larger embedding vectors can capture **more nuance** but cost **more storage and compute** at search time; the right size is a trade-off between **representational quality** and **efficiency**.
+[^14]: Proprietary embedding APIs (e.g., **OpenAI Embeddings**, **Cohere Embed**) trade the control of self-hosting for **convenience**, but send your data to a **third party** and can change model versions underneath you.
