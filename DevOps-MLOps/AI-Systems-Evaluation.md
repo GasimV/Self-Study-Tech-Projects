@@ -37,7 +37,7 @@
      - [Lack of Standardization and Quality Control](#lack-of-standardization-and-quality-control)
      - [From Comparative Performance to Absolute Performance](#from-comparative-performance-to-absolute-performance)
    - [The Future of Comparative Evaluation](#the-future-of-comparative-evaluation)
-7. [Summary](#summary)
+7. [Summary (Chapter 3)](#summary-chapter-3)
 8. [Notes (Chapter 3)](#notes-chapter-3)
 
 ### Part II — Evaluate AI Systems *(Chapter 4)*
@@ -62,7 +62,12 @@
       - [Public Leaderboards](#public-leaderboards)
       - [Custom Leaderboards with Public Benchmarks](#custom-leaderboards-with-public-benchmarks)
       - [Data Contamination with Public Benchmarks](#data-contamination-with-public-benchmarks)
-12. [Notes (Chapter 4)](#notes-chapter-4)
+12. [Design Your Evaluation Pipeline](#design-your-evaluation-pipeline)
+    - [Step 1. Evaluate All Components in a System](#step-1-evaluate-all-components-in-a-system)
+    - [Step 2. Create an Evaluation Guideline](#step-2-create-an-evaluation-guideline)
+    - [Step 3. Define Evaluation Methods and Data](#step-3-define-evaluation-methods-and-data)
+13. [Summary (Chapter 4)](#summary-chapter-4)
+14. [Notes (Chapter 4)](#notes-chapter-4)
 
 ## Evaluation Methodology
 
@@ -1042,7 +1047,7 @@ Given so many limitations, is there a future to comparative evaluation? There ar
 
 [Back to Contents](#contents)
 
-## Summary
+## Summary (Chapter 3)
 
 The **stronger AI models become**, the higher the potential for **catastrophic failures**, which makes evaluation **even more important** — yet evaluating open-ended, powerful models is **challenging**. These challenges make many teams turn toward **human evaluation**. Humans in the loop for sanity checks are always helpful, and often essential, but this chapter focused on approaches to **automatic evaluation**.
 
@@ -1732,34 +1737,209 @@ To combat contamination, leaderboard hosts like **Hugging Face** plot **standard
 
 [Back to Contents](#contents)
 
+## Design Your Evaluation Pipeline
+
+> The success of an AI application often hinges on the ability to **differentiate good outcomes from bad outcomes** — which requires an **evaluation pipeline you can rely on**. With an explosion of methods, picking the right combination is confusing. This section focuses on **open-ended tasks** *(close-ended evaluation is easier and can be inferred from this process)*.
+
+### Step 1. Evaluate All Components in a System
+
+Real-world AI applications are **complex** — many components, and a task may take many turns. Evaluation can happen at **different levels**: **per task**, **per turn**, and **per intermediate output**.
+
+> Evaluate the **end-to-end output** *and* **each component's intermediate output independently** — otherwise you won't know **where** your system fails.
+
+Consider an app that extracts a person's current employer from their resume PDF, in two steps:
+
+1. **Extract all text** from the PDF → evaluate with **similarity** between extracted text and ground-truth text.
+2. **Extract the current employer** from the text → evaluate with **accuracy**: given correctly extracted text, how often is the employer correct?
+
+If applicable, evaluate **both per turn and per task**. *(A turn can consist of multiple steps and messages; a multi-step output is still one turn.)*
+
+- **Turn-based evaluation** — the quality of **each output**.
+- **Task-based evaluation** — whether the system **completes the task**. *Did it help fix the bug? How many turns did it take?* Solving a problem in **2 turns vs. 20 turns** makes a big difference.
+
+> Since users care about **accomplishing tasks**, **task-based evaluation is more important** — but it's harder because **task boundaries are fuzzy** (is a new query a follow-up or a new task?).
+
+One example of task-based evaluation is the **`twenty_questions`** benchmark in **BIG-bench**: one model instance (**Alice**) picks a concept; another (**Bob**) asks yes/no questions to identify it. The score depends on **whether Bob guesses correctly** and **how many questions** it took:
+
+```text
+Bob: Is the concept an animal?
+Alice: No.
+Bob: Is the concept a plant?
+Alice: Yes.
+Bob: Does it grow in the ocean?
+Alice: No.
+Bob: Does it grow in a tree?
+Alice: Yes.
+Bob: Is it an apple?
+[Bob's guess is correct, and the task is completed.]
+```
+
+### Step 2. Create an Evaluation Guideline
+
+> Creating a clear evaluation guideline is the **most important step**. An **ambiguous guideline** leads to ambiguous, misleading scores. *If you don't know what bad responses look like, you won't be able to catch them.*
+
+Define not only what the application **should** do, but also what it **shouldn't**. *Should a customer-support chatbot answer questions about an upcoming election?* If not, define what's **out of scope**, how to **detect** it, and how to **respond**.
+
+#### Define Evaluation Criteria
+
+> Often the hardest part isn't deciding whether an output is good, but **defining what "good" means**. **LinkedIn** reported the first hurdle in deploying generative AI was **creating the evaluation guideline** — *a correct response isn't always a good response*. For their Job Assessment app, *"You are a terrible fit"* might be **correct but unhelpful**; a good response explains the **gap** and **how to close it**.
+
+LangChain's **State of AI 2023** found users averaged **2.3 criteria** per application. For a customer-support app, a good response might be defined by three:
+
+- **Relevance** — relevant to the user's query.
+- **Factual consistency** — consistent with the context.
+- **Safety** — not toxic.
+
+To derive criteria, play with **test queries** (ideally **real user queries**), generate multiple responses (manually or via AI), and label them good or bad.
+
+#### Create Scoring Rubrics with Examples
+
+For each criterion, choose a **scoring system** — binary (0/1), 1–5, 0–1, etc. For factual consistency, some teams use **binary** (0 inconsistent / 1 consistent); others use **three values** (–1 contradiction, 1 entailment, 0 neutral).
+
+> Create a **rubric with examples**: *what does a score of 1 look like, and why?* **Validate the rubric with humans** (yourself, coworkers, friends). If humans find it hard to follow, **refine** it until it's unambiguous. A clear guideline is the **backbone** of a reliable pipeline — and can be **reused** for training-data annotation (Chapter 8).
+
+#### Tie Evaluation Metrics to Business Metrics
+
+An application must serve a **business goal** — interpret its metrics in that context. *What does 80% factual consistency mean for the business?* Ideally, **map evaluation metrics to business metrics**:
+
+| Factual consistency | Customer-support automation |
+| --- | --- |
+| **80%** | automate **30%** of requests |
+| **90%** | automate **50%** |
+| **98%** | automate **90%** |
+
+This mapping helps with **planning** — knowing the gain from improving a metric builds confidence to invest in it. Also determine a **usefulness threshold**: the minimum score for the app to be useful at all (e.g., factual consistency **≥ 50%**, below which it's unusable even for general requests).
+
+> Before developing AI metrics, **understand the business metrics** you target — **stickiness** (DAU/WAU/MAU) or **engagement** (conversations per month, visit duration). Prioritizing these can raise revenue but may push toward **addictive features or extreme content** — *balancing profits with social responsibility*.
+
+### Step 3. Define Evaluation Methods and Data
+
+With criteria and rubrics ready, define the **methods** and **data**.
+
+#### Select Evaluation Methods
+
+Different criteria need different methods — a small **specialized toxicity classifier** for toxicity, **semantic similarity** for relevance, an **AI judge** for factual consistency. *(Unambiguous rubrics are critical for specialized scorers and AI judges.)*
+
+- **Mix and match** for the same criterion — e.g., a **cheap classifier** on **100%** of data plus an **expensive AI judge** on **1%**, balancing confidence and cost.
+- **Use logprobs when available** — they measure a model's **confidence** in a token (great for classification: probabilities all in 30–40% means low confidence; 95% means high) and enable **perplexity** for fluency/factual-consistency measurements.
+- **Automate as much as possible, but don't fear human evaluation — even in production.** Many teams treat human evaluation as the **North Star**. *LinkedIn manually evaluates up to **500 daily conversations**.*
+- Consider methods for **both experimentation and production** — in experimentation you may have reference data; in production you have **real users** (think about what **feedback** to collect — Chapter 10).
+
+#### Annotate Evaluation Data
+
+Curate **annotated examples** to evaluate each **component** and each **criterion**, for both turn-based and task-based evaluation. Use **actual production data** if possible; use **natural labels** if available, otherwise **humans or AI** (Chapter 8). The annotation guideline can later be **reused for finetuning instruction data**.
+
+**Slice your data** to gain a finer-grained understanding — separating data into subsets and inspecting performance on each:
+
+- **Avoid biases** (e.g., against minority user groups).
+- **Debug** — does poor performance on a subset relate to its length, topic, or format?
+- **Find improvement areas** — bad on long inputs? Try a different technique or model.
+- **Avoid Simpson's paradox** — where model A beats B on **aggregate** but **loses on every subset**.
+
+**Table 4-6. An example of Simpson's paradox.** *(Numbers from Charig et al., 1986, on kidney-stone treatments.)*
+
+| | Group 1 | Group 2 | Overall |
+| --- | --- | --- | --- |
+| **Model A** | **93%** (81/87) | **73%** (192/263) | 78% (273/350) |
+| **Model B** | 87% (234/270) | 69% (55/80) | **83%** (289/350) |
+
+> Model **A** outperforms **B** on **each subgroup** but **underperforms overall** — a warning against relying solely on aggregate numbers.
+
+Maintain **multiple evaluation sets** for different slices:
+
+- One that mirrors the **production distribution** (overall estimate).
+- Slices by **tier** (paying vs. free), **traffic source** (mobile vs. web), **usage**, etc.
+- A set where the system **frequently makes mistakes**.
+- A set where **users** make mistakes (e.g., **typos**, if common in production).
+- An **out-of-scope** set to verify the app handles inputs it **shouldn't engage with**.
+
+> **If you care about something, put a test set on it.**
+
+How much data per set? Enough for **reliable** results, but small enough to not be **prohibitively expensive**. To check whether 100 examples suffice, use **bootstrapping**:
+
+1. Draw **100 samples, with replacement**, from the original 100.
+2. Evaluate on the bootstrapped sample.
+3. **Repeat** many times. If results **vary wildly** (e.g., 90% on one, 70% on another), you need a **bigger** set.
+
+Evaluation also **compares systems** — *if a new prompt scores 10% higher, how big must the set be to be sure it's truly better?* A statistical significance test could compute the needed sample size **if** you knew the score distribution, but in reality the true distribution is **hard to know**.
+
+> **TIP — Rough sample-size estimate (OpenAI)**
+>
+> A useful rule: **for every 3× decrease in score difference, the number of samples needed increases 10×**.[^52]
+>
+> | Difference to detect | Sample size for 95% confidence |
+> | --- | --- |
+> | **30%** | ~10 |
+> | **10%** | ~100 |
+> | **3%** | ~1,000 |
+> | **1%** | ~10,000 |
+
+> **Table 4-7** above shows OpenAI's rough estimate. As a reference, among **lm-evaluation-harness** benchmarks the **median** is **1,000** examples (average **2,159**). The **Inverse Scaling prize** organizers suggested **300** as the absolute minimum, preferring **≥ 1,000**, especially for synthesized examples.
+
+#### Evaluate Your Evaluation Pipeline
+
+Evaluating the pipeline itself improves **reliability** and **efficiency** — especially important for **subjective** methods like AI as a judge. Ask:
+
+- **Is the pipeline giving the right signals?** Do better responses get higher scores? Do better metrics lead to better **business outcomes**?
+- **How reliable is it?** Run it twice — same results? Increase **reproducibility** and reduce **variance**; be consistent with configs (e.g., set the AI judge's **temperature to 0**).
+- **How correlated are your metrics?** Perfectly correlated → drop one. Not at all correlated → either an **interesting insight** or your metrics **aren't trustworthy**.[^53]
+- **How much cost and latency does it add?** Evaluation can add significant **latency and cost**; skipping it to save latency is a **risky bet**.
+
+#### Iterate
+
+As needs and user behaviors change, **criteria evolve** — update criteria, rubrics, and examples. But expect a **certain level of consistency**: if the evaluation process changes constantly, you **can't use results to guide development**.
+
+> As you iterate, do proper **experiment tracking** — log **all** variables that can change: evaluation data, the rubric, and the prompt and sampling configs used for AI judges.
+
+[Back to Contents](#contents)
+
+## Summary (Chapter 4)
+
+This is one of the **hardest but most important** AI topics. **Not having a reliable evaluation pipeline is one of the biggest blocks to AI adoption.** A reliable pipeline lets you **reduce risks, discover improvement opportunities, and benchmark progress** — saving time and headaches down the line.
+
+Key threads:
+
+- For most application developers, the challenge is **no longer developing models** but **selecting the right ones**. This chapter covered the **criteria** used to evaluate models — **domain-specific** and **generation** capabilities (including **factual consistency** and **safety**) — many of which evolved from traditional NLP (**fluency, coherence, faithfulness**).
+- **Host a model or use a model API?** The pros and cons were laid out along **seven axes** (data privacy, data lineage, performance, functionality, control, cost, on-device) — a decision **unique to every team**, depending on what it **needs** *and* **wants**.
+- **Public benchmarks** help **weed out bad models** but won't find the **best** for your application — and they're likely **contaminated**. Public leaderboards aggregate benchmarks, but **selection and aggregation aren't transparent**. Model selection is akin to building a **private leaderboard** ranked by **your** needs.
+- Finally, how to **create an evaluation pipeline** using all these techniques.
+
+> **No perfect evaluation method exists** — you can't capture a high-dimensional system with one- or few-dimensional scores. Modern AI evaluation has **many limitations and biases**, but that doesn't mean we shouldn't do it: **combining different methods and approaches** mitigates many challenges.
+
+Evaluation will recur throughout application development — Chapter 6 (retrieval and agentic systems), Chapters 7 and 9 (memory, latency, costs), Chapter 8 (data quality), and Chapter 10 (user feedback). Next up: the actual model adaptation process, starting with **prompt engineering**.
+
+[Back to Contents](#contents)
+
 ## Notes (Chapter 4)
 
-Footnotes for Chapter 4. *(The book's footnote texts weren't included in this passage; these are concise contextual elaborations consistent with the chapter — to be replaced with the originals if needed. Numbering continues globally within this document.)*
+The original chapter contains numerous footnotes that add color, asides, and references. They are reproduced here as supplementary material rather than interspersed inline. *(Numbering continues globally within this document; these correspond to the book's Chapter 4 footnotes 1–29.)*
 
-[^25]: A recommender system's value is **directly observable** in product metrics — clicks, watch time, conversions — which is exactly why it's one of the **easiest ML use cases to justify** in production.
-[^26]: As fluency and coherence approach the human ceiling, they **stop discriminating** between strong models — a saturated metric tells you little about which model is better.
-[^27]: Note the prompt's grammatical slip (*"Does the summary untruthful…"*) is reproduced **as published** — judge prompts in the wild are often imperfect yet still effective.
-[^28]: **Textual entailment** (a.k.a. **natural language inference, NLI**) predates foundation models and underlies benchmarks like **SNLI** and **MNLI**; framing factual consistency as NLI lets you reuse decades of tooling.
-[^29]: *"If prompted properly"* is load-bearing — a general-purpose judge's safety detection is only as good as the **rubric and examples** in its prompt.
-[^30]: A **regex** (regular expression) specifies an exact textual pattern the output must match — a strict, automatically checkable form of structured output.
-[^31]: Public instruction benchmarks are a **proxy**: they sample *some* instruction space, but your application's real instructions form a **different distribution**.
-[^32]: Roleplaying has **two evaluable axes** — *style* (does it sound like the character?) and *knowledge* (does it know what the character would know?) — and a model can pass one while failing the other.
-[^33]: This is the **fixed-cost economics** of self-hosting: once the cluster is provisioned, the **marginal cost per token trends toward zero** until you saturate capacity — the opposite of per-token API pricing.
-[^34]: Auditing matters for **regulated and high-trust domains** — without training-data access, you can't independently verify a model wasn't trained on compromised, leaked, or illegally acquired data.
-[^35]: The **700M monthly-active-user** threshold is effectively a clause aimed at **large competitors** — it lets the vast majority of users build freely while requiring hyperscalers to negotiate a separate deal.
-[^36]: Banning training-on-outputs protects the provider from **distillation** — a competitor cheaply cloning the model's behavior by training a student on its responses.
-[^37]: Because a commercial model's weights are never released, your **only** access path is the provider's API — there's no way to serve it through a third party.
-[^38]: For these organizations, **data residency** is a hard attribute: an externally hosted API is disqualified before any quality consideration.
-[^39]: The lesson isn't that ChatGPT is uniquely unsafe, but that **any externally hosted API** is a potential exfiltration channel for whatever employees paste into it.
-[^40]: Indemnification clauses in a commercial contract can **shift legal liability** for training-data infringement onto the provider — protection open source models generally can't offer.
-[^41]: This is the core **incentive misalignment**: the economic reward for a frontier model is to **monetize it behind an API**, not to give it away.
-[^42]: The crossover point is where **cumulative API spend** exceeds the amortized cost of building and running your own inference stack — it arrives sooner the higher and steadier your volume.
-[^43]: Community support is an underrated **soft attribute** — popular models accumulate shared fixes, prompts, and tooling that reduce your own engineering burden.
-[^44]: **Natural Questions** appears twice because it's evaluated in two settings — **with** and **without** Wikipedia pages in the input — testing closed-book vs. open-book QA.
-[^45]: If two benchmarks measure nearly the same thing, averaging them **double-counts** that capability, skewing the aggregate ranking toward models that happen to be good at it.
-[^46]: **GPQA** ("Google-Proof Q&A") is designed so that even skilled non-experts **can't easily answer by searching** — targeting genuine graduate-level expertise.
-[^47]: The specific benchmark names date quickly, but the **reasoning about how to select, correlate, and interpret** benchmarks is durable.
-[^48]: A frontier lab almost certainly runs **extensive internal evals** before shipping; the public perception of regression more likely reflects **silent behavioral changes** than blind releases.
-[^49]: Running it yourself also lets you control **prompt formatting and decoding settings**, which (as noted earlier) can materially change a model's measured score.
-[^50]: This five-figure cost is **per full sweep** — it scales with both the number of models and the number (and expense) of benchmarks, which is why most leaderboards keep their benchmark set small.
-[^51]: Benchmark publication date vs. model training cutoff is a quick **contamination smell test**: anything public before training could plausibly be in the training set.  
+[^25]: Recommendations can increase purchases, but increased purchases aren't always **because of** good recommendations — promotional campaigns and new product launches can too. It's important to do **A/B testing** to differentiate impact. *(Thanks to Vittorio Cretella for the note.)*  
+[^26]: A reason **OpenAI's GPT-2** created so much buzz in 2019 was that it generated texts that were **remarkably more fluent and coherent** than any language model before it.  
+[^27]: The prompt here contains a **typo** because it was copied verbatim from the Liu et al. (2023) paper, which contains a typo. This highlights how easy it is for humans to make mistakes when working with prompts.  
+[^28]: Textual entailment is also known as **natural language inference (NLI)**.  
+[^29]: Anthropic has a nice tutorial on using **Claude for content moderation**.  
+[^30]: Structured outputs are discussed in depth in Chapter 2.  
+[^31]: There haven't been many comprehensive studies of the **distribution of instructions** people use foundation models for. LMSYS published a study of one million Chatbot Arena conversations, but these aren't grounded in real-world applications. The author is waiting for studies from model and API providers.  
+[^32]: The **knowledge** part is tricky — the roleplaying model shouldn't say things the character **doesn't** know. If Jackie Chan doesn't speak Vietnamese, check that the model playing him doesn't either. This **"negative knowledge"** check is very important for gaming — you don't want an NPC to accidentally give players **spoilers**.  
+[^33]: However, the **electricity cost** might be different, depending on usage.  
+[^34]: Another argument for making training data public: since models are likely trained on data **scraped from the internet**, which was generated by the public, the **public should have the right** to access the models' training data.  
+[^35]: In spirit, this restriction is similar to the **Elastic License**, which forbids companies from offering the open source version of Elastic as a hosted service and competing with the Elasticsearch platform.  
+[^36]: A model's output might not be usable to improve other models **even if its license allows it**. Consider model X trained on **ChatGPT's outputs**: X might permit this, but if ChatGPT doesn't, then X **violated ChatGPT's terms** and can't be used. This is why knowing a model's **data lineage** is so important.  
+[^37]: For example, as of this writing, you can access **GPT-4 only via OpenAI or Azure**. Some argue that being able to provide services on top of OpenAI's proprietary models is a key reason **Microsoft invested in OpenAI**.  
+[^38]: Interestingly, some companies with strict data-privacy requirements are **okay sending data to models hosted on GCP, AWS, and Azure** even though they can't usually send data to third-party services. For them, the policy is about **which services they trust** — they trust big cloud providers but not other startups.  
+[^39]: The story was reported by several outlets, including **TechRadar** (*"Samsung Workers Made a Major Error by Using ChatGPT,"* Lewis Maddison, April 2023).  
+[^40]: As regulations evolve worldwide, requirements for **auditable information** about models and training data may increase. Commercial models may be able to provide **certifications**, saving companies the effort.  
+[^41]: Users want models open source because **open means more information and options** — but what's in it for developers? Many companies capitalize on open source models via inference and finetuning services; from the developers' perspective, *why invest millions or billions just for others to make money?* It might be argued that **Meta** supports open source mainly to keep competitors (Google, Microsoft/OpenAI) in check. **Mistral** and **Cohere** have open models but also APIs — at some point inference services on top of their models become **their competitors**. There's also the argument that open source is **better for society**, and maybe that's enough of an incentive. The author hopes so.  
+[^42]: The companies hit hardest by API costs are probably **not the biggest** companies — the biggest might be important enough to **negotiate favorable terms** with service providers.  
+[^43]: This mirrors the software-infrastructure philosophy of always using the **most popular tools**, which have been extensively tested by the community.  
+[^44]: When the author asked on Hugging Face's Discord why they chose certain benchmarks, **Lewis Tunstall** responded that they were guided by the benchmarks the then-popular models used. *(Thanks to the Hugging Face team for being so responsive.)*  
+[^45]: The author is glad to report that **leaderboards have become much more transparent** about benchmark selection and aggregation. When launching their new leaderboard, **Hugging Face shared a great analysis** of benchmark correlation (2024).  
+[^46]: It's both cool and intimidating that in just a couple of years, benchmarks had to change from **grade-level** to **graduate-level** questions.  
+[^47]: In gaming there's the concept of a **neverending game** where new levels are procedurally generated as players master existing ones. It'd be cool to design a **neverending benchmark** where harder problems are procedurally generated as models level up.  
+[^48]: Reading about others' experiences is educational, but discern **anecdote from universal truth**. The same model update can degrade some applications and improve others — e.g., migrating from **GPT-3.5-turbo-0301 → GPT-3.5-turbo-1106** caused a **10% drop** in Voiceflow's intent classification but **improved** GoDaddy's customer-support chatbot.  
+[^49]: If there **is** a publicly available score, check **how reliable** it is.  
+[^50]: The HELM paper reported a total cost of **$38,000 for commercial APIs** and **19,500 GPU hours** for open models. At **$2.15–$3.18** per GPU hour, the total comes out to **$80,000–$100,000**.  
+[^51]: A friend quipped: *"A benchmark stops being useful as soon as it becomes public."*  
+[^52]: This is because the **square root of 10 is approximately 3.3** — so detecting a 3× smaller difference requires roughly 10× the samples.  
+[^53]: For example, if there's **no correlation** between a translation benchmark and a math benchmark, you might infer that improving a model's **translation capability has no impact** on its math capability.  
