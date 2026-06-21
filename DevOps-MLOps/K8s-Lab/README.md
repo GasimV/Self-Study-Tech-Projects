@@ -16,7 +16,7 @@ I'm following the book's progression, starting from a local single-node cluster 
    - [Checking status, stopping, and restarting](#checking-status-stopping-and-restarting)
    - [What Minikube does behind the scenes](#what-minikube-does-behind-the-scenes)
 2. [Checking out the cluster](#2-checking-out-the-cluster)
-   - [SSH into the node VM](#ssh-into-the-node-vm)
+   - [SSH into the node](#ssh-into-the-node)
    - [Cluster info and nodes with kubectl](#cluster-info-and-nodes-with-kubectl)
    - [Listing the default addons](#listing-the-default-addons)
 3. [Doing work — deploy, expose, and call a service](#3-doing-work--deploy-expose-and-call-a-service)
@@ -64,7 +64,28 @@ With Chocolatey installed, the install is a one-liner (run from an elevated Powe
 choco install minikube -y
 ```
 
-This pulls in both `minikube` and `kubernetes-cli` (which provides `kubectl`) and creates shims so both are on the `PATH`. In my run it installed **Minikube v1.25.2** and **kubernetes-cli v1.24.0**.
+This pulls in both `minikube` and `kubernetes-cli` (which provides `kubectl`) and creates shims so both are on the `PATH`.
+
+> **My actual run (June 2026):** the book uses Minikube v1.25.2, but Chocolatey installed the current versions for me — **Minikube v1.38.1** and **kubernetes-cli v1.36.2**. The flow is identical; only the version numbers differ.
+>
+> ```console
+> PS C:\Users\Lenovo> choco install minikube -y
+> Chocolatey v2.7.2
+> Installing the following packages:
+> minikube
+>
+> kubernetes-cli v1.36.2 [Approved]
+> ...
+>  ShimGen has successfully created a shim for kubectl.exe
+>  The install of kubernetes-cli was successful.
+>
+> Minikube v1.38.1 [Approved]
+> ...
+>  ShimGen has successfully created a shim for minikube.exe
+>  The install of Minikube was successful.
+>
+> Chocolatey installed 2/2 packages.
+> ```
 
 > **Console / shell notes:** On Windows you can drive Minikube from either **PowerShell** or **WSL** — both work, and some operations need an elevated (Administrator) shell. I use the official **Windows Terminal**, which can also be installed via Chocolatey:
 >
@@ -101,46 +122,64 @@ alias mk='minikube.exe'
 >
 > For example, `mk start` becomes `minikube start`, and `k get nodes` becomes `kubectl get nodes`.
 
-Verify the install:
+Verify the install (using the full command, since I skipped the aliases):
 
 ```console
-$ mk version
-minikube version: v1.25.2
-commit: 362d5fdc0a3dbee389b3d3f1034e8023e72bd3a7
+PS C:\Users\Lenovo> minikube version
+minikube version: v1.38.1
+commit: c93a4cb9311efc66b90d33ea03f75f2c4120e9b0
 ```
 
 ### Starting the cluster
 
-Create the cluster with `mk start`:
+Create the cluster with `minikube start`. Here's my actual run:
 
 ```console
-$ mk start
-  minikube v1.25.2 on Microsoft Windows 10 Pro
-  Automatically selected the docker driver. Other choices: hyperv, ssh
-  Starting control plane node minikube in cluster minikube
-  Pulling base image ...
-  Downloading Kubernetes v1.23.3 preload ...
-  Creating docker container (CPUs=2, Memory=8100MB) ...
-  Downloading VM boot image ...
-  Starting control plane node minikube in cluster minikube
-  Creating hyperv VM (CPUs=2, Memory=6000MB, Disk=20000MB) ...
-  Preparing Kubernetes v1.23.3 on Docker 20.10.12 ...
-    ▪ Generating certificates and keys ...
-    ▪ Booting up control plane ...
-    ▪ Configuring RBAC rules ...
-  Verifying Kubernetes components...
-  Enabled addons: storage-provisioner, default-storageclass
-  Done! kubectl is now configured to use "minikube" cluster and "default" namespace by default
+PS C:\Users\Lenovo> minikube start
+😄  minikube v1.38.1 on Microsoft Windows 11 Pro 25H2
+✨  Automatically selected the docker driver. Other choices: hyperv, virtualbox, ssh
+❗  Starting v1.39.0, minikube will default to "containerd" container runtime. See #21973 for more info.
+📌  Using Docker Desktop driver with root privileges
+👍  Starting "minikube" primary control-plane node in "minikube" cluster
+🚜  Pulling base image v0.0.50 ...
+💾  Downloading Kubernetes v1.35.1 preload ...
+    > preloaded-images-k8s-v18-v1...:  272.45 MiB / 272.45 MiB  100.00% 5.56 Mi
+    > gcr.io/k8s-minikube/kicbase...:  519.58 MiB / 519.58 MiB  100.00% 6.18 Mi
+🔥  Creating docker container (CPUs=2, Memory=16200MB) ...
+🐳  Preparing Kubernetes v1.35.1 on Docker 29.2.1 ...
+🔗  Configuring bridge CNI (Container Networking Interface) ...
+🔎  Verifying Kubernetes components...
+    ▪ Using image gcr.io/k8s-minikube/storage-provisioner:v5
+🌟  Enabled addons: storage-provisioner, default-storageclass
+🏄  Done! kubectl is now configured to use "minikube" cluster and "default" namespace by default
 ```
 
-Even the **default** setup is a fairly involved process, and Minikube transparently retries steps that fail (for example, image pulls that have trouble reaching `k8s.gcr.io`). The whole thing is highly customizable — `mk start -h` lists the full set of flags for tuning drivers, CPU/memory, Kubernetes version, container runtime, and more.
+#### What happened, line by line
+
+1. **Version & OS detected** — `minikube v1.38.1 on Microsoft Windows 11 Pro 25H2`. Minikube reports itself and the host it's running on.
+2. **Driver auto-selected** — it picked the **docker** driver automatically (other candidates on my machine were `hyperv`, `virtualbox`, `ssh`). This is a key difference from the book, which used a Hyper-V **VM**: my cluster runs inside a **Docker container** instead. Because Docker Desktop is available, that's the path of least resistance.
+3. **Deprecation heads-up** — the `❗` line warns that from **v1.39.0** Minikube will default to the **containerd** runtime instead of Docker. Just informational; my run still used Docker.
+4. **Driver privileges** — `Using Docker Desktop driver with root privileges`: the container runs with the access it needs to host a control plane.
+5. **Creating the node** — `Starting "minikube" primary control-plane node in "minikube" cluster`. In single-node mode this one node is *both* control plane and worker.
+6. **Pulling the base image** — `kicbase` (Kubernetes-in-Container base) is the image that provides the node's OS environment. Here it's `v0.0.50`.
+7. **Downloading the Kubernetes preload** — a ~272 MiB bundle of pre-pulled images for **Kubernetes v1.35.1**, plus the ~520 MiB `kicbase` image. Preloading these speeds up startup and avoids pulling each component image separately. (First run only — they're cached afterward.)
+8. **Creating the container** — the Docker container is provisioned with **CPUs=2, Memory=16200 MB**. Note there's **no "Creating VM"/"Downloading VM boot image" step** here, unlike the book's Hyper-V run — the container replaces the VM.
+9. **Preparing Kubernetes** — `Kubernetes v1.35.1 on Docker 29.2.1`: bootstrapping the control plane (this is where certificates, the API server, etcd, scheduler, controller-manager, and kubelet get set up — kubeadm does the heavy lifting inside the node).
+10. **Configuring CNI** — `bridge CNI`: installs the pod networking plugin so pods can get IPs and talk to each other.
+11. **Verifying components** — Minikube health-checks the cluster and pulls the `storage-provisioner:v5` image.
+12. **Enabling addons** — the same two storage addons as the book come on by default: `storage-provisioner` and `default-storageclass`.
+13. **Done** — `kubectl is now configured to use "minikube" cluster and "default" namespace`. Minikube wrote a context into my kubeconfig so `kubectl` points at this cluster out of the box.
+
+In short: even the **default** setup does a lot of work — selecting a driver, pulling images, provisioning the node, bootstrapping every control-plane component, wiring up networking, and configuring `kubectl`. It's all customizable too — `minikube start -h` lists flags for the driver, CPU/memory, Kubernetes version, container runtime, and more.
+
+> **Versions in my run vs. the book:** docker driver (container) instead of Hyper-V (VM); Kubernetes **v1.35.1** instead of v1.23.3; Docker **29.2.1** instead of 20.10.12; **bridge CNI** explicitly configured. The shape of the process is the same — the moving parts are just newer.
 
 ### Checking status, stopping, and restarting
 
 Check cluster status:
 
 ```console
-$ mk status
+PS C:\Users\Lenovo> minikube status
 minikube
 type: Control Plane
 host: Running
@@ -149,45 +188,61 @@ apiserver: Running
 kubeconfig: Configured
 ```
 
+Everything reports `Running` / `Configured`, so the cluster is healthy.
+
 Stop the cluster:
 
 ```console
-$ mk stop
- Stopping node "minikube" ...
- Powering off "minikube" via SSH ...
- 1 node stopped.
+PS C:\Users\Lenovo> minikube stop
+✋  Stopping node "minikube"  ...
+🛑  Powering off "minikube" via SSH ...
+🛑  1 node stopped.
 ```
 
-Restart it, timing how long a warm restart takes:
+#### Timing a restart — `time` vs. PowerShell
+
+The book measures the restart with the Unix shell built-in `time`. That **doesn't exist in PowerShell**, so it fails:
 
 ```console
-$ time mk start
-  minikube v1.25.2 on Microsoft Windows 10 Pro
-  Using the hyperv driver based on existing profile
-  Restarting existing hyperv VM for "minikube" ...
-  Preparing Kubernetes v1.23.3 on Docker 20.10.12 ...
-  Verifying Kubernetes components...
-  Enabled addons: storage-provisioner, default-storageclass
-  Done! kubectl is now configured to use "minikube" cluster and "default" namespace by default
-real    1m8.666s
+PS C:\Users\Lenovo> time minikube start
+time : The term 'time' is not recognized as the name of a cmdlet, function, script file, or operable program. ...
+    + FullyQualifiedErrorId : CommandNotFoundException
 ```
 
-A warm restart reuses the existing profile/VM, so it's much faster than the first cold start — a little over a minute in my case.
+PowerShell's equivalent is the **`Measure-Command`** cmdlet, which runs a script block and reports how long it took:
+
+```console
+PS C:\Users\Lenovo> Measure-Command { minikube start }
+
+Days              : 0
+Hours             : 0
+Minutes           : 0
+Seconds           : 43
+Milliseconds      : 377
+...
+TotalSeconds      : 43.3777969
+```
+
+A warm restart took **~43 seconds** for me. It reuses the existing profile and container/VM, so it's noticeably faster than the first cold start (which had to download images and provision the node).
+
+> **Gotcha:** `Measure-Command` swallows the wrapped command's normal output — it returns only the timing object, so you won't see Minikube's usual `😄 … 🏄 Done!` lines. If you want both the output *and* the timing, run `minikube start` on its own, or use `Measure-Command { minikube start | Out-Default }`.
 
 ### What Minikube does behind the scenes
 
-The reason `mk start` is worth appreciating is that it automates everything you'd otherwise have to do by hand when building a cluster from scratch. Behind the curtain it:
+The reason `minikube start` is worth appreciating is that it automates everything you'd otherwise have to do by hand when building a cluster from scratch. In my environment (the **docker** driver), behind the curtain it:
 
-1. Started a **Hyper-V VM**.
-2. Created **certificates** for the local machine and the VM.
-3. **Downloaded** the required images.
-4. Set up **networking** between the local machine and the VM.
-5. Ran the local **Kubernetes cluster** on the VM.
+1. Pulled the **`kicbase` base image** and created a **Docker container** to act as the node (the book's Hyper-V driver spins up a **VM** here instead).
+2. Created **certificates** for the local machine and the node.
+3. **Downloaded** the required images (the Kubernetes preload bundle + component images).
+4. Set up **networking** between the host and the node, and configured the **bridge CNI** for pod networking.
+5. Ran the local **Kubernetes cluster** inside the container.
 6. **Configured** the cluster.
-7. Started all the **control plane** components.
+7. Started all the **control plane** components (API server, etcd, scheduler, controller-manager).
 8. Configured the **kubelet**.
 9. Enabled **addons** (for storage).
 10. Configured **`kubectl`** to talk to the cluster.
+
+> **Driver note:** step 1 is the main thing that changes with the driver. With **docker** the node is a container; with **hyperv** (the book) or **virtualbox** it's a full VM, which is why the book's output also shows a "Downloading VM boot image" / "Creating VM" step that my run doesn't have. Everything from step 2 onward is the same regardless of driver.
 
 Keeping this list in mind is useful — every one of these steps reappears (manually) when provisioning a cluster the hard way later in the book.
 
@@ -197,22 +252,24 @@ Keeping this list in mind is useful — every one of these steps reappears (manu
 
 With a cluster running, the next thing I do is poke around inside it.
 
-### SSH into the node VM
+### SSH into the node
 
-Minikube runs the cluster inside a VM, and I can drop into a shell on that VM directly:
+Minikube runs the cluster inside the node — a **Docker container** with my docker driver (the book's Hyper-V driver uses a VM instead) — and I can drop into a shell on it directly:
 
 ```console
-$ mk ssh
-        _             _
-   _         _ ( )           ( )
- ___ ___  (_)  ___  (_)| |/')  _   _ | |_      __
-... (ASCII art spelling "minikube") ...
-
-$ uname -a
-Linux minikube 4.19.202 #1 SMP Tue Feb 8 19:13:02 UTC 2022 x86_64 GNU/Linux
+PS C:\Users\Lenovo> minikube ssh
+Linux minikube 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64
+...
+docker@minikube:~$ uname -a
+Linux minikube 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux
 ```
 
-The banner is just ASCII art spelling out "minikube." `uname -a` confirms I'm on the Linux node that actually hosts the cluster. To get back to the host, disconnect with **Ctrl+D** or `logout`.
+A few things to notice in my output versus the book's:
+
+- The shell prompt is `docker@minikube` — I'm logged in as the `docker` user inside the node, and the OS banner identifies it as **Debian GNU/Linux**.
+- The kernel is `6.6.114.1-microsoft-standard-WSL2`. That `-WSL2` tag is a giveaway that the container is running on Docker Desktop's WSL2 backend — so the node shares the **WSL2 Linux kernel** of my Windows host rather than booting its own kernel like a VM would. (The book's Hyper-V run shows a plain `4.19.202` kernel from a dedicated VM.)
+
+`uname -a` confirms I'm on the Linux node that actually hosts the cluster. To get back to the host, disconnect with **Ctrl+D** or `logout`.
 
 From here on I lean on **`kubectl`** — the Swiss Army knife of Kubernetes, and the one tool that works against every cluster regardless of how it was provisioned.
 
@@ -221,43 +278,112 @@ From here on I lean on **`kubectl`** — the Swiss Army knife of Kubernetes, and
 Check that the control plane is healthy:
 
 ```console
-$ k cluster-info
-Kubernetes control plane is running at https://172.26.246.89:8443
-CoreDNS is running at https://172.26.246.89:8443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+PS C:\Users\Lenovo> kubectl cluster-info
+Kubernetes control plane is running at https://127.0.0.1:51464
+CoreDNS is running at https://127.0.0.1:51464/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
 
 To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
 ```
 
-`k cluster-info dump` gives a full JSON dump of every object in the cluster — useful but overwhelming, so I prefer narrower commands for exploring.
+The control plane reports healthy. Note the API server endpoint: `https://127.0.0.1:51464`. With the **docker driver** the node is a container, and Docker maps the API server out to a random high port on `127.0.0.1` of my host — that's why it's localhost here, rather than the VM's LAN IP (`172.x.x.x`) the book shows.
+
+`kubectl cluster-info dump` gives a full JSON dump of every object in the cluster. It's exhaustive — my run starts with a `NodeList` describing the `minikube` node (labels, the `podCIDR` of `10.244.0.0/24`, etc.) and walks through every resource type, ending with empty `ReplicaSetList` / `PodList` for the default namespace (nothing of mine deployed yet):
+
+```console
+PS C:\Users\Lenovo> kubectl cluster-info dump
+{
+    "kind": "NodeList",
+    ...
+    "items": [
+        { "metadata": { "name": "minikube", ... },
+          "spec": { "podCIDR": "10.244.0.0/24", "podCIDRs": ["10.244.0.0/24"] } }
+    ]
+}
+... (every resource type) ...
+{ "kind": "PodList", ..., "items": null }
+```
+
+It's useful for deep debugging but overwhelming for browsing, so I prefer narrower commands.
 
 List the nodes:
 
 ```console
-$ k get nodes
-NAME       STATUS   ROLES                  AGE   VERSION
-minikube   Ready    control-plane,master   62m   v1.23.3
+PS C:\Users\Lenovo> kubectl get nodes
+NAME       STATUS   ROLES           AGE   VERSION
+minikube   Ready    control-plane   29m   v1.35.1
 ```
 
-One node, `minikube`, acting as both control plane and worker. For the full, verbose breakdown of a single node (capacity, conditions, allocated resources, events):
+One node, `minikube`, `Ready`, running Kubernetes **v1.35.1**. Its only role is `control-plane` (newer Kubernetes dropped the legacy `master` role label that the book's v1.23 output still shows as `control-plane,master`). In single-node mode this node is also schedulable for workloads.
+
+For the full breakdown of a node — capacity, conditions, allocated resources, and events — use `describe`:
 
 ```console
-$ k describe node minikube
+PS C:\Users\Lenovo> kubectl describe node minikube
+Name:               minikube
+Roles:              control-plane
+...
+Conditions:
+  Type             Status   Reason                        Message
+  MemoryPressure   False    KubeletHasSufficientMemory    kubelet has sufficient memory available
+  DiskPressure     False    KubeletHasNoDiskPressure      kubelet has no disk pressure
+  PIDPressure      False    KubeletHasSufficientPID       kubelet has sufficient PID available
+  Ready            True     KubeletReady                  kubelet is posting ready status
+Addresses:
+  InternalIP:  192.168.49.2
+  Hostname:    minikube
+Capacity:
+  cpu:                24
+  memory:             32571408Ki
+  pods:               110
+System Info:
+  Kernel Version:             6.6.114.1-microsoft-standard-WSL2
+  OS Image:                   Debian GNU/Linux 12 (bookworm)
+  Container Runtime Version:  docker://29.2.1
+  Kubelet Version:            v1.35.1
+PodCIDR:                      10.244.0.0/24
+Non-terminated Pods:          (7 in total)
+  Namespace     Name                                CPU Requests  Memory Requests  Age
+  kube-system   coredns-7d764666f9-jzvpl            100m          70Mi             29m
+  kube-system   etcd-minikube                       100m          100Mi            29m
+  kube-system   kube-apiserver-minikube             250m          0                29m
+  kube-system   kube-controller-manager-minikube    200m          0                29m
+  kube-system   kube-proxy-nnrwp                    0             0                29m
+  kube-system   kube-scheduler-minikube             100m          0                29m
+  kube-system   storage-provisioner                 0             0                29m
 ```
+
+A few things worth pulling out of this (trimmed) dump:
+
+- **Conditions** — all the pressure conditions are `False` and `Ready` is `True`: the node is healthy with enough memory, disk, and PIDs.
+- **`InternalIP: 192.168.49.2`** — this is the node's address on minikube's internal Docker network, distinct from the `127.0.0.1` the host uses to reach the API server.
+- **Capacity** — the container can see my whole machine: `cpu: 24`, ~32 GiB memory, and a default cap of `110` pods.
+- **System Info** confirms the environment: **Debian 12 (bookworm)**, WSL2 kernel, **Docker 29.2.1** as the container runtime, kubelet **v1.35.1**.
+- **Non-terminated Pods (7)** — the cluster isn't really "empty." The control-plane components themselves run as pods in `kube-system`: `etcd`, `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, plus `coredns` (DNS) and `storage-provisioner` (from the default addon).
 
 ### Listing the default addons
 
 Before putting the cluster to work, I check which addons Minikube ships with and which are on by default:
 
 ```console
-$ mk addons list
+PS C:\Users\Lenovo> minikube addons list
+┌─────────────────────────────┬──────────┬────────────┬────────────────────────────┐
+│         ADDON NAME          │ PROFILE  │   STATUS   │         MAINTAINER         │
+├─────────────────────────────┼──────────┼────────────┼────────────────────────────┤
+│ dashboard                   │ minikube │ disabled   │ Kubernetes                 │
+│ default-storageclass        │ minikube │ enabled ✅ │ Kubernetes                 │
+│ ingress                     │ minikube │ disabled   │ Kubernetes                 │
+│ metrics-server              │ minikube │ disabled   │ Kubernetes                 │
+│ storage-provisioner         │ minikube │ enabled ✅ │ minikube                   │
+│ ... (38 addons in total) ...                                                     │
+└─────────────────────────────┴──────────┴────────────┴────────────────────────────┘
 ```
 
-The list is long (Ingress, dashboard, metrics-server, registry, Istio, MetalLB, gVisor, and many more), but **only two are enabled out of the box** — both for storage:
+The list is long — **38 addons** in my v1.38.1 run (more than the book's, with newer entries like `headlamp`, `kubetail`, `inspektor-gadget`, `volcano`, `yakd`, and `amd-gpu-device-plugin`). But just like the book, **only two are enabled out of the box** (marked ✅), both for storage:
 
 | Addon | Status | Maintainer |
 | --- | --- | --- |
-| `default-storageclass` | **enabled** | kubernetes |
-| `storage-provisioner` | **enabled** | google |
+| `default-storageclass` | **enabled ✅** | Kubernetes |
+| `storage-provisioner` | **enabled ✅** | minikube |
 
 Everything else is disabled until I explicitly turn it on (I enable the `dashboard` addon in [section 4](#4-examining-the-cluster-with-the-dashboard)).
 
