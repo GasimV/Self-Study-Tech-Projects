@@ -5,7 +5,33 @@
 ## Contents
 
 1. [Purpose](#purpose)
-2. [Model Servers & Controllers](#model-servers--controllers)
+2. [Kubernetes Concepts](#kubernetes-concepts)
+   - [Node](#node)
+   - [Cluster](#cluster)
+   - [Control Plane](#control-plane)
+   - [Pod](#pod)
+   - [Label](#label)
+   - [Label Selector](#label-selector)
+   - [Annotation](#annotation)
+   - [Service](#service)
+   - [Volume](#volume)
+   - [Replication Controller and Replica Set](#replication-controller-and-replica-set)
+   - [StatefulSet](#statefulset)
+   - [Secret](#secret)
+   - [Name](#name)
+   - [Namespace](#namespace)
+3. [Kubernetes Components](#kubernetes-components)
+   - [Control Plane Components](#control-plane-components)
+     - [API Server](#api-server)
+     - [etcd](#etcd)
+     - [Kube Controller Manager](#kube-controller-manager)
+     - [Cloud Controller Manager](#cloud-controller-manager)
+     - [Kube Scheduler](#kube-scheduler)
+     - [DNS](#dns)
+   - [Node Components](#node-components)
+     - [Proxy](#proxy)
+     - [kubelet](#kubelet)
+4. [Model Servers & Controllers](#model-servers--controllers)
    - [Model Server](#model-server)
    - [vLLM](#vllm)
    - [Hugging Face Text Generation Inference (TGI)](#hugging-face-text-generation-inference-tgi)
@@ -21,7 +47,7 @@
      - [Why Runtime and Model Separation Matters](#why-runtime-and-model-separation-matters)
    - [Ray Serve and KubeRay](#ray-serve-and-kuberay)
    - [Model Serving Lessons Learned](#model-serving-lessons-learned)
-3. [Kubernetes and GPUs](#kubernetes-and-gpus)
+5. [Kubernetes and GPUs](#kubernetes-and-gpus)
    - [GPU Discovery](#gpu-discovery)
      - [Node Feature Discovery](#node-feature-discovery)
      - [GPU Feature Discovery](#gpu-feature-discovery)
@@ -44,7 +70,7 @@
      - [Single-Node Versus Multinode Inference](#single-node-versus-multinode-inference)
    - [GPU Resource Optimizations](#gpu-resource-optimizations)
    - [GPU Lessons Learned](#gpu-lessons-learned)
-4. [Model Data Storage, Access & Registry in K8s](#model-data-storage-access--registry-in-k8s)
+6. [Model Data Storage, Access & Registry in K8s](#model-data-storage-access--registry-in-k8s)
    - [Model Data Storage Formats](#model-data-storage-formats)
      - [Weight-Only Formats](#weight-only-formats)
      - [Self-Contained Formats](#self-contained-formats)
@@ -66,7 +92,7 @@
        - [Modelcars](#modelcars)
        - [OCI Image Volume Mounts](#oci-image-volume-mounts)
    - [Model Data Lessons Learned](#model-data-lessons-learned)
-5. [Running in Production](#running-in-production)
+7. [Running in Production](#running-in-production)
    - [Model and Runtime Tuning](#model-and-runtime-tuning)
    - [Language Model Evaluation](#language-model-evaluation)
    - [Language Model Compression](#language-model-compression)
@@ -77,7 +103,7 @@
    - [LLM-Aware Routing](#llm-aware-routing)
    - [Disaggregated Serving](#disaggregated-serving)
    - [Lessons Learned](#lessons-learned)
-6. [Model Observability](#model-observability)
+8. [Model Observability](#model-observability)
    - [Observability Stack and Configuration](#observability-stack-and-configuration)
      - [Logs](#logs)
      - [Metrics](#metrics)
@@ -102,7 +128,7 @@
      - [Guardrails AI](#guardrails-ai)
      - [Llama Stack and Moderation APIs](#llama-stack-and-moderation-apis)
    - [Observability Lessons Learned](#observability-lessons-learned)
-7. [Model Customization](#model-customization)
+9. [Model Customization](#model-customization)
    - [Introduction to LLM Creation](#introduction-to-llm-creation)
    - [Prompt and Context Engineering](#prompt-and-context-engineering)
    - [When to Use Model Customization](#when-to-use-model-customization)
@@ -132,7 +158,7 @@
          - [Ray vs Kubeflow Trainer — code delivery differences](#ray-vs-kubeflow-trainer--code-delivery-differences)
        - [Unsloth](#unsloth)
    - [Customization Lessons Learned](#customization-lessons-learned)
-8. [Job Scheduling Optimization](#job-scheduling-optimization)
+10. [Job Scheduling Optimization](#job-scheduling-optimization)
    - [Kubernetes Scheduler Optimization](#kubernetes-scheduler-optimization)
      - [Core Kubernetes Scheduler](#core-kubernetes-scheduler)
      - [Resource Bin Packing Strategy](#resource-bin-packing-strategy)
@@ -178,7 +204,7 @@
      - [Logging Across Distributed Workers](#logging-across-distributed-workers)
      - [Tracing Distributed Training Operations](#tracing-distributed-training-operations)
    - [Lessons Learned](#lessons-learned-1)
-9. [AI-Driven Applications](#ai-driven-applications)
+11. [AI-Driven Applications](#ai-driven-applications)
    - [Architectural Patterns](#architectural-patterns)
      - [Kubernetes Workload Types](#kubernetes-workload-types)
      - [Chat Applications](#chat-applications)
@@ -198,7 +224,7 @@
      - [Multiagent Systems](#multiagent-systems)
      - [Ambient Agents](#ambient-agents)
    - [Lessons Learned](#lessons-learned-2)
-10. [High-Value Recall Checklist](#high-value-recall-checklist)
+12. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -212,6 +238,289 @@ Focus on:
 - **How it connects to Kubernetes, MLOps, and production AI systems**
 
 <u>Core rule:</u> do not just memorize definitions; **remember the operational reason behind each tool or API**.
+
+[Back to Contents](#contents)
+
+## Kubernetes Concepts
+
+> **Disclaimer:** The two introductory sections — **Kubernetes Concepts** and **Kubernetes Components** — are sourced from the book **["Mastering Kubernetes" by Gigi Sayfan](https://www.packtpub.com/en-us/product/mastering-kubernetes-9781835462560)**, included here as foundational background. They are not part of *"Generative AI on Kubernetes"* and are consolidated in my own words for **elaborative encoding** and **active recall**.
+
+This section briefly introduces many important **Kubernetes concepts**, with context on **why they're needed** and **how they interact**. The goal is to get familiar with the terms; later sections show how they're woven together and organized into **API groups** and **resource categories**.
+
+Think of many of these concepts as **building blocks**. Some — such as **nodes** and the **control plane** — are themselves implemented as a set of Kubernetes **components**, which sit at a different abstraction level and are covered in [Kubernetes Components](#kubernetes-components).
+
+![Kubernetes architecture](<assets/Kubernetes architecture.png>)
+
+**Figure 0-1. Kubernetes architecture**
+
+### Node
+
+A **node** is a single **host** — physical or virtual. Its job is to **run pods**. Each node runs several Kubernetes components, such as the **kubelet**, the **container runtime**, and the **kube-proxy**, and is **managed by the control plane**.
+
+> Nodes are the **worker bees** of Kubernetes that shoulder all the heavy lifting. In old documentation they were called **minions** — *minions are just nodes*, so don't get confused.
+
+### Cluster
+
+A **cluster** is a collection of hosts (**nodes**) that provide **compute, memory, storage, and networking** resources. Kubernetes uses these to run the workloads that comprise your system.
+
+> Your **entire system may consist of multiple clusters** — the advanced **multi-cluster** use case is discussed later.
+
+### Control Plane
+
+The **control plane** consists of several components — an **API server**, a **scheduler**, a **controller manager**, and optionally a **cloud controller manager**. It is responsible for:
+
+- the **global state** of the cluster,
+- **cluster-level scheduling** of pods, and
+- **handling of events**.
+
+Usually all control plane components run on the **same host**, though that's not required. For **high availability** or **very large clusters**, you'll want **control plane redundancy** *(highly available clusters are discussed in "Chapter 3, High Availability and Reliability")*.
+
+### Pod
+
+A **pod** is the **unit of work** in Kubernetes. Each pod contains **one or more containers** (think of it as a *container container*) and is scheduled as an **atomic unit** — all its containers run on the **same machine**.
+
+- All containers in a pod share the **same IP address and port space**; they communicate via **localhost** or standard inter-process communication.
+- They can access **shared local storage** on the hosting node — but containers **don't get storage by default**. Volumes must be **explicitly mounted** into each container.
+
+You *could* run multiple applications in a single container (e.g., using `supervisord` as the main process), but this is **frowned upon** for several reasons:
+
+- **Transparency** — making the containers visible to the infrastructure lets it provide services like **process management** and **resource monitoring**.
+- **Decoupling software dependencies** — individual containers can be **versioned, rebuilt, and redeployed** independently.
+- **Ease of use** — users don't run their own process managers or worry about **signal and exit-code propagation**.
+- **Efficiency** — the infrastructure takes on more responsibility, so containers can be **more lightweight**.
+
+> Pods are a great solution for **groups of closely related containers** that depend on each other and must co-operate on the same host. Pods are **ephemeral, throwaway entities** that can be discarded and replaced at will. Each pod gets a unique **UID**, so you can still distinguish between them if necessary.
+
+### Label
+
+**Labels** are **key-value pairs** used to **group sets of objects** — very often pods — via **selectors**. This is essential for concepts like **replica sets**, **deployments**, and **services** that operate on **dynamic groups** of objects and need to identify their members.
+
+There is an **NxN relationship** between objects and labels: each object may have **multiple labels**, and each label may be applied to **different objects**.
+
+> By design, each label on an object must have a **unique key** adhering to a strict syntax. Labels are for **identifying objects**, **not** for attaching arbitrary metadata — that's what [annotations](#annotation) are for.
+
+### Label Selector
+
+**Label selectors** select objects based on their labels.
+
+- **Equality-based** selectors use `=` (or `==`) and `!=`:
+
+```text
+role = webserver
+```
+
+- Multiple requirements are separated by a comma:
+
+```text
+role = webserver, application != foo
+```
+
+- **Set-based** selectors allow selection across multiple values:
+
+```text
+role in (webserver, backend)
+```
+
+### Annotation
+
+**Annotations** let you associate **arbitrary metadata** with Kubernetes objects. Kubernetes just **stores** the annotations and makes their metadata available. Annotation key syntax has requirements similar to label keys.
+
+> Complicated systems **always** need such metadata, and it's convenient that Kubernetes provides it **out of the box** — so you don't have to build your own separate metadata store and object→metadata mapping.
+
+### Service
+
+**Services** expose functionality to **users or other services**. They usually encompass a group of pods identified by — you guessed it — a **label**. Services can also provide access to **external resources** at the virtual IP level.
+
+- Native Kubernetes services are exposed through convenient **endpoints** and operate at **layer 3 (TCP/UDP)**.
+- Kubernetes 1.2 added the **Ingress** object for **HTTP** access.
+- Services are published or discovered via **DNS** or **environment variables**.
+- Services can be **load-balanced inside the cluster** by Kubernetes, or developers can manage load balancing themselves for external/special cases.
+
+> The many details of IP addresses, virtual IPs, and port spaces are covered in depth in "Chapter 10, Exploring Kubernetes Networking".
+
+### Volume
+
+Local storage used by a pod is **ephemeral** and goes away with the pod in most cases. Sometimes that's fine (e.g., just exchanging data between a node's containers), but sometimes data must **outlive the pod** or be **shared between pods**. The **volume** concept supports this — its essence is a **directory with some data mounted into a container**.
+
+> There are many **volume types**. Originally Kubernetes built many in directly, but the modern approach is the **Container Storage Interface (CSI)** *(covered in "Chapter 6, Managing Storage")*. Most originally built-in types are being **phased out** in favor of **out-of-tree CSI plugins**.
+
+### Replication Controller and Replica Set
+
+Both **replication controllers** and **replica sets** manage a group of pods identified by a **label selector** and ensure a **certain number** is always running. The key difference:
+
+- **Replication controllers** test membership by **name equality**.
+- **Replica sets** can use **set-based selection** — a **superset** of replication controllers, and the way to go *(replication controllers are expected to be deprecated)*.
+
+> Kubernetes guarantees the specified number of pods: if the count **drops** (node or pod problem), it **fires up new instances**; if you **manually exceed** the number, the replica set controller **kills the extras**.
+
+Replication controllers used to be central to workflows like **rolling updates** and **one-off jobs**. As Kubernetes evolved, it introduced dedicated objects for these — **Deployment**, **Job**, **CronJob**, and **DaemonSet** — covered later.
+
+### StatefulSet
+
+Pods come and go; if you care about their data, you use persistent storage. But sometimes you want Kubernetes to manage a **distributed data store** such as **Cassandra** or **CockroachDB**, which keep data distributed across **uniquely identified nodes** — something you **can't model with regular pods and services**.
+
+> Recall **pets vs. cattle** (cattle is the way to go). **StatefulSet sits somewhere in the middle.** Like a ReplicaSet, it ensures a given number of instances run — but with **unique identities**.
+
+StatefulSet members have these properties:
+
+- A **stable hostname**, available in DNS
+- An **ordinal index**
+- **Stable storage** linked to the ordinal and hostname
+- Members are **created and terminated gracefully, in order**
+
+> StatefulSet can also help with **peer discovery** and **safely adding or removing members**.
+
+### Secret
+
+**Secrets** are small objects containing **sensitive info** such as credentials and tokens. They are:
+
+- stored by default as **plaintext in etcd**, accessible by the API server,
+- **mountable as files** into pods (via dedicated secret volumes), with the **same secret** mountable into **multiple pods**, or
+- usable as **environment variables**.
+
+Kubernetes creates secrets for its own components, and you can create your own. Secrets in a pod are always stored **in memory** (`tmpfs` for mounted secrets) for better security.
+
+> **Best practice:** enable **encryption at rest** and **access control with RBAC**.
+
+### Name
+
+Each object is identified by a **UID** and a **name**. The name is used to refer to the object in **API calls**:
+
+- Up to **253 characters**, using **lowercase alphanumeric** characters, dashes (`-`), and dots (`.`).
+- If you delete an object, you can **reuse its name** for a new object — but **UIDs must be unique** across the cluster's lifetime.
+- **UIDs are generated by Kubernetes**, so you don't have to worry about them.
+
+### Namespace
+
+A **namespace** is a form of **isolation** that lets you group resources and apply policies. It is also a **scope for names** — objects of the same kind must have **unique names within a namespace**. By default, pods in one namespace **can access** pods and services in **other namespaces**.
+
+> Some objects are **cluster-scoped** (e.g., **node** objects and **persistent volumes**) and don't live in a namespace. Kubernetes may schedule pods from **different namespaces** onto the **same node**, and they can use the **same persistent storage**.
+
+> **Namespaces are a weak form of isolation.** For **hard multi-tenancy** you can do a passable job with **network policies** and **resource quotas**, but better solutions exist — like **virtual clusters** *(discussed in "Chapter 4, Securing Kubernetes")*.
+
+[Back to Contents](#contents)
+
+## Kubernetes Components
+
+A Kubernetes cluster has several **control plane components** that control the cluster, plus **node components** that run on each worker node.
+
+### Control Plane Components
+
+These can all run on **one node**, but in a **highly available** setup or a **very large cluster** they may be spread across multiple nodes.
+
+#### API Server
+
+The **Kubernetes API server** exposes the Kubernetes **REST API**. It is **stateless** and stores all data in the **etcd** cluster (or another data store in distributions like **k3s**), so it **scales horizontally** with ease.
+
+> The API server is the **embodiment of the Kubernetes control plane**.
+
+#### etcd
+
+**etcd** is a **highly reliable distributed data store** that holds the **entire cluster state**.
+
+- Small, transient clusters can run a **single etcd instance** alongside the other control plane components.
+- Substantial clusters typically run a **3-node or 5-node etcd cluster** for **redundancy and high availability**.
+
+#### Kube Controller Manager
+
+The **Kube controller manager** is a collection of managers rolled into **one binary** — the **replica set controller**, **pod controller**, **service controller**, **endpoints controller**, and others.
+
+> All these managers **watch the cluster state via the API** and work to **steer the cluster into the desired state**.
+
+#### Cloud Controller Manager
+
+When running in the cloud, the **cloud controller manager** lets cloud providers integrate their platform to manage **nodes, routes, services, and volumes** — replacing some Kube controller manager functionality.
+
+> When using a cloud controller manager, set the Kube controller manager flag `--cloud-provider` to `external`. This **disables the control loops** the cloud controller manager takes over.
+
+Introduced in **Kubernetes 1.6**, it's used by multiple cloud providers, including **GCP, AWS, Azure, BaiduCloud, Digital Ocean, Oracle, and Linode**.
+
+> **NOTE — A taste of Kubernetes code**
+>
+> Kubernetes is implemented in **Go**. A quick parsing tip: the **method name** comes first, then **parameters in parentheses** (each a `name type` pair), then the **return values** (Go allows multiple). It's common to return an **error** alongside the result — `nil` means everything is OK.
+
+Here is the main interface of the `cloudprovider` package:
+
+```go
+package cloudprovider
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "strings"
+
+    v1 "k8s.io/api/core/v1"
+    "k8s.io/apimachinery/pkg/types"
+    "k8s.io/client-go/informers"
+    clientset "k8s.io/client-go/kubernetes"
+    restclient "k8s.io/client-go/rest"
+)
+
+// Interface is an abstract, pluggable interface for cloud providers.
+type Interface interface {
+    Initialize(clientBuilder ControllerClientBuilder, stop <-chan struct{})
+    LoadBalancer() (LoadBalancer, bool)
+    Instances() (Instances, bool)
+    InstancesV2() (InstancesV2, bool)
+    Zones() (Zones, bool)
+    Clusters() (Clusters, bool)
+    Routes() (Routes, bool)
+    ProviderName() string
+    HasClusterID() bool
+}
+```
+
+Most methods return **other interfaces** with their own methods. For example, the `LoadBalancer` interface:
+
+```go
+type LoadBalancer interface {
+    GetLoadBalancer(ctx context.Context, clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error)
+    GetLoadBalancerName(ctx context.Context, clusterName string, service *v1.Service) string
+    EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error)
+    UpdateLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) error
+    EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error
+}
+```
+
+#### Kube Scheduler
+
+The **kube-scheduler** is responsible for **scheduling pods onto nodes** — a complicated task that considers many interacting factors:
+
+- Resource requirements
+- Service requirements
+- Hardware/software policy constraints
+- **Node** affinity and anti-affinity
+- **Pod** affinity and anti-affinity
+- Taints and tolerations
+- Local storage requirements
+- Data locality
+- Deadlines
+
+> If you need special scheduling logic, you can **replace** the default scheduler with your own — or **run a custom scheduler side by side** with the default, having it schedule only a **subset** of pods.
+
+#### DNS
+
+Starting with **Kubernetes 1.3**, a **DNS service** is part of the standard cluster, scheduled as a **regular pod**. Every service (except **headless** services) — and optionally pods — receives a **DNS name**, which is very useful for **automatic discovery**.
+
+### Node Components
+
+Nodes need a few components to **interact with the API server**, **receive workloads**, and **report status**.
+
+#### Proxy
+
+The **kube-proxy** does low-level **network housekeeping** on each node. It reflects Kubernetes **services** locally, can do **TCP and UDP forwarding**, and finds **cluster IPs** via environment variables or DNS.
+
+#### kubelet
+
+The **kubelet** is the Kubernetes **representative on the node**. It communicates with the API server and manages the running pods, including:
+
+- **Receive pod specs**
+- **Download pod secrets** from the API server
+- **Mount volumes**
+- **Run the pod's containers** (via the configured container runtime)
+- **Report the status** of the node and each pod
+- **Run** container **liveness, readiness, and startup probes**
 
 [Back to Contents](#contents)
 
