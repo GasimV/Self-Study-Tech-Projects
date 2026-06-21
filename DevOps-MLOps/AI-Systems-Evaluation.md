@@ -20,7 +20,23 @@
      - [Lexical Similarity](#lexical-similarity)
      - [Semantic Similarity](#semantic-similarity)
    - [Introduction to Embedding](#introduction-to-embedding)
-5. [Notes](#notes)
+5. [AI as a Judge](#ai-as-a-judge)
+   - [Why AI as a Judge?](#why-ai-as-a-judge)
+   - [How to Use AI as a Judge](#how-to-use-ai-as-a-judge)
+   - [Limitations of AI as a Judge](#limitations-of-ai-as-a-judge)
+     - [Inconsistency](#inconsistency)
+     - [Criteria Ambiguity](#criteria-ambiguity)
+     - [Increased Costs and Latency](#increased-costs-and-latency)
+     - [Biases of AI as a Judge](#biases-of-ai-as-a-judge)
+   - [What Models Can Act as Judges?](#what-models-can-act-as-judges)
+6. [Ranking Models with Comparative Evaluation](#ranking-models-with-comparative-evaluation)
+   - [Challenges of Comparative Evaluation](#challenges-of-comparative-evaluation)
+     - [Scalability Bottlenecks](#scalability-bottlenecks)
+     - [Lack of Standardization and Quality Control](#lack-of-standardization-and-quality-control)
+     - [From Comparative Performance to Absolute Performance](#from-comparative-performance-to-absolute-performance)
+   - [The Future of Comparative Evaluation](#the-future-of-comparative-evaluation)
+7. [Summary](#summary)
+8. [Notes](#notes)
 
 ## Evaluation Methodology
 
@@ -596,21 +612,453 @@ A new frontier is creating **joint embeddings** for data of **different modaliti
 
 [Back to Contents](#contents)
 
+## AI as a Judge
+
+The challenges of evaluating open-ended responses have led many teams to fall back on **human evaluation**. But as AI has successfully automated many challenging tasks — can AI automate **evaluation** as well? The approach of **using AI to evaluate AI** is called **AI as a judge** or **LLM as a judge**. An AI model used to evaluate other AI models is called an **AI judge**.[^15]
+
+While the idea has been around for a long time,[^16] it only became **practical** when models became capable enough — around **2020** with the release of **GPT-3**. As of this writing, **AI as a judge** has become **one of the most common** methods for evaluating AI models in production:
+
+- Most demos of AI evaluation startups in **2023–2024** leveraged AI as a judge in one way or another.
+- **LangChain's State of AI report (2023)** noted that **58% of evaluations** on their platform were done by AI judges.
+- AI as a judge is also an **active area of research**.
+
+### Why AI as a Judge?
+
+AI judges are **fast, easy to use, and relatively cheap** compared to human evaluators. They can also work **without reference data**, which means they can be used in **production** environments where no reference data exists.
+
+You can ask AI models to judge an output based on **any criteria** — correctness, repetitiveness, toxicity, wholesomeness, hallucinations, and more. This is similar to asking a person for their opinion about anything.
+
+> *"But you can't always trust people's opinions."* True — and you can't always trust AI's judgments either. However, since each AI model is an **aggregation of the masses**, it's possible for AI models to make judgments **representative of the masses**. With the **right prompt** for the **right model**, you can get reasonably good judgments on a wide range of topics.
+
+**Studies show strong correlation with human evaluators:**
+
+- **Zheng et al. (2023)** found that on **MT-Bench**, the agreement between **GPT-4 and humans reached 85%** — even higher than the agreement **among humans (81%)**.
+- **AlpacaEval** authors (Dubois et al., 2023) found their AI judges have a **near-perfect (0.98) correlation** with LMSYS's **Chatbot Arena** leaderboard, which is evaluated by humans.
+
+Not only can AI **evaluate** a response, it can also **explain its decision** — especially useful when you want to **audit** your evaluation results.
+
+![Not only can AI judges score, they also can explain their decisions](<assets/Not only can AI judges score, they also can explain their decisions.png>)
+
+**Figure 3-7. Not only can AI judges score, they also can explain their decisions.**
+
+> Its **flexibility** makes AI as a judge useful for a wide range of applications, and for some it's the **only** automatic evaluation option. Even when AI judgments aren't as good as human ones, they might be **good enough** to guide an application's development and provide enough confidence to **get a project off the ground**.
+
+### How to Use AI as a Judge
+
+There are many ways to use AI to make judgments. Three common approaches, with naive example prompts:
+
+**1. Evaluate the quality of a response by itself**, given the original question:
+
+```text
+Given the following question and answer, evaluate how good the answer is
+for the question. Use the score from 1 to 5.
+- 1 means very bad.
+- 5 means very good.
+Question: [QUESTION]
+Answer: [ANSWER]
+Score:
+```
+
+**2. Compare a generated response to a reference response** — an alternative to human-designed similarity measurements:
+
+```text
+Given the following question, reference answer, and generated answer,
+evaluate whether this generated answer is the same as the reference answer.
+Output True or False.
+Question: [QUESTION]
+Reference answer: [REFERENCE ANSWER]
+Generated answer: [GENERATED ANSWER]
+```
+
+**3. Compare two generated responses** and determine which is better (or predict which users will prefer). Helpful for generating **preference data** for post-training alignment, **test-time compute**, and **ranking models** using comparative evaluation:
+
+```text
+Given the following question and two answers, evaluate which answer is
+better. Output A or B.
+Question: [QUESTION]
+A: [FIRST ANSWER]
+B: [SECOND ANSWER]
+The better answer is:
+```
+
+A general-purpose AI judge can be asked to evaluate a response based on **any criteria**:
+
+- Building a **roleplaying chatbot**? *"Does this response sound like something Gandalf would say?"*
+- Generating **promotional product photos**? *"From 1 to 5, how would you rate the trustworthiness of the product in this image?"*
+
+**Table 3-3. Examples of built-in AI-as-a-judge criteria offered by some AI tools (as of September 2024).** *(As these tools evolve, their built-in criteria will change.)*
+
+| AI Tool | Built-in criteria |
+| --- | --- |
+| **Azure AI Studio** | Groundedness, relevance, coherence, fluency, similarity |
+| **MLflow.metrics** | Faithfulness, relevance |
+| **LangChain Criteria Evaluation** | Conciseness, relevance, correctness, coherence, harmfulness, maliciousness, helpfulness, controversiality, misogyny, insensitivity, criminality |
+| **Ragas** | Faithfulness, answer relevance |
+
+> **Important:** AI-as-a-judge criteria **aren't standardized**. Azure AI Studio's *relevance* scores might be very different from MLflow's *relevance* scores. These scores depend on the **judge's underlying model and prompt**.
+
+#### Prompting an AI judge
+
+Prompting an AI judge is similar to prompting any AI application. A judge's prompt should clearly explain:
+
+- **The task** — e.g., evaluate the relevance between a generated answer and the question.
+- **The criteria** — e.g., *"Your primary focus should be on determining whether the generated answer contains sufficient information to address the given question according to the ground truth answer."* The more detailed, the better.
+- **The scoring system**, which can be one of:
+  - **Classification** — e.g., good/bad or relevant/irrelevant/neutral.
+  - **Discrete numerical values** — e.g., 1 to 5 (a special case of classification where each class has a numerical rather than semantic interpretation).
+  - **Continuous numerical values** — e.g., between 0 and 1, when you want to evaluate a degree of similarity.
+
+> **TIP — Classification beats numbers**
+>
+> Language models are generally **better with text than with numbers**. AI judges have been reported to work better with **classification** than with numerical scoring systems.
+>
+> - For numerical systems, **discrete** scoring works better than **continuous** scoring.
+> - Empirically, the **wider the range** for discrete scoring, the **worse** the model gets. Typical discrete systems run **1 to 5**.
+> - Prompts **with examples** perform better — include examples of what a 1, 2, 3, 4, or 5 looks like and, if possible, **why** a response gets a certain score.
+
+Here's part of the prompt used for the **relevance** criterion by **Azure AI Studio**. It explains the task, the criteria, the scoring system, an example of a low-scoring input, and a justification (part removed for brevity):
+
+```text
+Your task is to score the relevance between a generated answer and the question
+based on the ground truth answer in the range between 1 and 5, and please also
+provide the scoring reason.
+
+Your primary focus should be on determining whether the generated answer
+contains sufficient information to address the given question according to the
+ground truth answer. …
+
+If the generated answer contradicts the ground truth answer, it will receive a
+low score of 1-2.
+
+For example, for the question "Is the sky blue?" the ground truth answer is "Yes,
+the sky is blue." and the generated answer is "No, the sky is not blue."
+
+In this example, the generated answer contradicts the ground truth answer by
+stating that the sky is not blue, when in fact it is blue.
+
+This inconsistency would result in a low score of 1-2, and the reason for the
+low score would reflect the contradiction between the generated answer and the
+ground truth answer.
+```
+
+![An example of an AI judge that evaluates the quality of an answer given a question](<assets/An example of an AI judge that evaluates the quality of an answer given a question.png>)
+
+**Figure 3-8. An example of an AI judge that evaluates the quality of an answer given a question.**
+
+> An AI judge is **not just a model** — it's a **system** that includes both a **model** and a **prompt**. Altering the model, the prompt, or the model's sampling parameters results in a **different judge**.
+
+### Limitations of AI as a Judge
+
+Despite its many advantages, many teams hesitate to adopt AI as a judge:
+
+- Using AI to evaluate AI seems **tautological**.
+- The **probabilistic** nature of AI makes it seem too **unreliable** to act as an evaluator.
+- AI judges can introduce nontrivial **costs and latency**.
+
+Given these limitations, some teams see AI as a judge as a **fallback option** when they have no other way of evaluating their systems, especially in production.
+
+#### Inconsistency
+
+For an evaluation method to be trustworthy, its results should be **consistent**. Yet AI judges, like all AI applications, are **probabilistic**:
+
+- The same judge, on the same input, can output **different scores if prompted differently**.
+- Even the same judge, with the **same instruction**, can output **different scores if run twice**.
+
+This inconsistency makes it hard to **reproduce or trust** evaluation results.
+
+> **Zheng et al. (2023)** showed that including evaluation examples in the prompt can increase GPT-4's consistency from **65% to 77.5%**. But **high consistency doesn't imply high accuracy** — the judge might **consistently make the same mistakes**. Longer prompts also mean higher inference costs: in their experiment, adding more examples caused their **GPT-4 spending to quadruple**.
+
+#### Criteria Ambiguity
+
+Unlike many human-designed metrics, AI-as-a-judge metrics **aren't standardized**, making them easy to misinterpret and misuse. As of this writing, the open source tools **MLflow**, **Ragas**, and **LlamaIndex** all have a built-in **faithfulness** criterion — but their instructions and scoring systems are **all different**.
+
+**Table 3-4. Different tools can have very different default prompts for the same criterion.** *(Prompts partially omitted for brevity.)*
+
+| Tool | Prompt (excerpt) | Scoring system |
+| --- | --- | --- |
+| **MLflow** | *"Faithfulness is only evaluated with the provided output and provided context… assesses how much of the provided output is factually consistent with the provided context. Score 1: None of the claims in the output can be inferred from the provided context. Score 2: …"* | **1–5** |
+| **Ragas** | *"Your task is to judge the faithfulness of a series of statements based on a given context. For each statement you must return verdict as 1 if the statement can be verified based on the context or 0 if the statement can not be verified…"* | **0 and 1** |
+| **LlamaIndex** | *"Please tell if a given piece of information is supported by the context. You need to answer with either YES or NO. Answer YES if any of the context supports the information, even if most of the context is unrelated…"* | **YES and NO** |
+
+> The faithfulness scores from these three tools **won't be comparable**. If, given a `(context, answer)` pair, MLflow gives **3**, Ragas outputs **1**, and LlamaIndex outputs **NO** — **which score would you use?**
+
+An application **evolves over time**, but the way it's evaluated ideally should be **fixed**, so that metrics can monitor the application's changes. However, **AI judges are also AI applications** — so they can **change over time** too.
+
+> Imagine last month your app's coherence score was **90%**, and this month it's **92%**. Did coherence **improve**? Hard to say, unless you know the **AI judge was exactly the same** in both cases. Maybe the judge's prompt changed — a switch to a better prompt, or a coworker fixing a typo that made the judge **more lenient**.
+
+This is especially confusing when the **application** and the **AI judge** are managed by **different teams**. The judge team might change judges without informing the application team, who then **mistakenly attribute** evaluation changes to the application rather than the judge.
+
+> **TIP — Don't trust a black-box judge**
+>
+> **Do not trust any AI judge if you can't see the model and the prompt used for the judge.**
+
+Evaluation methods take time to standardize. As the field evolves and more guardrails are introduced, future AI judges should become **much more standardized and reliable**.
+
+#### Increased Costs and Latency
+
+You can use AI judges both during **experimentation** and in **production** — many teams use them as **guardrails** in production, showing users only responses deemed good by the judge.
+
+> Using **powerful models** to evaluate responses can be **expensive**. If you use **GPT-4** to both generate and evaluate, you double your GPT-4 calls (≈ doubling API costs). With **three evaluation prompts** (e.g., overall quality, factual consistency, toxicity), you **increase your API calls four times**.[^17]
+
+**Ways to reduce cost:**
+
+- Use **weaker models** as the judges (see [What Models Can Act as Judges?](#what-models-can-act-as-judges)).
+- Use **spot-checking** — evaluating only a **subset** of responses.[^18] The larger the percentage evaluated, the more confidence, but the higher the cost. Finding the right balance takes trial and error.
+
+> All things considered, **AI judges are much cheaper than human evaluators**.
+
+Implementing AI judges in your production pipeline can add **latency**. If you evaluate responses **before** returning them to users, you trade **reduced risk** for **increased latency** — possibly a **nonstarter** for applications with strict latency requirements.
+
+#### Biases of AI as a Judge
+
+Human evaluators have biases, and so do AI judges — and **different judges have different biases**. Being aware of them helps you interpret scores correctly and even mitigate them.
+
+- **Self-bias** — a model **favors its own responses** over those of other models. The same mechanism that computes the most likely response also gives that response a high score. In Zheng et al. (2023), **GPT-4 favored itself with a 10% higher win rate**, while **Claude-v1 favored itself with a 25% higher win rate**.
+- **First-position bias** — a judge may favor the **first** answer in a pairwise comparison or the first in a list. Mitigate by **repeating the test with different orderings** or with carefully crafted prompts. *(This is the opposite of humans, who tend to favor the answer they see **last** — **recency bias**.)*
+- **Verbosity bias** — favoring **lengthier** answers regardless of quality. Wu and Aji (2023) found **GPT-4 and Claude-1 prefer longer responses (~100 words) with factual errors** over shorter, correct ones (~50 words). Saito et al. (2023) found that when the length difference is large enough (one response twice as long), the judge **almost always prefers the longer one**.[^19] Both studies found **GPT-4 is less prone** to this than GPT-3.5 — suggesting the bias may **fade as models get stronger**.
+
+On top of these, AI judges share **all the limitations of AI applications**, including **privacy and IP**. A proprietary judge means **sending your data** to that model; if the provider doesn't disclose training data, you **won't know** if the judge is commercially safe to use.
+
+> Despite these limitations, the many advantages of AI as a judge suggest its adoption will **keep growing**. However, AI judges should be **supplemented** with exact evaluation methods and/or human evaluation.
+
+### What Models Can Act as Judges?
+
+The judge can be **stronger**, **weaker**, or the **same** as the model being judged. Each scenario has pros and cons.
+
+#### Stronger judge
+
+At first glance, a **stronger judge** makes sense — shouldn't the exam grader be more knowledgeable than the taker? Stronger models make better judgments **and** can help **improve weaker models** by guiding them to better responses.
+
+> *Why use a weaker model to generate at all if you have the stronger model?* **Cost and latency.** You might not afford the stronger model for **all** responses, so you use it to evaluate a **subset** — e.g., a cheap in-house model generates responses and **GPT-4 evaluates 1%** of them.
+
+The stronger model might also be **too slow**: use a fast model to generate while the stronger, slower model evaluates **in the background**, taking remedy actions (e.g., replacing a bad response) when needed. The **opposite** pattern is also common — a strong model generates while a weak model evaluates in the background.
+
+Using the stronger model as judge leaves **two challenges**:
+
+1. The **strongest model** is left with **no eligible judge**.
+2. You need an **alternative method** to determine which model **is** the strongest.
+
+#### Self-evaluation (self-critique)
+
+Using a model to judge **itself** sounds like cheating, especially due to **self-bias**. However, self-evaluation is great for **sanity checks** — if a model thinks its own response is incorrect, it might not be reliable. Beyond sanity checks, asking a model to evaluate itself can **nudge it to revise and improve** its responses.[^20]
+
+```text
+Prompt [from user]:    What's 10+3?
+First response [AI]:   30
+Self-critique [AI]:    Is this answer correct?
+Final response [AI]:   No it's not. The correct answer is 13.
+```
+
+#### Weaker judge
+
+Can the judge be **weaker** than the model being judged? Some argue **judging is easier than generating** — anyone can have an opinion on whether a song is good, but not everyone can write one. So weaker models should be able to judge stronger models' outputs.
+
+**Zheng et al. (2023)** found that **stronger models correlate better** with human preference, leading people to opt for the strongest judge they can afford. But that experiment was limited to **general-purpose** judges.
+
+> An exciting research direction is **small, specialized judges** — trained to make **specific** judgments, using **specific** criteria and scoring systems. A small, specialized judge can be **more reliable** than a larger, general-purpose judge for specific judgments.
+
+There are many possible specialized judges. Three examples:
+
+- **Reward model** — takes a `(prompt, response)` pair and scores how good the response is. Long used in **RLHF**. Google's **Cappy (2023)** produces a score between **0 and 1** indicating correctness; it's a lightweight **360M-parameter** scorer, far smaller than general-purpose foundation models.
+- **Reference-based judge** — evaluates a generated response against one or more **reference responses**, outputting a similarity or quality score. **BLEURT** (Sellam et al., 2020) takes a `(candidate, reference)` pair and outputs a similarity score.[^21] **Prometheus** (Kim et al., 2023) takes `(prompt, generated response, reference response, scoring rubric)` and outputs a quality score **1–5**, assuming the reference gets a 5.
+- **Preference model** — takes `(prompt, response 1, response 2)` and outputs **which response is better** (preferred by users). Predicting human preference opens many possibilities: preference data is **essential for alignment** and is **challenging and expensive** to obtain, so a good preference predictor makes evaluation easier and models safer. Examples include **PandaLM** (Wang et al., 2023) and **JudgeLM** (Zhu et al., 2023).
+
+![An example output of PandaLM, given a human prompt and two generated responses](<assets/An example output of PandaLM.png>)
+
+**Figure 3-9. An example output of PandaLM, given a human prompt and two generated responses.** *(Picture from Wang et al. (2023), modified slightly for readability. The original image is available under the Apache License 2.0.)* PandaLM not only outputs **which response is better** but also **explains its rationale**.
+
+> Despite its limitations, the **AI as a judge** approach is **versatile and powerful** — and using **cheaper models** as judges makes it even more useful. Many initially skeptical practitioners have started to **rely on it more in production**.
+
+AI as a judge is exciting, and the next approach is just as intriguing — it's inspired by **game design**, a fascinating field.
+
+[Back to Contents](#contents)
+
+## Ranking Models with Comparative Evaluation
+
+Often, you evaluate models **not because you care about their scores**, but because you want to know **which model is the best for you** — what you want is a **ranking**. You can rank models using either **pointwise** or **comparative** evaluation.
+
+- **Pointwise evaluation** — evaluate each model **independently**,[^22] then rank them by their scores. To find the best dancer, you score each dancer individually and pick the highest score.
+- **Comparative evaluation** — evaluate models **against each other** and compute a ranking from comparison results. You ask all candidates to dance **side by side**, ask judges which they like most, and pick the dancer preferred by **most judges**.
+
+> For responses whose quality is **subjective**, comparative evaluation is typically **easier** than pointwise evaluation. It's easier to tell **which of two songs is better** than to give each song a concrete score.
+
+In AI, comparative evaluation was first used in **2021 by Anthropic** to rank models. It also powers the popular **LMSYS Chatbot Arena** leaderboard, which ranks models using scores computed from **pairwise comparisons** from the community.
+
+Many model providers use comparative evaluation in **production**. These outputs could come from **different models**, or the **same model with different sampling variables**.
+
+![ChatGPT occasionally asks users to compare two outputs side by side](<assets/ChatGPT occasionally asks users to compare two outputs side by side.png>)
+
+**Figure 3-10. ChatGPT occasionally asks users to compare two outputs side by side.**
+
+For each request, **two or more models** are selected to respond. An **evaluator** (human or AI) picks the winner. Many developers **allow ties** to avoid a winner being picked at random when drafts are equally good or bad.
+
+> **WARNING — Not all questions should be answered by preference**
+>
+> Many questions should be answered by **correctness** instead. Imagine asking *"Is there a link between cell phone radiation and brain tumors?"* and the model offers *"Yes"* and *"No"* for you to choose from. **Preference-based voting can produce wrong signals** that, if used to train your model, lead to **misaligned behaviors**.
+
+Asking users to pick can also cause **frustration**. If you ask a math question **because you don't know the answer** and the model gives two different answers and asks you to pick — well, if you knew the right answer, you wouldn't have asked.
+
+> Preference-based voting **only works if the voters are knowledgeable** in the subject. It works where AI serves as an **intern or assistant**, speeding up tasks users **know how to do** — not where users ask AI to perform tasks they **themselves don't understand**.
+
+**Comparative evaluation ≠ A/B testing:**
+
+- In **A/B testing**, a user sees the output from **one** candidate model at a time.
+- In **comparative evaluation**, a user sees outputs from **multiple** models at the **same time**.
+
+Each comparison is called a **match**. This process results in a series of comparisons:
+
+**Table 3-5. Examples of a history of pairwise model comparisons.**
+
+| Match # | Model A | Model B | Winner |
+| --- | --- | --- | --- |
+| 1 | Model 1 | Model 2 | **Model 1** |
+| 2 | Model 3 | Model 10 | **Model 10** |
+| 3 | Model 7 | Model 4 | **Model 4** |
+| … | | | |
+
+The probability that **model A is preferred over model B** is the **win rate** of A over B — computed by looking at all matches between A and B and calculating the percentage in which A wins.
+
+With **only two models**, ranking is straightforward: the one that wins more often ranks higher. The **more models**, the harder ranking becomes. Consider five models with the following empirical win rates — it's **not obvious** how they should be ranked:
+
+**Table 3-6. Example win rates of five models.** The **A ≫ B** column denotes the event that A is preferred to B.
+
+| Pair # | Model A | Model B | # matches | A ≫ B |
+| --- | --- | --- | --- | --- |
+| 1 | Model 1 | Model 2 | 1000 | 90% |
+| 2 | Model 1 | Model 3 | 1000 | 40% |
+| 3 | Model 1 | Model 4 | 1000 | 15% |
+| 4 | Model 1 | Model 5 | 1000 | 10% |
+| 5 | Model 2 | Model 3 | 1000 | 60% |
+| 6 | Model 2 | Model 4 | 1000 | 80% |
+| 7 | Model 2 | Model 5 | 1000 | 80% |
+| 8 | Model 3 | Model 4 | 1000 | 70% |
+| 9 | Model 3 | Model 5 | 1000 | 10% |
+| 10 | Model 4 | Model 5 | 1000 | 20% |
+
+Given comparative signals, a **rating algorithm** computes a ranking — typically by first computing a **score** for each model, then ranking by score.
+
+Comparative evaluation is new in AI but has existed for **almost a century** in other industries — especially **sports and video games**. Many rating algorithms from those domains can be adapted to AI: **Elo**, **Bradley–Terry**, and **TrueSkill**. LMSYS's Chatbot Arena originally used **Elo** but later switched to **Bradley–Terry** because they found Elo **sensitive to the order** of evaluators and prompts.[^23]
+
+> A ranking is **correct** if, for any model pair, the **higher-ranked model is more likely to win** in a match against the lower-ranked one. If A ranks higher than B, users should prefer A to B **more than half the time**.
+
+Through this lens, **model ranking is a predictive problem**. We compute a ranking from **historical** match outcomes and use it to **predict future** outcomes. Different algorithms can produce different rankings, and there's **no ground truth** for the correct ranking. The quality of a ranking is determined by **how well it predicts future match outcomes**. *(The author's analysis of Chatbot Arena's ranking shows it is good, at least for model pairs with sufficient matches — see the book's GitHub repo.)*
+
+### Challenges of Comparative Evaluation
+
+With **pointwise** evaluation, the heavy lifting is in **designing the benchmark and metrics**; computing scores to rank is easy. With **comparative** evaluation, **both signal gathering and model ranking are challenging**. Three common challenges:
+
+#### Scalability Bottlenecks
+
+Comparative evaluation is **data-intensive**. The number of model pairs grows **quadratically** with the number of models. In **January 2024**, LMSYS evaluated **57 models** using **244,000 comparisons** — sounds like a lot, but it averages only **153 comparisons per model pair** (57 models → **1,596 pairs**), a small number given the wide range of tasks we want a foundation model to do.
+
+Fortunately, we don't always need **direct** comparisons. Ranking algorithms typically assume **transitivity**:
+
+> If A ranks higher than B, and B ranks higher than C, then by transitivity A ranks higher than C — so you don't need to compare A against C directly.
+
+However, it's **unclear if transitivity holds** for AI models. Many papers analyzing Elo for AI evaluation cite the transitivity assumption as a **limitation** (Boubdir et al.; Balduzzi et al.; Munos et al.), arguing that **human preference is not necessarily transitive**. Non-transitivity can also arise because **different model pairs are evaluated by different evaluators and on different prompts**.
+
+There's also the challenge of **evaluating new models**:
+
+- With **independent** evaluation, only the **new model** needs evaluating.
+- With **comparative** evaluation, the new model must be evaluated **against existing models**, which can **change the ranking of existing models**.
+
+This also makes **private models** hard to evaluate. To compare your internal model against public ones, you'll likely have to **collect your own comparative signals** and build your own leaderboard, or **pay** a public leaderboard to run a private evaluation.
+
+> The scaling bottleneck can be mitigated with **better matching algorithms**. Not all model pairs need equal comparison — once we're confident about a pair's outcome, we can **stop matching them**. An efficient matcher should sample matches that **reduce the most uncertainty** in the overall ranking.
+
+#### Lack of Standardization and Quality Control
+
+One way to collect comparative signals is to **crowdsource** comparisons, as **LMSYS Chatbot Arena** does: anyone enters a prompt, gets two responses from two **anonymous** models, and votes for the better one. Model names are revealed **only after** voting.
+
+- **Benefit:** captures a **wide range of signals** and is relatively **hard to game**.[^24]
+- **Downside:** hard to enforce **standardization and quality control**.
+
+**First**, anyone can use any prompt, and there's **no standard** for what makes a better response. Volunteers may not fact-check, so they might **prefer responses that sound better but are factually incorrect**. Some prefer polite/moderate responses, others prefer unfiltered ones:
+
+> This is **both good and bad** — good because it captures human preference **in the wild**, bad because preference in the wild **might not suit all use cases**. If a user asks for an inappropriate joke and the model **refuses**, the user might downvote it — but as a developer you might **prefer** the refusal. Some users might even **maliciously** pick toxic responses, **polluting the ranking**.
+
+**Second**, crowdsourcing requires users to evaluate models **outside their working environments**. Without real-world grounding, test prompts **might not reflect real usage**. People use the first prompts that come to mind and rarely use sophisticated prompting:
+
+> Among **33,000 prompts** published by LMSYS Chatbot Arena in 2023, **180** were *"hello"* / *"hi"* (**0.55%**) — not counting variations like *"hello!"*, *"hola"*, *"hey"*. The brainteaser *"X has 3 sisters, each has a brother. How many brothers does X have?"* was asked **44 times**.
+
+**Simple prompts** are easy to respond to, making it hard to **differentiate** models. Too many simple prompts can **pollute the ranking**. And if a leaderboard doesn't support **sophisticated context construction** (e.g., augmenting context with retrieved documents), its ranking **won't reflect** how well a model works in **your RAG system** — generating good responses differs from retrieving the most relevant documents.
+
+**Ways to enforce standardization** (each with trade-offs):
+
+- **Predetermined prompts** — limits users to a fixed set, but may **reduce diversity** of use cases. *(LMSYS instead lets users use any prompt, then **filters out** all but **hard prompts** using an internal model, ranking models only on those.)*
+- **Trusted evaluators** — train evaluators on comparison criteria and practical prompting. This is **Scale's** approach with their private leaderboard; the downside is it's **expensive** and **reduces the number of comparisons**.
+- **In-product comparison** — let users evaluate models **during their workflows** (e.g., suggest two code snippets in the editor and let them pick). But users **might not be the expert**, and may **randomly click** without reading both — adding noise, though signals from the **small percentage who vote correctly** can still be sufficient.
+
+> Some teams prefer **AI to human evaluators**: AI might not be as good as **trained human experts**, but it might be **more reliable than random internet users**.
+
+#### From Comparative Performance to Absolute Performance
+
+For many applications, we don't need the **best possible** model — we need one that's **good enough**. Comparative evaluation tells us **which model is better**, not **how good** a model is or whether it's **good enough**. If model B beats model A, **any** of these could be true:
+
+- Model B is good, but model A is bad.
+- Both A and B are bad.
+- Both A and B are good.
+
+> You need **other forms of evaluation** to determine which scenario holds.
+
+Imagine model A resolves **70%** of customer-support tickets, and model B wins against A **51%** of the time. It's **unclear** how that 51% win rate converts into the number of tickets B can resolve. Several practitioners have told the author that a **1% change in win rate** can mean a **huge** performance boost in some applications but only a **minimal** one in others.
+
+> When swapping A for B, **human preference isn't everything** — **cost** matters too. Not knowing the expected performance boost makes the **cost–benefit analysis** hard. If B costs **twice** as much as A, comparative evaluation alone **can't** tell you whether the boost is worth it.
+
+### The Future of Comparative Evaluation
+
+Given so many limitations, is there a future to comparative evaluation? There are **many benefits**:
+
+- **Comparison is easier than scoring.** As models surpass human performance, it may become **impossible** for humans to give concrete scores — but they can often still **detect the difference**, leaving comparative evaluation as the **only option**. The **Llama 2** paper noted that when a model ventures into writing **beyond the ability of the best human annotators**, humans can still provide valuable feedback when **comparing two answers** (Touvron et al., 2023).
+- **It captures the quality we care about: human preference.** This reduces the pressure to **constantly create new benchmarks**. Unlike benchmarks — which become useless once models achieve perfect scores — comparative evaluations **never saturate** as long as newer, stronger models appear.
+- **It's hard to game** — there's no easy way to cheat (like training on reference data). Many people **trust public comparative leaderboards** more than other public leaderboards.
+- **It gives discriminating signals** unobtainable otherwise — a great addition to benchmarks for **offline** evaluation, and complementary to **A/B testing** for **online** evaluation.
+
+[Back to Contents](#contents)
+
+## Summary
+
+The **stronger AI models become**, the higher the potential for **catastrophic failures**, which makes evaluation **even more important** — yet evaluating open-ended, powerful models is **challenging**. These challenges make many teams turn toward **human evaluation**. Humans in the loop for sanity checks are always helpful, and often essential, but this chapter focused on approaches to **automatic evaluation**.
+
+Key threads of the chapter:
+
+- **Why foundation models are harder to evaluate** than traditional ML models — and how investments in evaluation still **lag behind** investments in model and application development.
+- **Language modeling metrics** — perplexity and cross entropy — including how to **interpret** them and leverage them in evaluation and data processing.
+- **Approaches to evaluating open-ended responses** — **functional correctness**, **similarity scores**, and **AI as a judge**. The first two are **exact**; AI as a judge is **subjective**.
+
+> Unlike exact evaluation, **subjective metrics depend heavily on the judge**. Scores must be interpreted in the context of **which judge** is used; scores measuring the "same" quality by different AI judges **might not be comparable**. Because AI judges are themselves AI applications, their **judgments change** as they're iterated — making them **unreliable as benchmarks** to track an application over time. AI judges should be **supplemented** with exact evaluation, human evaluation, or both.
+
+When ranking models, you can evaluate each **independently** then rank by score, or rank using **comparative signals** (which of two is better?). Comparative evaluation is common in **sports, especially chess**, and is gaining traction in AI. Both comparative evaluation and **post-training alignment** need **preference signals**, which are **expensive to collect** — motivating **preference models**: specialized AI judges that predict which response users prefer.
+
+> While **language modeling metrics** and **hand-designed similarity measurements** have existed for some time, **AI as a judge** and **comparative evaluation** only gained adoption with foundation models. Building a **reliable evaluation pipeline** for open-ended applications is the topic of the **next chapter**.
+
+[Back to Contents](#contents)
+
 ## Notes
 
-The original chapter contains numerous footnotes that add color, asides, and references. They are gathered here as supplementary material rather than interspersed inline.
+The original chapter contains numerous footnotes that add color, asides, and references. They are reproduced here as supplementary material rather than interspersed inline.
 
-[^1]: For some applications, evaluation is the **single largest bucket of work** in shipping an AI product — in practice it can consume the **majority of the development effort**.
-[^2]: *Word of mouth* — relying on someone else's verdict (e.g., *"model X is good"*) rather than measuring the model against your own application's needs.
-[^3]: *Eyeballing the results* — manually skimming a handful of outputs and judging by feel, instead of running a repeatable, systematic evaluation.
-[^4]: As model capability rises, **evaluating the output requires comparable expertise** to producing it — a dynamic that makes scalable oversight of advanced models an open research problem.
-[^5]: Based on the author's analysis of the **top 1,000 AI-related GitHub repositories** by star count, as of **May 2024**.
-[^6]: A model's language modeling quality is only a **proxy** for downstream task performance — strongly correlated, but not a guarantee (see Liu et al., 2023).
-[^7]: Entropy is reported in **bits** when the logarithm uses base 2, i.e., the average number of bits needed to encode each token.
-[^8]: A **nat** is the unit of entropy measured with the **natural logarithm** (base $e$). $1 \text{ nat} = \tfrac{1}{\ln 2} \approx 1.44$ bits.
-[^9]: **SFT** = Supervised Fine-Tuning; **RLHF** = Reinforcement Learning from Human Feedback. Both are **post-training** techniques that align a model to complete tasks rather than to minimize next-token loss.
-[^10]: **Quantization** lowers a model's numerical precision (e.g., from 16-bit to 4-bit) to shrink its memory footprint, which can shift perplexity **upward or downward** in ways that are hard to predict.
-[^11]: Any task with a **measurable objective** — energy saved, score achieved, latency reduced — admits functional-correctness evaluation, because success can be **read directly off the objective** rather than judged subjectively.
-[^12]: N-gram overlap is **directional**: you typically measure the fraction of the **reference's** n-grams that appear in the generated response (recall-oriented, as in ROUGE) or vice versa (precision-oriented, as in BLEU).
-[^13]: Larger embedding vectors can capture **more nuance** but cost **more storage and compute** at search time; the right size is a trade-off between **representational quality** and **efficiency**.
-[^14]: Proprietary embedding APIs (e.g., **OpenAI Embeddings**, **Cohere Embed**) trade the control of self-hosting for **convenience**, but send your data to a **third party** and can change model versions underneath you.
+[^1]: In December 2023, **Greg Brockman**, an OpenAI cofounder, tweeted that *"evals are surprisingly often all you need."*  
+[^2]: A **2023 study by a16z** showed that **6 out of 70** decision makers evaluated models by word of mouth.  
+[^3]: Also known as a **vibe check**.  
+[^4]: When OpenAI's **GPT-o1** came out in September 2024, the Fields medalist **Terence Tao** compared the experience of working with the model to working with *"a mediocre, but not completely incompetent, graduate student,"* speculating that it may take only one or two further iterations to reach the level of a *"competent graduate student."* In response, many joked that if we already need the brightest human minds to evaluate AI, we'll soon have **no one qualified** to evaluate future models.  
+[^5]: The author searched for all repositories with at least **500 stars** using the keywords *"LLM"*, *"GPT"*, *"generative"*, and *"transformer"*, and also crowdsourced missing repositories through her website [huyenchip.com](https://huyenchip.com).  
+[^6]: While there's a **strong correlation**, language modeling performance **doesn't fully explain** downstream performance. This is an active area of research.  
+[^7]: As discussed in Chapter 1, a token can be a character, a word, or part of a word. When Claude Shannon introduced entropy in 1951, his tokens were **characters**. In his words: *"The entropy is a statistical parameter which measures, in a certain sense, how much information is produced on the average for each letter of a text in the language. If the language is translated into binary digits (0 or 1) in the most efficient way, the entropy is the average number of binary digits required per letter of the original language."*  
+[^8]: One reason many prefer natural log over log base 2 is that natural log has properties that make the math easier — for example, the derivative of $\ln(x)$ is $\tfrac{1}{x}$.  
+[^9]: If you're unsure what **SFT** (supervised finetuning) and **RLHF** (reinforcement learning from human feedback) mean, revisit Chapter 2.  
+[^10]: Quantization is discussed in Chapter 7.  
+[^11]: The challenge is that while many complex tasks have measurable objectives, AI isn't quite good enough to perform them **end-to-end**, so it's used for **part** of the solution — and sometimes evaluating a part is harder than evaluating the end outcome. Evaluating someone's chess ability by the **end result** (win/lose/draw) is easier than evaluating a **single move**.  
+[^12]: You might also want to do some processing depending on whether you want *"cats"* and *"cat"*, or *"will not"* and *"won't"*, to be considered two separate tokens.  
+[^13]: While a 10,000-element vector space seems high-dimensional, it's **much lower** than the dimensionality of the raw data. An embedding is therefore considered a representation of complex data in a **lower-dimensional space**.  
+[^14]: There are also models that generate **word embeddings** (as opposed to document embeddings), such as **word2vec** (Mikolov et al., *"Efficient Estimation of Word Representations in Vector Space,"* arXiv, v3, September 7, 2013) and **GloVe** (Pennington et al., *"GloVe: Global Vectors for Word Representation,"* Stanford NLP Group blog, 2014).  
+[^15]: The term **AI judge** is not to be confused with the use case where AI is used as a judge **in court**.  
+[^16]: In 2017, the author presented **MEWR** (Machine translation Evaluation metric Without Reference text) at a NeurIPS workshop — an evaluation method leveraging stronger language models to automatically evaluate machine translations. She never pursued the line of research because *life got in the way*.  
+[^17]: In some cases, evaluation can take up the **majority of the budget**, even more than response generation.  
+[^18]: Spot-checking is the same as **sampling**.  
+[^19]: Saito et al. (2023) found that **humans tend to favor longer responses too**, but to a much lesser extent.  
+[^20]: This technique is sometimes referred to as **self-critique** or **self-ask**.  
+[^21]: The **BLEURT** score range is confusing — it's approximately between **–2.5 and 1.0**. This highlights the criteria-ambiguity challenge with AI judges: the score range can be **arbitrary**.  
+[^22]: Such as using a **Likert scale**.  
+[^23]: Even though Chatbot Arena stopped using the **Elo** rating algorithm, its developers for a while continued referring to their model ratings as *"Elo scores."* They scaled the resulting **Bradley–Terry** scores to look like Elo scores: each score is multiplied by **400** (the Elo scale) and added to **1,000** (the initial Elo score), then rescaled so that the model **Llama-13b** has a score of **800**.  
+[^24]: As Chatbot Arena becomes more popular, **attempts to game it** have become more common. While no one has admitted to gaming the ranking, several model developers told the author they're **convinced their competitors try to**.  
