@@ -1,5 +1,7 @@
 # GenAI on Kubernetes Study Notes
 
+> **Disclaimer:** These notes are a structured study companion to the book **["Generative AI on Kubernetes" by Roland Huß & Daniele Zonca](https://www.oreilly.com/library/view/generative-ai-on/9781098175184/)**, which I have learned from. They consolidate the book's core ideas in my own words for **elaborative encoding** and **active recall**, and are not a substitute for the original text.
+
 ## Contents
 
 1. [Purpose](#purpose)
