@@ -52,7 +52,17 @@
       - [Instruction-Following Criteria](#instruction-following-criteria)
       - [Roleplaying](#roleplaying)
     - [Cost and Latency](#cost-and-latency)
-11. [Notes (Chapter 4)](#notes-chapter-4)
+11. [Model Selection](#model-selection)
+    - [Model Selection Workflow](#model-selection-workflow)
+    - [Model Build Versus Buy](#model-build-versus-buy)
+      - [Open Source, Open Weight, and Model Licenses](#open-source-open-weight-and-model-licenses)
+      - [Open Source Models Versus Model APIs](#open-source-models-versus-model-apis)
+    - [Navigate Public Benchmarks](#navigate-public-benchmarks)
+      - [Benchmark Selection and Aggregation](#benchmark-selection-and-aggregation)
+      - [Public Leaderboards](#public-leaderboards)
+      - [Custom Leaderboards with Public Benchmarks](#custom-leaderboards-with-public-benchmarks)
+      - [Data Contamination with Public Benchmarks](#data-contamination-with-public-benchmarks)
+12. [Notes (Chapter 4)](#notes-chapter-4)
 
 ## Evaluation Methodology
 
@@ -1431,6 +1441,297 @@ There are multiple **latency metrics** for foundation models:
 
 [Back to Contents](#contents)
 
+## Model Selection
+
+> At the end of the day, you don't really care about which model is **the best**. You care about which model is **the best for your applications**. Once you've defined your application's criteria, evaluate models **against those criteria**.
+
+Model selection happens **over and over again** as you progress through adaptation techniques:
+
+- **Prompt engineering** might start with the **strongest model overall** to test feasibility, then **work backward** to see if smaller models suffice.
+- **Finetuning** might start with a **small model** to test your code, then move toward the **biggest model** that fits your hardware (e.g., one GPU).
+
+In general, selection for each technique involves two steps:
+
+1. **Figuring out the best achievable performance.**
+2. **Mapping models along the cost–performance axes** and choosing the model that gives the **best performance for your bucks**.
+
+The actual process is more nuanced. Let's explore it.
+
+### Model Selection Workflow
+
+When looking at models, differentiate between **hard attributes** and **soft attributes**:
+
+- **Hard attributes** — what's **impossible or impractical** to change. Often the result of **provider decisions** (licenses, training data, model size) or **your own policies** (privacy, control). They can **shrink the candidate pool** significantly.
+- **Soft attributes** — what you **can and are willing to** improve, such as accuracy, toxicity, or factual consistency.
+
+> Estimating how much you can improve a soft attribute is tricky — balancing **optimism** and **realism**. The author has seen accuracy hover at **20%** on the first few prompts, then jump to **70%** after decomposing the task into two steps — but also seen a model stay **unusable** after weeks of tweaking.
+
+> What's hard vs. soft depends on **both the model and your use case**. **Latency** is *soft* if you can optimize the model to run faster; it's *hard* if you use a model **hosted by someone else**.
+
+At a high level, the evaluation workflow has **four steps**:
+
+1. **Filter out** models whose **hard attributes** don't work for you (depends heavily on internal policies — commercial APIs vs. self-hosting).
+2. Use **publicly available information** (benchmark performance, leaderboard ranking) to **narrow down** the most promising models, balancing quality, latency, and cost.
+3. **Run experiments** with your **own evaluation pipeline** to find the best model, again balancing all objectives.
+4. **Continually monitor** the model in production to detect failures and collect feedback.
+
+![An overview of the evaluation workflow to evaluate models for your application](<assets/An overview of the evaluation workflow to evaluate models for your application.png>)
+
+**Figure 4-5. An overview of the evaluation workflow to evaluate models for your application.**
+
+> These four steps are **iterative** — newer information can change an earlier decision. You might initially want to host open source models, but after evaluation realize they can't reach your target performance, forcing a switch to **commercial APIs**.
+
+*(Chapter 10 covers monitoring and user feedback. The rest of this chapter covers the first three steps.)* First: the recurring question of **model APIs vs. self-hosting**. Then: how to navigate the dizzying number of **public benchmarks** and why you can't fully trust them — which sets up the need to design **your own evaluation pipeline**.
+
+### Model Build Versus Buy
+
+An evergreen question is **build vs. buy**. Since most companies won't build foundation models from scratch, the real question is: **use commercial model APIs**, or **host an open source model yourself**? The answer can significantly reduce your candidate pool.
+
+#### Open Source, Open Weight, and Model Licenses
+
+The term **"open source model"** has become contentious:
+
+- Originally, it meant any model people can **download and use** — sufficient for many use cases.
+- Some argue a model is only truly open if its **training data** is **also public**, since performance is largely a function of training data. Open data enables **retraining from scratch** with modifications, easier **understanding**, and **auditing** (e.g., confirming the model wasn't trained on compromised or illegally acquired data).[^34]
+
+To signal data availability:
+
+- **Open weight** — model **without** open data.
+- **Open model** — model **with** open data.
+
+> **NOTE — Terminology in these notes**
+>
+> Some argue *"open source"* should be reserved for **fully open** models. For simplicity, the book (and these notes) uses **open source** to refer to **all models whose weights are public**, regardless of training-data availability or license.
+
+As of this writing, the **vast majority** of open source models are **open weight only** — developers may hide training-data info on purpose, as it exposes them to **public scrutiny and potential lawsuits**.
+
+**Licenses** matter too. The pre-foundation-model world already had many (MIT, Apache 2.0, GPL, BSD, Creative Commons…), and foundation models made it worse with **bespoke licenses** — Meta's **Llama 2 / Llama 3 Community License Agreements**, Hugging Face's **BigCode Open RAIL-M v1**. *(Some convergence is happening: Google's **Gemma** and **Mistral-7B** both use **Apache 2.0**.)*
+
+Questions everyone should ask about a license:
+
+- **Does it allow commercial use?** Meta's first Llama was **noncommercial**.
+- **If so, any restrictions?** Llama-2/3 require a **special license** for apps with **>700 million** monthly active users.[^35]
+- **Can you use the model's outputs to train other models?** Synthetic data is key for **model distillation** (teaching a small *student* to mimic a large *teacher*). Mistral originally disallowed this but later changed; the **Llama licenses still don't allow it**.[^36]
+
+> Some use **restricted weight** for open source models with restricted licenses, but the author finds this ambiguous — **all sensible licenses have restrictions** (e.g., you shouldn't be able to use the model to commit genocide).
+
+#### Open Source Models Versus Model APIs
+
+For a model to be accessible, a machine must **host and run** it. The service that hosts the model, receives queries, runs the model, and returns responses is an **inference service**; the interface users interact with is the **model API**. *(There are also finetuning APIs, evaluation APIs, etc.)*
+
+![An inference service runs the model and provides an interface for users to access the model](<assets/An inference service runs the model and provides an interface for users to access the model.png>)
+
+**Figure 4-6. An inference service runs the model and provides an interface for users to access the model.**
+
+After developing a model, a developer can **open source it**, expose it via **API**, or both. Many developers are also service providers (Cohere, Mistral). OpenAI is known for commercial models but has open sourced some (GPT-2, CLIP). Typically, providers **open source weaker models** and **keep their best behind paywalls**.
+
+- **Model APIs** can come from **model providers** (OpenAI, Anthropic), **cloud providers** (Azure, GCP), or **third-party API providers** (Databricks Mosaic, Anyscale).
+- The **same model** via **different APIs** can differ in features, constraints, pricing, and even **performance** (different optimization techniques) — *test thoroughly when switching APIs*.
+- **Commercial models** are only accessible via APIs licensed by their developers.[^37] **Open source models** can be served by **any** API provider — and providers without their own models may be **more motivated** to offer better APIs and pricing.
+
+Because scalable inference for large models is nontrivial, many companies use **third-party inference/finetuning services** (AWS, Azure, GCP, plus many startups).
+
+> **NOTE — Private deployments**
+>
+> Some commercial API providers can deploy **within your private network**. These are treated like **self-hosted** models in this discussion.
+
+Whether to self-host or use an API depends on the use case — and can **change over time**. Here are **seven axes** to consider.
+
+##### 1. Data privacy
+
+Externally hosted APIs are **out of the question** for companies that can't send data outside the org.[^38] A notable early incident: **Samsung employees** pasted proprietary info into ChatGPT, **leaking company secrets**[^39] — serious enough that Samsung **banned ChatGPT in May 2023**. Some countries **forbid sending data across borders**, requiring in-country servers.
+
+> There's also the risk the **API provider trains on your data**. Most claim they don't, but policies change — in **August 2023, Zoom** faced backlash for quietly changing its ToS to use service-generated data to train AI models. Why care? Studies suggest models can **memorize training samples** — Hugging Face's **StarCoder** memorized **8%** of its training set — which can be **leaked** or **exploited**.
+
+##### 2. Data lineage and copyright
+
+Lineage/copyright concerns can push a company **toward open source**, **toward proprietary**, or **away from both**:
+
+- Most models offer **little transparency** about training data. **Gemini's** report said nothing beyond *"all data enrichment workers are paid at least a local living wage."* OpenAI's CTO **couldn't give a satisfactory answer** about training data.
+- **IP law is evolving.** The USPTO (2024) said *"AI-assisted inventions are not categorically unpatentable,"* but patentability depends on **significant human contribution**. It's unclear whether a product built on a model trained on copyrighted data can **defend its IP** — so **gaming and movie studios** are hesitant to use AI until laws clarify.
+- Concerns drive some toward **fully open** models (to inspect data) — though thoroughly inspecting a foundation-model-scale dataset is **impractical**.
+- Others opt for **commercial models**: open source models have **limited legal resources**, and an infringed party is **more likely to go after you** than the model developer. A **commercial contract** can potentially **protect you** from lineage risks.[^40]
+
+##### 3. Performance
+
+The gap between open source and proprietary models is **closing** (e.g., on MMLU over time). Many believe an open source model will one day **match or beat** the strongest proprietary model.
+
+![The gap between open source models and proprietary models is decreasing on the MMLU benchmark](<assets/The gap between open source models and proprietary models is decreasing on the MMLU benchmark.png>)
+
+**Figure 4-7. The gap between open source models and proprietary models is decreasing on the MMLU benchmark.** *(Image by Maxime Labonne.)*
+
+> The author is skeptical the **incentives** favor it: *if you had the strongest model, would you open source it for others to capitalize on, or capitalize yourself?*[^41] Companies commonly **keep their strongest models behind APIs**. So the strongest open source model will likely **lag** the strongest proprietary models — though for many use cases that **don't need the strongest**, open source is sufficient. Open source developers also **don't receive user feedback** to improve their models the way commercial providers do.
+
+##### 4. Functionality
+
+Many functionalities are needed around a model:
+
+- **Scalability** — support your traffic at the desired latency and cost.
+- **Function calling** — use external tools (essential for RAG and agents, Chapter 6).
+- **Structured outputs** — e.g., JSON.
+- **Output guardrails** — mitigate risks (e.g., racist/sexist responses).
+
+These are **hard and time-consuming** to implement, pushing many companies toward **API providers** that offer them out of the box.
+
+> **Downside of APIs:** you're **restricted to the functionalities provided**. Many use cases need **logprobs** (useful for classification, evaluation, interpretability), but providers may **withhold them** for fear of model replication. You also can only **finetune** a commercial model **if the provider lets you** — and may support **only some finetuning types** (partial vs. full, Chapter 7). With open source, you can find a finetuning service or do it yourself.
+
+##### 5. API cost versus engineering cost
+
+> Model APIs **charge per usage** — prohibitively expensive at **heavy usage**. At some scale, a company **bleeding resources** on APIs may consider self-hosting.[^42]
+
+But self-hosting requires **nontrivial time, talent, and engineering** — optimizing the model, scaling/maintaining the inference service, adding guardrails. *APIs are expensive, but engineering can be even more so.* Using an API also means depending on their **SLA** — unreliable APIs (common with early startups) force you to build your own guardrails.
+
+> In general, you want a model that's **easy to use and manipulate**. **Proprietary** models are typically easier to **start with and scale**; **open** models are easier to **manipulate**. Either way, prefer a **standard API** (many providers mimic **OpenAI's API**) and **good community support**[^43] — a large user base means your issue may already be solved online.
+
+##### 6. Control, access, and transparency
+
+A **2024 a16z study** shows enterprises value open source for **control** and **customizability**.
+
+![Why enterprises care about open source models](<assets/Why enterprises care about open source models.png>)
+
+**Figure 4-8. Why enterprises care about open source models.** *(Image from the 2024 study by a16z.)*
+
+- **Control** — with someone else's service, you're subject to their **terms, rate limits**, and can only access what's exposed.
+- **Over-censoring** — providers add **safety guardrails** (e.g., refusing to generate real faces) and tend to **err on the side of over-censoring**, which can break use cases. *Example:* **Convai** (3D AI characters) hit models replying *"As an AI model, I don't have physical abilities"* and ended up **finetuning open source models**.
+- **Loss of access / transparency** — you can't **freeze** a commercial model. Models are **frequently updated**, often **without announcement**; prompts can **silently break**, making commercial models **unusable for strictly regulated applications**. A provider can also **drop support** for your use case/industry/country, or your country can **ban** the provider (Italy briefly **banned OpenAI in 2023**), or the provider can **go out of business**.
+
+##### 7. On-device deployment
+
+If you want to run a model **on-device**, third-party APIs are **out of the question**. Local deployment is desirable for **unreliable internet** areas or **privacy** (e.g., an AI assistant with access to all your data that never leaves your device).
+
+**Table 4-4. Pros and cons of using model APIs vs. self-hosting models.** *(Cons in italics.)*
+
+| Axis | Using model APIs | Self-hosting models |
+| --- | --- | --- |
+| **Data** | *Must send data to providers — risk of leaking confidential info* | Don't send data externally; *fewer checks for data-lineage/copyright* |
+| **Performance** | Best-performing model will likely be **closed source** | *Best open models likely a bit behind commercial* |
+| **Functionality** | More likely to support **scaling, function calling, structured outputs**; *less likely to expose logprobs* | *No/limited function calling & structured outputs*; can access **logprobs & intermediate outputs** |
+| **Cost** | **API cost** | *Talent, time, engineering to optimize/host/maintain* (mitigable via hosting services) |
+| **Finetuning** | *Can only finetune what providers allow* | Can **finetune, quantize, optimize** (if license allows), *but hard to do* |
+| **Control, access, transparency** | *Rate limits; risk of losing access; lack of transparency in changes/versioning* | Easier to **inspect changes**; can **freeze** a model — *but you build & maintain the API* |
+| **Edge use cases** | *Can't run on-device without internet* | Can run **on-device** — *but may be hard to do* |
+
+> The pros and cons should **significantly narrow** your options. Next, refine your selection using **publicly available model performance data**.
+
+### Navigate Public Benchmarks
+
+There are **thousands** of benchmarks. Google's **BIG-bench** (2022) alone has **214**. The count grows to match growing use cases, and old benchmarks **saturate**, necessitating new ones.
+
+A tool to evaluate a model on **multiple benchmarks** is an **evaluation harness**. EleutherAI's **lm-evaluation-harness** supports **400+** benchmarks; OpenAI's **evals** lets you run ~**500** existing benchmarks and register new ones — covering everything from math and puzzles to identifying ASCII art.
+
+#### Benchmark Selection and Aggregation
+
+Aggregating benchmark results to rank models gives a **leaderboard**. Two questions:
+
+1. **What benchmarks** to include?
+2. **How to aggregate** their results to rank models?
+
+> There are too many benchmarks to look at them all. If model A beats model B on a **coding** benchmark but loses on a **toxicity** benchmark, which do you pick? What if A wins on **one coding benchmark** but loses on **another**?
+
+For inspiration on building your own leaderboard, look at how **public leaderboards** do it.
+
+#### Public Leaderboards
+
+Public leaderboards rank models by **aggregated performance** on a **subset** of benchmarks. They're immensely helpful but **far from comprehensive**:
+
+- **Compute constraints** mean most include only a **small number** of benchmarks. **HELM Lite** left out an information-retrieval benchmark (**MS MARCO**) because it's expensive; Hugging Face opted out of **HumanEval** due to compute.
+- Hugging Face's **Open LLM Leaderboard** launched (2023) with **four** benchmarks, grew to **six** — still **not nearly enough** to represent foundation models' capabilities and failure modes.
+- Selection processes **aren't always transparent**, and different leaderboards pick **different benchmarks**, making rankings **hard to compare**.
+
+In late 2023, Hugging Face's Open LLM Leaderboard averaged **six** benchmarks:
+
+| Benchmark | Measures |
+| --- | --- |
+| **ARC-C** (Clark et al., 2018) | Complex, grade-school-level **science** questions. |
+| **MMLU** (Hendrycks et al., 2020) | **Knowledge & reasoning** across 57 subjects (math, US history, CS, law…). |
+| **HellaSwag** (Zellers et al., 2019) | **Common sense** — predicting the completion of a sentence/scene. |
+| **TruthfulQA** (Lin et al., 2021) | **Truthful, non-misleading** responses — understanding of facts. |
+| **WinoGrande** (Sakaguchi et al., 2019) | Challenging **pronoun resolution** — commonsense reasoning. |
+| **GSM-8K** (OpenAI, 2021) | **Grade-school math** problems. |
+
+At the same time, Stanford's **HELM** used **ten** benchmarks, only **two** of which (MMLU, GSM-8K) overlapped. The other eight: competitive math (**MATH**), legal (**LegalBench**), medical (**MedQA**), translation (**WMT 2014**), reading comprehension (**NarrativeQA**, **OpenBookQA**), and general QA (**Natural Questions**, with and without Wikipedia).[^44]
+
+> Public leaderboards try to balance **coverage** and **number of benchmarks** — a small set covering reasoning, factual consistency, and domain capabilities (math, science). But there's **no clarity** on what "coverage" means or why it stops at **six or ten**. *Why medical and legal but not general science? Why two math tests but no coding? Why no summarization, tool use, toxicity, image search?* These highlight how **hard benchmark selection is**.
+
+An often-overlooked aspect is **benchmark correlation**: if two benchmarks are **perfectly correlated**, you don't want both — strongly correlated benchmarks can **exaggerate biases**.[^45]
+
+> **NOTE — Benchmarks saturate fast**
+>
+> In **June 2024**, less than a year after its last revamp, Hugging Face replaced its benchmark set with **more challenging, practical** ones: **GSM-8K → MATH lvl 5**, **MMLU → MMLU-PRO** (Wang et al., 2024), plus **GPQA**[^46] (graduate-level Q&A), **MuSR** (multistep reasoning), **BBH** (BIG-bench Hard), and **IFEval** (instruction-following). These too will **soon saturate** — but discussing specific benchmarks, even outdated ones, is still useful as examples.[^47]
+
+**Table 4-5. Pearson correlation between the six benchmarks on Hugging Face's leaderboard** *(computed January 2024 by Balázs Galambosi).*
+
+| | ARC-C | HellaSwag | MMLU | TruthfulQA | WinoGrande | GSM-8K |
+| --- | --- | --- | --- | --- | --- | --- |
+| **ARC-C** | 1.0000 | 0.4812 | **0.8672** | 0.4809 | **0.8856** | 0.7438 |
+| **HellaSwag** | 0.4812 | 1.0000 | 0.6105 | 0.4809 | 0.4842 | 0.3547 |
+| **MMLU** | **0.8672** | 0.6105 | 1.0000 | 0.5507 | **0.9011** | 0.7936 |
+| **TruthfulQA** | 0.4809 | 0.4228 | 0.5507 | 1.0000 | 0.4550 | 0.5009 |
+| **WinoGrande** | **0.8856** | 0.4842 | **0.9011** | 0.4550 | 1.0000 | 0.7979 |
+| **GSM-8K** | 0.7438 | 0.3547 | 0.7936 | 0.5009 | 0.7979 | 1.0000 |
+
+> **ARC-C, MMLU, and WinoGrande are strongly correlated** (they all test reasoning). **TruthfulQA is only moderately correlated**, suggesting that improving reasoning and math **doesn't always improve truthfulness**.
+
+Aggregation approaches differ:
+
+- **Hugging Face** **averages** scores — treating an 80% on TruthfulQA the **same** as 80% on GSM-8K, and giving all benchmarks **equal weight**, even if truthfulness matters more than grade-school math for some tasks.
+- **HELM** shuns averaging in favor of **mean win rate** — *"the fraction of times a model obtains a better score than another model, averaged across scenarios."*
+
+> A model that ranks high on a public leaderboard will **likely, but far from always**, perform well for **your** application. If you need code generation, a leaderboard **without a coding benchmark** won't help much.
+
+#### Custom Leaderboards with Public Benchmarks
+
+Evaluating models for a specific application is essentially building a **private leaderboard** ranked by **your** criteria:
+
+1. Gather benchmarks that evaluate **capabilities important to your application** (coding agent → code benchmarks; writing assistant → creative-writing benchmarks).
+2. Prefer the **latest** benchmarks (old ones saturate).
+3. **Assess each benchmark's reliability** — anyone can publish a benchmark, and many **don't measure what you expect**.
+
+> **SIDEBAR — Are OpenAI's models getting worse?**
+>
+> Every time OpenAI updates its models, people complain they seem **worse**. A Stanford/UC Berkeley study (Chen et al., 2023) found **GPT-3.5 and GPT-4 performance changed significantly** between **March and June 2023** on many benchmarks. Assuming OpenAI doesn't intentionally ship worse models, one reason might be that **evaluation is hard** — though the author doubts OpenAI flies **completely blind**.[^48] If so, it reinforces that the **best model overall might not be the best model for your application**.
+
+![Changes in the performances of GPT-3.5 and GPT-4 from March 2023 to June 2023 on certain benchmarks](<assets/Changes in the performances of GPT-3.5 and GPT-4 from March 2023 to June 2023 on certain benchmarks.png>)
+
+**Figure 4-9. Changes in the performances of GPT-3.5 and GPT-4 from March 2023 to June 2023 on certain benchmarks (Chen et al., 2023).**
+
+Not all models have public scores on all benchmarks. If yours doesn't, **run the evaluation yourself**[^49] (an evaluation harness helps). Running benchmarks can be **expensive** — Stanford spent ~**$80,000–$100,000** to evaluate **30 models** on the full HELM suite.[^50]
+
+Once you have the scores, **aggregate** them to rank models — but they're in **different units/scales** (accuracy, F1, BLEU). **Weigh** each benchmark by how important it is to you.
+
+> The goal of this process is to **select a small subset of models** for more rigorous experiments using **your own** benchmarks and metrics — both because public benchmarks won't perfectly represent your needs, and because they're likely **contaminated**.
+
+#### Data Contamination with Public Benchmarks
+
+**Data contamination** (a.k.a. **data leakage**, **training on the test set**, or simply **cheating**) happens when a model is **trained on the same data it's evaluated on**. The model may just **memorize the answers**, scoring higher than it should. *A model trained on MMLU can ace MMLU without being useful.*
+
+> Rylan Schaeffer's 2023 satirical paper **"Pretraining on the Test Set Is All You Need"** trained a **one-million-parameter** model exclusively on benchmark data and achieved **near-perfect scores**, outperforming much larger models.
+
+**How contamination happens** — mostly **unintentional**:
+
+- Models trained on **internet-scraped data** can accidentally pull in **public benchmarks**. Benchmarks published **before** a model's training are likely **included**.[^51] This is a key reason benchmarks **saturate so fast**.
+- **Indirect** contamination — training and evaluation data share the **same source** (e.g., a math textbook used both for training and to build a benchmark).
+- **Intentional, for good reasons** — you might exclude benchmark data, pick the best model, then **continue training on benchmark data** (since high-quality data improves performance) before release. The released model is **contaminated**, but this might still be the **right thing to do**.
+
+**Handling contamination** — detect, then decontaminate. Detection heuristics:
+
+- **N-gram overlapping** — if a sequence of, say, **13 tokens** in an evaluation sample also appears in the training data, the sample is likely **seen** (considered **dirty**). **More accurate**, but **expensive** (compare each example against all training data) and **impossible** without training-data access.
+- **Perplexity** — unusually **low perplexity** on evaluation data suggests the model has **seen it**. **Less accurate**, but **far cheaper**.
+
+> Old ML textbooks advised **removing evaluation samples** from training data to keep benchmarks standardized. With foundation models, most people **don't control** training data — and even if you did, removing all benchmark data may **hurt performance**, and **new benchmarks** created after training will always exist.
+
+For model developers, a common practice is to **remove benchmarks they care about** before training. Ideally, when reporting performance, **disclose** what percentage of a benchmark is in the training data and report performance on **both** the full benchmark and its **clean** samples. *(Many skip this because it takes effort.)* OpenAI found **GPT-3** had **13 benchmarks with ≥40%** in training data (Brown et al., 2020).
+
+![Relative difference in GPT-3's performance when evaluating using only the clean sample compared to evaluating using the whole benchmark](<assets/Relative difference in GPT-3’s performance when evaluating using only the clean sample compared to evaluating using the whole benchmark.png>)
+
+**Figure 4-10. Relative difference in GPT-3's performance when evaluating using only the clean sample compared to using the whole benchmark.**
+
+To combat contamination, leaderboard hosts like **Hugging Face** plot **standard deviations** of performance to spot outliers. Public benchmarks should keep **part of their data private** and provide a tool to evaluate models against the **private hold-out**.
+
+> Public benchmarks help you **filter out bad models**, but won't help you **find the best** for your application. After narrowing to a set of promising models, you need to run **your own evaluation pipeline** — the next topic.
+
+[Back to Contents](#contents)
+
 ## Notes (Chapter 4)
 
 Footnotes for Chapter 4. *(The book's footnote texts weren't included in this passage; these are concise contextual elaborations consistent with the chapter — to be replaced with the originals if needed. Numbering continues globally within this document.)*
@@ -1443,4 +1744,22 @@ Footnotes for Chapter 4. *(The book's footnote texts weren't included in this pa
 [^30]: A **regex** (regular expression) specifies an exact textual pattern the output must match — a strict, automatically checkable form of structured output.
 [^31]: Public instruction benchmarks are a **proxy**: they sample *some* instruction space, but your application's real instructions form a **different distribution**.
 [^32]: Roleplaying has **two evaluable axes** — *style* (does it sound like the character?) and *knowledge* (does it know what the character would know?) — and a model can pass one while failing the other.
-[^33]: This is the **fixed-cost economics** of self-hosting: once the cluster is provisioned, the **marginal cost per token trends toward zero** until you saturate capacity — the opposite of per-token API pricing.  
+[^33]: This is the **fixed-cost economics** of self-hosting: once the cluster is provisioned, the **marginal cost per token trends toward zero** until you saturate capacity — the opposite of per-token API pricing.
+[^34]: Auditing matters for **regulated and high-trust domains** — without training-data access, you can't independently verify a model wasn't trained on compromised, leaked, or illegally acquired data.
+[^35]: The **700M monthly-active-user** threshold is effectively a clause aimed at **large competitors** — it lets the vast majority of users build freely while requiring hyperscalers to negotiate a separate deal.
+[^36]: Banning training-on-outputs protects the provider from **distillation** — a competitor cheaply cloning the model's behavior by training a student on its responses.
+[^37]: Because a commercial model's weights are never released, your **only** access path is the provider's API — there's no way to serve it through a third party.
+[^38]: For these organizations, **data residency** is a hard attribute: an externally hosted API is disqualified before any quality consideration.
+[^39]: The lesson isn't that ChatGPT is uniquely unsafe, but that **any externally hosted API** is a potential exfiltration channel for whatever employees paste into it.
+[^40]: Indemnification clauses in a commercial contract can **shift legal liability** for training-data infringement onto the provider — protection open source models generally can't offer.
+[^41]: This is the core **incentive misalignment**: the economic reward for a frontier model is to **monetize it behind an API**, not to give it away.
+[^42]: The crossover point is where **cumulative API spend** exceeds the amortized cost of building and running your own inference stack — it arrives sooner the higher and steadier your volume.
+[^43]: Community support is an underrated **soft attribute** — popular models accumulate shared fixes, prompts, and tooling that reduce your own engineering burden.
+[^44]: **Natural Questions** appears twice because it's evaluated in two settings — **with** and **without** Wikipedia pages in the input — testing closed-book vs. open-book QA.
+[^45]: If two benchmarks measure nearly the same thing, averaging them **double-counts** that capability, skewing the aggregate ranking toward models that happen to be good at it.
+[^46]: **GPQA** ("Google-Proof Q&A") is designed so that even skilled non-experts **can't easily answer by searching** — targeting genuine graduate-level expertise.
+[^47]: The specific benchmark names date quickly, but the **reasoning about how to select, correlate, and interpret** benchmarks is durable.
+[^48]: A frontier lab almost certainly runs **extensive internal evals** before shipping; the public perception of regression more likely reflects **silent behavioral changes** than blind releases.
+[^49]: Running it yourself also lets you control **prompt formatting and decoding settings**, which (as noted earlier) can materially change a model's measured score.
+[^50]: This five-figure cost is **per full sweep** — it scales with both the number of models and the number (and expense) of benchmarks, which is why most leaderboards keep their benchmark set small.
+[^51]: Benchmark publication date vs. model training cutoff is a quick **contamination smell test**: anything public before training could plausibly be in the training set.  
