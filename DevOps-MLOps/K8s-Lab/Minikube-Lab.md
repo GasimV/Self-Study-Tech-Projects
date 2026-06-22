@@ -687,12 +687,18 @@ wsl --manage docker-desktop --set-sparse true
 Option B — **compact** the .vhdx directly with `diskpart` (works on any version):
 
 ```text
-diskpart
-  select vdisk file="C:\Users\Lenovo\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
-  attach vdisk readonly
-  compact vdisk
-  detach vdisk
-  exit
+PS C:\Users\Lenovo> diskpart
+
+Microsoft DiskPart version 10.0.26100.1150
+
+Copyright (C) Microsoft Corporation.
+On computer: DESKTOP-TSPJ5I4
+
+DISKPART> select vdisk file="C:\Users\Lenovo\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
+DISKPART> attach vdisk readonly
+DISKPART> compact vdisk
+DISKPART> detach vdisk
+DISKPART> exit
 ```
 
 #### Option B, command by command
