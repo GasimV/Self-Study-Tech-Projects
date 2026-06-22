@@ -561,25 +561,32 @@ Kubernetes ships a well-designed web UI — itself deployed as a service in a po
 Enable it:
 
 ```console
-$ mk addons enable dashboard
-    ▪ Using image kubernetesui/dashboard:v2.3.1
-    ▪ Using image kubernetesui/metrics-scraper:v1.0.7
-  Some dashboard features require the metrics-server addon. To enable all features please run:
+PS C:\Users\Lenovo> minikube addons enable dashboard
+💡  dashboard is an addon maintained by Kubernetes. For any concerns contact minikube on GitHub.
+    ▪ Using image docker.io/kubernetesui/dashboard:v2.7.0
+    ▪ Using image docker.io/kubernetesui/metrics-scraper:v1.0.8
+💡  Some dashboard features require the metrics-server addon. To enable all features please run:
+
         minikube addons enable metrics-server
-  The 'dashboard' addon is enabled
+
+🌟  The 'dashboard' addon is enabled
 ```
 
-Launch it (Minikube opens the UI in the default browser via a local proxy):
+The `metrics-server` hint is optional — without it the dashboard still works, it just won't show CPU/memory graphs. Launch the dashboard (Minikube starts a local proxy and opens the UI in the default browser):
 
 ```console
-$ mk dashboard
-  Verifying dashboard health ...
-  Launching proxy ...
-  Verifying proxy health ...
-  Opening http://127.0.0.1:63200/.../proxy/ in your default browser...
+PS C:\Users\Lenovo> minikube dashboard
+🤔  Verifying dashboard health ...
+🚀  Launching proxy ...
+🤔  Verifying proxy health ...
+🎉  Opening http://127.0.0.1:61581/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/ in your default browser...
 ```
 
-The **Workloads** view shows Deployments, Replica Sets, and Pods (and can also display DaemonSets, StatefulSets, and Jobs — none of which exist in this cluster yet).
+Like the `minikube service` tunnel from section 3, this proxy lives only while the `minikube dashboard` command keeps running — closing that terminal closes the dashboard. The URL goes through `127.0.0.1`, the same host-to-cluster proxying pattern the docker driver relies on.
+
+The **Workloads** view shows Deployments, Replica Sets, and Pods (and can also display DaemonSets, StatefulSets, and Jobs — none of which exist in this cluster yet). Here it is showing the `echo` deployment I created in section 3:
+
+![Workloads view of the Kubernetes dashboard showing the echo deployment](../assets/Workloads%20dashboard.png)
 
 [↑ Back to Contents](#table-of-contents)
 
