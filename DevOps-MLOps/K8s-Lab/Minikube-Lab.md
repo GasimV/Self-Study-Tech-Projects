@@ -667,11 +667,22 @@ That `.vhdx` file only ever **grows**. Deleting images frees space *inside* the 
 wsl --shutdown
 ```
 
-Option A — mark the disk **sparse** so it auto-releases freed space (simplest; Windows 11 / recent WSL):
+Option A — mark the disk **sparse** so it can release freed space (simplest; Windows 11 / recent WSL):
 
 ```powershell
 wsl --manage docker-desktop --set-sparse true
 ```
+
+> **Correction — only one distro on modern Docker Desktop.** Older guides tell you to also run this against a second distro, `docker-desktop-data`, and sometimes to add an `--allow-unsafe` flag. Neither applies to my setup:
+>
+> - I have a **single** distro. Verified with `wsl --list --verbose`:
+>   ```text
+>   NAME              STATE      VERSION
+>   * docker-desktop    Stopped    2
+>   ```
+>   The two-distro layout (`docker-desktop` + `docker-desktop-data`) was the *old* Docker Desktop design; recent versions (~4.30+, 2024) consolidated to just `docker-desktop`, with data in `...\Docker\wsl\disk\docker_data.vhdx`. Running the command against `docker-desktop-data` here just errors with "distribution not found" — so I skip it.
+> - **`--allow-unsafe` is not a documented `--set-sparse` flag.** The official syntax is `wsl --manage <Distro> --set-sparse <true|false>`. If WSL refuses the operation, the real fix is making sure the distro is fully stopped (`wsl --shutdown`), not adding an undocumented flag.
+> - Sparse mode lets the disk *release* freed blocks, but it's not a guaranteed background shrink. For an immediate, deterministic reclaim, use Option B below.
 
 Option B — **compact** the .vhdx directly with `diskpart` (works on any version):
 
