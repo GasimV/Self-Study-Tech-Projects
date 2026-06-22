@@ -174,6 +174,33 @@ In short: even the **default** setup does a lot of work — selecting a driver, 
 
 > **Versions in my run vs. the book:** docker driver (container) instead of Hyper-V (VM); Kubernetes **v1.35.1** instead of v1.23.3; Docker **29.2.1** instead of 20.10.12; **bridge CNI** explicitly configured. The shape of the process is the same — the moving parts are just newer.
 
+#### Aside: do I need to turn on VirtualBox before selecting it as the driver?
+
+**No — I don't need to open or "turn on" VirtualBox first.** It just needs to be **installed correctly**; Minikube creates and starts the VM itself:
+
+```powershell
+minikube start --driver=virtualbox
+```
+
+The official Minikube docs list the VirtualBox requirement and use exactly this command.
+
+One catch: I already have a `minikube` cluster on the **docker** driver. To switch cleanly to VirtualBox, delete the current one first:
+
+```powershell
+minikube delete
+minikube start --driver=virtualbox
+```
+
+Or keep both by creating a separate profile:
+
+```powershell
+minikube start -p minikube-vbox --driver=virtualbox
+```
+
+**My recommendation:** stay on the **docker** driver unless I specifically want to compare VM behavior — it's faster and simpler on this setup. VirtualBox is mainly useful when I want to see Minikube as a real **VM node** rather than a Docker-container node.
+
+> Reference: [virtualbox | minikube](https://minikube.sigs.k8s.io/docs/drivers/virtualbox/)
+
 ### Checking status, stopping, and restarting
 
 Check cluster status:
