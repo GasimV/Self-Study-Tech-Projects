@@ -695,6 +695,31 @@ diskpart
   exit
 ```
 
+#### Option B, command by command
+
+A dynamically expanding VHDX grows as images/containers/volumes are created, but doesn't always shrink when you delete them. `compact vdisk` rewrites the file to drop the freed empty space — here's what each line does:
+
+| Command | What it does |
+| --- | --- |
+| `wsl --shutdown` | Stops WSL completely so Docker's virtual disk isn't in use (Microsoft's WSL disk steps also begin here). |
+| `diskpart` | Opens Windows' disk-management command tool. |
+| `select vdisk file="...docker_data.vhdx"` | Tells DiskPart *this* is the virtual disk file to work on. |
+| `attach vdisk readonly` | Mounts the VHDX **read-only** — compaction is safest when nothing can write to the disk. |
+| `compact vdisk` | Actually shrinks the file by removing unused empty space inside the virtual disk. |
+| `detach vdisk` | Unmounts the VHDX cleanly. |
+| `exit` | Leaves DiskPart. |
+
+The flow in one picture:
+
+```text
+Docker deletes data inside the VHDX
+→ the VHDX file may still stay large on C:
+→ DiskPart `compact vdisk` rewrites/shrinks it
+→ Windows gets the free space back
+```
+
+Use Option B when you want an **immediate, manual reclaim** — just make sure Docker Desktop is fully quit and `wsl --shutdown` has run first.
+
 After either option, the `.vhdx` shrinks and the freed gigabytes show up as C: free space again.
 
 > **Takeaway:** `docker system df = 0B` proves *Docker* is clean; recovering disk on the *Windows host* needs the extra `wsl --shutdown` + sparse/compact step. It never happens automatically.
