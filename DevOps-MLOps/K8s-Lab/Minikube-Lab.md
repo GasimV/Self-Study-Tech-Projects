@@ -626,6 +626,68 @@ docker image prune        # clears dangling <none> images
 
 > Trade-off: deleting the images frees ~2 GB now, but the next `minikube start` pays the full download cost again. If I plan to spin the cluster back up, leaving them cached is the right call.
 
+### Verifying the cleanup from the terminal
+
+I deleted the two `kicbase` images from the Docker Desktop GUI (the "delete forever" button), then confirmed from the terminal that nothing is left:
+
+```console
+PS C:\Users\Lenovo> docker images gcr.io/k8s-minikube/kicbase
+IMAGE   ID   DISK USAGE   CONTENT SIZE   EXTRA
+                                                    # (header only — no images)
+
+PS C:\Users\Lenovo> docker images -a                # nothing, including dangling layers
+PS C:\Users\Lenovo> docker images -f "dangling=true"  # no orphaned <none> images
+
+PS C:\Users\Lenovo> docker system df
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          0         0         0B        0B
+Containers      0         0         0B        0B
+Local Volumes   0         0         0B        0B
+Build Cache     0         0         0B        0B
+```
+
+`docker system df` is the definitive check — **Images** at `0B` / `0B` reclaimable means Docker is holding no image data. Running `docker system prune -a --volumes` afterward confirmed it: `Total reclaimed space: 0B` (nothing left to free).
+
+### Gotcha: my C: drive free space didn't go up
+
+After all that, I noticed **C: free space hadn't increased at all.** This is expected on Windows/WSL2 and **won't fix itself** — not after waiting, and not after a normal reboot.
+
+**Why:** Docker Desktop stores everything inside a WSL2 **virtual disk** file:
+
+```text
+C:\Users\Lenovo\AppData\Local\Docker\wsl\disk\docker_data.vhdx
+```
+
+That `.vhdx` file only ever **grows**. Deleting images frees space *inside* the virtual disk (which is exactly what `docker system df = 0B` reflects), but the file on the Windows host keeps its already-allocated size. Windows can't reclaim those gigabytes until the virtual disk is **compacted**. So `docker system df` showing `0B` is the correct signal that Docker is clean — the host-side reclaim is a separate, manual step.
+
+**Reclaiming the space on C:** quit Docker Desktop, shut down the WSL backend, then either make the disk auto-shrinking or compact it directly.
+
+```powershell
+# Always start by stopping WSL (quit Docker Desktop first)
+wsl --shutdown
+```
+
+Option A — mark the disk **sparse** so it auto-releases freed space (simplest; Windows 11 / recent WSL):
+
+```powershell
+wsl --manage docker-desktop --set-sparse true
+```
+
+Option B — **compact** the .vhdx directly with `diskpart` (works on any version):
+
+```text
+diskpart
+  select vdisk file="C:\Users\Lenovo\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
+  attach vdisk readonly
+  compact vdisk
+  detach vdisk
+  exit
+```
+
+After either option, the `.vhdx` shrinks and the freed gigabytes show up as C: free space again.
+
+> **Takeaway:** `docker system df = 0B` proves *Docker* is clean; recovering disk on the *Windows host* needs the extra `wsl --shutdown` + sparse/compact step. It never happens automatically.
+
 **Recap of this section:** I created a local single-node cluster on Windows, explored it with `kubectl`, deployed and exposed a service, called it over HTTP, browsed it in the web dashboard, and finally tore it down — noting that the cached `kicbase` images survive deletion by design. Next up: building a **multi-node** cluster with [KinD](KinD-Lab.md).
 
 [↑ Back to Contents](#table-of-contents)
