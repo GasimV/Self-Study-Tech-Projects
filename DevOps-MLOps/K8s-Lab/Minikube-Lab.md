@@ -720,7 +720,29 @@ Docker deletes data inside the VHDX
 
 Use Option B when you want an **immediate, manual reclaim** — just make sure Docker Desktop is fully quit and `wsl --shutdown` has run first.
 
-After either option, the `.vhdx` shrinks and the freed gigabytes show up as C: free space again.
+When it works, the DiskPart session confirms each step — this is my actual run:
+
+```console
+DISKPART> select vdisk file="C:\Users\Lenovo\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
+DiskPart successfully selected the virtual disk file.
+DISKPART> attach vdisk readonly
+DiskPart successfully attached the virtual disk file.
+DISKPART> compact vdisk
+  100 percent completed
+DiskPart successfully compacted the virtual disk file.
+DISKPART> detach vdisk
+DiskPart successfully detached the virtual disk file.
+DISKPART> exit
+```
+
+> **Pitfall — run these *inside* the `DISKPART>` prompt, not in PowerShell.** `select`, `attach`, `compact`, and `detach` are DiskPart sub-commands; they only exist after you've launched `diskpart`. If they're entered at a normal `PS>` prompt (e.g. by pasting the block a second time after `exit`), PowerShell misinterprets them — harmlessly but confusingly:
+> - `select` → resolves to the `Select-Object` alias → parameter error
+> - `attach` / `detach` → "not recognized as the name of a cmdlet"
+> - `compact` → runs **`compact.exe`**, the unrelated NTFS file-compression tool, which just lists the current folder and does nothing to the VHDX
+>
+> None of that harms anything — but the only run that matters is the one under `DISKPART>`. The `DiskPart successfully compacted...` line is the proof it worked.
+
+After either option, the `.vhdx` shrinks and the freed gigabytes show up as C: free space again. In my case, C: free space went from **772 GB to 775 GB** right after the compaction — about **3 GB reclaimed**, which matches the ~2 GB of `kicbase` images plus assorted container/layer overhead that the cluster had allocated inside the virtual disk.
 
 > **Takeaway:** `docker system df = 0B` proves *Docker* is clean; recovering disk on the *Windows host* needs the extra `wsl --shutdown` + sparse/compact step. It never happens automatically.
 
