@@ -594,17 +594,39 @@ The **Workloads** view shows Deployments, Replica Sets, and Pods (and can also d
 
 ## 5. Tearing the cluster down
 
-When I'm done experimenting, deleting the cluster removes the VM/container and all traces of it:
+When I'm done experimenting, `minikube delete` removes the cluster — with the docker driver that means deleting the node **container** and the cluster's machine state:
 
 ```console
-$ mk delete
-  Deleting "minikube" in docker ...
-  Deleting container "minikube" ...
-  Removing .../.minikube/machines/minikube ...
-  Removed all traces of the "minikube" cluster.
+PS C:\Users\Lenovo> minikube delete
+🔥  Deleting "minikube" in docker ...
+🔥  Deleting container "minikube" ...
+🔥  Removing C:\Users\Lenovo\.minikube\machines\minikube ...
+💀  Removed all traces of the "minikube" cluster.
 ```
 
-**Recap of this section:** I created a local single-node cluster on Windows, explored it with `kubectl`, deployed and exposed a service, called it over HTTP, browsed it in the web dashboard, and finally tore it down. Next up: building a **multi-node** cluster with [KinD](KinD-Lab.md).
+### What got removed vs. what stayed
+
+Checking Docker Desktop afterward, I noticed the cleanup wasn't total:
+
+- **Containers** — the `minikube` node container is **gone**. The Containers tab is empty again.
+- **Images** — the two `gcr.io/k8s-minikube/kicbase` images (the `v0.0.50` tag and a `<none>` one, ~1.93 GB each) are **still there**.
+
+This is **intentional**, not a bug. `minikube delete` removes the *cluster* (the container and its machine directory), but it deliberately leaves the cached base images behind so that the **next** `minikube start` is fast — it can reuse `kicbase` instead of re-downloading ~500 MB. The message says "Removed all traces of the cluster," and that's accurate: the images aren't part of the cluster, they're a shared cache.
+
+If I want to reclaim that disk space too, I can remove the images explicitly:
+
+```powershell
+# Purge minikube's own cached files (~/.minikube) along with the cluster
+minikube delete --all --purge
+
+# …and/or drop the leftover Docker images directly
+docker rmi gcr.io/k8s-minikube/kicbase:v0.0.50
+docker image prune        # clears dangling <none> images
+```
+
+> Trade-off: deleting the images frees ~2 GB now, but the next `minikube start` pays the full download cost again. If I plan to spin the cluster back up, leaving them cached is the right call.
+
+**Recap of this section:** I created a local single-node cluster on Windows, explored it with `kubectl`, deployed and exposed a service, called it over HTTP, browsed it in the web dashboard, and finally tore it down — noting that the cached `kicbase` images survive deletion by design. Next up: building a **multi-node** cluster with [KinD](KinD-Lab.md).
 
 [↑ Back to Contents](#table-of-contents)
 
