@@ -429,52 +429,126 @@ The cluster isn't completely empty (DNS and other system services already run as
 Create a deployment from the `echoserver` image:
 
 ```console
-$ k create deployment echo --image=k8s.gcr.io/e2e-test-images/echoserver:2.5
+PS C:\Users\Lenovo> kubectl create deployment echo --image=k8s.gcr.io/e2e-test-images/echoserver:2.5
 deployment.apps/echo created
 ```
 
-Watch the pod come up — the `-w` flag streams a new line on every status change:
+> If I run it twice I get `error: failed to create deployment: deployments.apps "echo" already exists` — harmless, it just means the deployment is already there.
+
+Watch the pod come up — the `-w` flag streams a new line on every status change (Ctrl+C to stop watching):
 
 ```console
-$ k get po -w
+PS C:\Users\Lenovo> kubectl get po -w
 NAME                    READY   STATUS              RESTARTS   AGE
-echo-7fd7648898-6hh48   0/1     ContainerCreating   0          5s
-echo-7fd7648898-6hh48   1/1     Running             0          6s
+echo-679d8d5747-cv924   0/1     ContainerCreating   0          5s
+echo-679d8d5747-cv924   1/1     Running             0          6s
 ```
 
 Expose the deployment as a `NodePort` service:
 
 ```console
-$ k expose deployment echo --type=NodePort --port=8080
+PS C:\Users\Lenovo> kubectl expose deployment echo --type=NodePort --port=8080
 service/echo exposed
 ```
 
-`NodePort` publishes the service on a port on the node — but **not** the `8080` the pod listens on. Kubernetes maps it to a high-numbered port. To reach the service I need the cluster IP plus that mapped port:
+`NodePort` publishes the service on a port on the node — but **not** the `8080` the pod listens on. Kubernetes maps it to a high-numbered port. So I grab the node IP and the mapped port:
 
 ```console
-$ mk ip
-172.26.246.89
+PS C:\Users\Lenovo> minikube ip
+192.168.49.2
 
-$ k get service echo -o jsonpath='{.spec.ports[0].nodePort}'
-32649
+PS C:\Users\Lenovo> kubectl get service echo -o jsonpath='{.spec.ports[0].nodePort}'
+31325
 ```
 
-Now I can call the echo service, which reflects back request details:
+### The NodePort isn't reachable directly (docker driver gotcha)
+
+The book curls `http://<node-ip>:<nodePort>` and it just works — because its node is a Hyper-V **VM** with a routable LAN IP. On my **docker driver** it fails:
 
 ```console
-$ curl http://172.26.246.89:32649/hi
-Hostname: echo-7fd7648898-6hh48
-...
+PS C:\Users\Lenovo> curl http://192.168.49.2:31325/hi
+curl : Unable to connect to the remote server
+    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:HttpWebRequest) [Invoke-WebRequest], WebException
+```
+
+**Why:** `192.168.49.2` is the node's address on Minikube's *internal Docker network*. With the docker driver on Windows that network lives inside the WSL2 VM, so the IP isn't routable from my Windows host — the connection never lands. (It's the same reason `kubectl cluster-info` earlier showed the API server on `127.0.0.1:<mapped-port>` instead of the node IP.) On Linux, where Docker runs natively, the direct curl *would* work.
+
+**The fix:** let Minikube open a tunnel from the host to the service with `minikube service`. The `--url` form prints a reachable `127.0.0.1` URL instead of launching a browser:
+
+```console
+PS C:\Users\Lenovo> minikube service echo --url
+http://127.0.0.1:57067
+❗  Because you are using a Docker driver on windows, the terminal needs to be open to run it.
+```
+
+That `❗` note is important: with the docker driver the URL is a live tunnel that **only exists while this command keeps running**. So I leave this terminal open and curl the printed URL from a **second** terminal.
+
+#### Second gotcha: PowerShell's `curl` triggers a security prompt
+
+In PowerShell, `curl` is an **alias for `Invoke-WebRequest`** (not the real curl). When I call it, instead of fetching the body it stops with a *"Script Execution Risk"* prompt:
+
+```console
+PS C:\Users\Lenovo> curl http://127.0.0.1:57067/hi
+
+Security Warning: Script Execution Risk
+Invoke-WebRequest parses the content of the web page. Script code in the web page might be run when the page is parsed.
+    RECOMMENDED ACTION:
+    Use the -UseBasicParsing switch to avoid script code execution.
+    Do you want to continue?
+[Y] Yes  [A] Yes to All  [N] No  [L] No to All  [S] Suspend  [?] Help (default is "N"):
+```
+
+`Invoke-WebRequest` tries to parse the response as HTML through the legacy Internet Explorer engine; when that can't initialize it prompts. It's not a real risk here — but it blocks the request. Answering `N` (the default) cancels it outright:
+
+```console
+[Y] Yes  [A] Yes to All  [N] No  [L] No to All  [S] Suspend  [?] Help (default is "N"): N
+curl : Operation cancelled due to security concerns. Use -UseBasicParsing parameter for safe HTML parsing without
+script execution.
+```
+
+Three ways around it (all run in the second terminal while the tunnel stays open):
+
+```powershell
+curl.exe http://127.0.0.1:57067/hi                       # real curl — the .exe bypasses the alias (cleanest)
+Invoke-RestMethod http://127.0.0.1:57067/hi              # returns the body directly
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:57067/hi   # skips HTML parsing, no prompt
+```
+
+Using real curl, the echo server finally answers:
+
+```console
+PS C:\Users\Lenovo> curl.exe http://127.0.0.1:57067/hi
+
+Hostname: echo-679d8d5747-cv924
+
+Pod Information:
+        -no pod information available-
+
+Server values:
+        server_version=nginx: 1.14.2 - lua: 10015
+
 Request Information:
-        client_address=172.17.0.1
+        client_address=10.244.0.1
         method=GET
         real path=/hi
+        query=
+        request_version=1.1
         request_scheme=http
-        request_uri=http://172.26.246.89:8080/hi
-...
+        request_uri=http://127.0.0.1:8080/hi
+
+Request Headers:
+        accept=*/*
+        host=127.0.0.1:57067
+        user-agent=curl/8.19.0
+
+Request Body:
+        -no body in request-
 ```
 
-Notice `request_uri` still shows port `8080` (the pod's port) while the `host` header shows `32649` (the NodePort) — a nice illustration of the port mapping. That's a full round trip: **a local cluster, a deployed service, and external access to it.**
+🎉 **Success — the full round trip works.** A couple of things to note:
+
+- `minikube service echo` (without `--url`) does the same tunnelling but opens the service in my default browser.
+- `request_uri` still shows port `8080` (the pod's port) while I connected on the tunnel port — a nice illustration of how the request is mapped through. That's a full round trip: **a local cluster, a deployed service, and external access to it.**
 
 [↑ Back to Contents](#table-of-contents)
 
