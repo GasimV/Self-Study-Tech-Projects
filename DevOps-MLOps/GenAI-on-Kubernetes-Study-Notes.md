@@ -11506,6 +11506,8 @@ In summary, multiagent is **collaborative intelligence**: compose **small, sharp
 
 #### Ambient Agents
 
+![Ambient Agents on Kubernetes](<assets/Ambient Agents on Kubernetes.png>)
+
 **Ambient agents** run **continuously in the background**, reacting to **signals from their environment** rather than waiting for an interactive prompt. They live alongside your systems and act when **triggers fire** — a new file appears, a row changes, a sensor crosses a threshold, a timer goes off. They're **passive until needed**: they don't start conversations, though they **can** (but needn't) ask a human before acting.
 
 A practical example is a **Kubernetes caretaker** that monitors cluster-health signals for **crash loops or CPU pressure** and immediately investigates by querying logs and comparing recent metrics. If findings match a known pattern, it attempts a **targeted remedy** (restart a deployment, roll back a config, scale out a service), escalating to a human **only when automated actions fail** or **policy marks the situation high-risk** (Figure 8-13).
