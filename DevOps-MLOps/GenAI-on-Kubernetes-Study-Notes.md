@@ -226,9 +226,13 @@
    - [Lessons Learned](#lessons-learned-2)
 12. [Running Agentic Applications in Production](#running-agentic-applications-in-production)
     - [The Model Context Protocol](#the-model-context-protocol)
+      - [Running MCP Servers on Kubernetes](#running-mcp-servers-on-kubernetes)
       - [MCP Security](#mcp-security)
         - [Agent Impersonation (Token Passthrough)](#agent-impersonation-token-passthrough)
         - [Service Account Delegation](#service-account-delegation)
+        - [Delegated Identity via OAuth2 Token Exchange](#delegated-identity-via-oauth2-token-exchange)
+        - [Mutual TLS with SPIFFE/SPIRE (Zero-Trust)](#mutual-tls-with-spiffespire-zero-trust)
+        - [Choosing the Right Security Pattern](#choosing-the-right-security-pattern)
 13. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
@@ -11990,6 +11994,300 @@ ServiceAccount delegation works well for **workload-to-workload** authentication
 > - All clients must use **Proof Key for Code Exchange (PKCE)** for authorization-code flows.
 >
 > For multiuser agentic systems requiring **delegation semantics**, **RFC 8693 (Token Exchange)** provides the mechanism to preserve **both** user and agent identities — explored next. For comprehensive coverage, see *Cloud Native Data Security with OAuth* by Gary Archer et al. (O'Reilly).
+
+##### Delegated Identity via OAuth2 Token Exchange
+
+Impersonation preserves user context but introduces **token-lifetime complexity** and **scope explosion**. Service account delegation simplifies operations but **loses per-user attribution**. **OAuth2 Token Exchange (RFC 8693)** provides **both**: a standards-based way to **preserve user identity** while making the **calling service's identity visible** to upstream systems.
+
+Token exchange enables **delegation semantics** where the original user remains distinguishable from the service acting on their behalf. The exchanged token carries **both identities** in its claims:
+
+- **`sub`** — identifies the **user** on whose behalf work is done (e.g., `alice@example.com`).
+- **`act`** — identifies the current **actor** performing the work (e.g., `customer-support-agent` or `customer-data-mcp-server`).
+
+> This dual-identity token allows **composite policies** like *"allow if the user has permission **and** the service is authorized for this operation."*
+
+Token exchange can occur at **two points** in an MCP workflow, with an **identical** mechanism (only the `act` claim changes to reflect the current service):
+
+1. The **agent runtime** exchanges a user's token for an **MCP-server-targeted** token identifying both the user and the agent.
+2. The **MCP server** exchanges its token for an **upstream-API-targeted** token identifying the user and the MCP server.
+
+This section focuses on **scenario 1**; the pattern applies equally to scenario 2.
+
+The flow involves a **token service** — typically your identity provider or a dedicated **security token service (STS)**:
+
+- The user authenticates and obtains an access token from the IdP.
+- The agent runtime calls the **token exchange endpoint** with the user's token as the `subject_token` and the MCP server as the `audience`.
+- The token service validates the user's token and returns a **delegated token**.
+- The agent runtime sends this delegated token to the MCP server, which can use it directly or **exchange it again** for upstream API calls.
+
+![OAuth2 Token Exchange](<assets/OAuth2 Token Exchange.png>)
+
+**Figure 9-5. OAuth2 Token Exchange**
+
+> **Worked example — Nurse Alice (revisited).** When Nurse Alice queries patient records, the agent runtime exchanges her token for a **delegated token** identifying **both** the medical-assistant agent **and** Nurse Alice. The patient-records API enforces a **composite policy**: *"Allow access only if the agent is `medical-assistant` and Alice has access to this patient."* Both identities are preserved in a **single, cryptographically signed token**.
+
+This pattern is ideal when compliance requires knowing **both** *who* (the user) and *what* (the agent) accessed data, and when your IdP supports token exchange — modern platforms like **Keycloak, Auth0, and Azure AD** support RFC 8693. With multiple agents of different scopes, token exchange allows **fine-grained scoping without separate user accounts** per agent. On Kubernetes, configure your IdP for RFC 8693 (built into Keycloak); the agent runtime performs the exchange **before** calling the MCP server.
+
+**Example 9-8. Agent runtime performs token exchange via RFC 8693**
+
+```python
+import httpx
+
+async def exchange_token(
+    user_token: str,
+    agent_token: str,
+    upstream_audience: str,
+    token_endpoint: str
+) -> str:
+    """Exchange user token for delegated token via RFC 8693."""
+    payload = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",   # ❶
+        "subject_token": user_token,   # ❷
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "audience": upstream_audience,   # ❸
+        "actor_token": agent_token,   # ❹
+        "actor_token_type": "urn:ietf:params:oauth:token-type:access_token",   # ❺
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_endpoint, data=payload)
+        response.raise_for_status()
+        token_data = response.json()
+        return token_data["access_token"]   # ❻
+```
+
+- **❶** RFC 8693 **grant type** for token-exchange requests.
+- **❷** The user's access token (the **subject** on whose behalf the agent acts).
+- **❸** The MCP server or upstream API as **audience**, scoping the token to a specific service.
+- **❹** The agent's access token representing the **actor** performing the exchange.
+- **❺** Per RFC 8693, `actor_token_type` is **required** when `actor_token` is present.
+- **❻** The delegated token contains **both** identities: user in `sub`, agent in `act`.
+
+> The MCP server receives the exchanged token and can either **forward** this dual-identity token directly to upstream APIs or **perform its own exchange** to become the new actor in `act` while preserving the user in `sub`.
+
+The trade-off is **additional complexity** — you must operate a token-exchange endpoint, handle exchange errors, and **cache** exchanged tokens to avoid per-invocation latency:
+
+- **Cache keys** — construct from the tuple `(user_subject, agent_identity, audience)` to isolate tokens across contexts.
+- **TTL** — decode the JWT, extract the `exp` claim, and set `TTL = exp - current_time - safety_margin` (a **30–60s** margin for clock skew and network latency). **Never** cache longer than the token's actual lifetime — a stale token gets rejected, forcing a re-exchange anyway and wasting both cache storage and the failed call.
+- **Per-entry expiration** — if your cache lacks per-entry TTLs, store `{token, expires_at}` and check on retrieval.
+- **Concurrency** — under high load, multiple requests for the same tuple may trigger **parallel exchanges**; use a **cache-aside** pattern with short-lived locks, or accept occasional duplicate exchanges rather than complex distributed locking.
+
+##### Mutual TLS with SPIFFE/SPIRE (Zero-Trust)
+
+Bearer tokens — OAuth2 access tokens, Kubernetes ServiceAccount tokens, API keys — share a fundamental weakness: **they can be stolen**. An attacker who intercepts or exfiltrates a token can impersonate the legitimate caller until it expires. **SPIFFE** (Secure Production Identity Framework for Everyone) and **SPIRE** (the SPIFFE Runtime Environment) solve this by **binding identity cryptographically to the workload itself**, making credentials impossible to steal without compromising the entire pod.
+
+> SPIFFE provides workload identity through **certificates** that are automatically **issued, rotated, and verified**. Your agent runtime, MCP server, and upstream APIs all authenticate each other using **mutual TLS (mTLS)** with **no secrets to manage**. Every connection is cryptographically verified; credentials have a default TTL of **one hour**, rotated at **50% of TTL** (~ every 30 minutes).
+
+###### How SPIFFE Works for MCP
+
+SPIFFE assigns each workload a unique **SPIFFE ID**, a URI like:
+
+```text
+spiffe://example.com/ns/agents/sa/customer-support
+```
+
+The workload proves its identity using a **SPIFFE Verifiable Identity Document (SVID)** — an **X.509 certificate** carrying the SPIFFE ID in the **Subject Alternative Name (SAN)** field. *Think of the SPIFFE ID as the workload's name and the SVID as its cryptographically signed ID card.*
+
+- The **SPIRE Server** acts as the **certificate authority**, issuing SVIDs after verifying identity through **attestation** (on Kubernetes, typically validating the pod's ServiceAccount token against the Kubernetes API).
+- The **SPIRE Agent** runs as a **DaemonSet** on every node, exposing a **Workload API** via Unix socket at `/run/spire/sockets/agent.sock`. Workloads mount this socket's host path and connect to retrieve their SVID — **no network calls, no secrets to mount**, just a local API that verifies the calling process.
+
+The full authentication chain from agent runtime → MCP server → upstream API:
+
+1. Both workloads retrieve their SVIDs from the **local SPIRE Agent**.
+2. The agent runtime connects to the MCP server, presenting its SVID as the **client certificate**.
+3. The MCP server **validates the agent's SPIFFE ID** (e.g., `spiffe://example.com/ns/agents/sa/agent-runtime`), then responds with **its own SVID** as the server certificate.
+4. The agent runtime **validates the MCP server's SPIFFE ID** in return, completing **mutual authentication**.
+5. When the MCP server calls the upstream API, the **same handshake repeats** — both sides present and validate SVIDs before any data flows.
+
+![SPIFFE/SPIRE authentication setup for Agent to MCP communication](<assets/SPIFFE-SPIRE authentication setup for Agent to MCP communication.png>)
+
+**Figure 9-6. SPIFFE/SPIRE authentication setup for Agent to MCP communication**
+
+###### Deploying SPIRE on Kubernetes
+
+SPIRE requires two components: a **SPIRE Server** (deployed as a **StatefulSet**, maintaining the trust root and issuing SVIDs) and **SPIRE Agents** (running on every node, providing local Workload API access).
+
+**Example 9-9. SPIRE Agent DaemonSet**
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: spire
+spec:
+  selector:
+    matchLabels:
+      app: spire-agent
+  template:
+    spec:
+      hostPID: true   # ❶
+      serviceAccountName: spire-agent
+      containers:
+      - name: spire-agent
+        image: ghcr.io/spiffe/spire-agent
+        volumeMounts:
+        - name: spire-socket
+          mountPath: /run/spire/sockets   # ❷
+        - name: spire-token
+          mountPath: /var/run/secrets/tokens   # ❸
+      volumes:
+      - name: spire-socket
+        hostPath:
+          path: /run/spire/sockets
+          type: DirectoryOrCreate
+      - name: spire-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: spire-agent
+              audience: spire-server
+```
+
+- **❶** Required for **cgroup-based workload attestation** (the agent reads `/proc` to identify calling processes).
+- **❷** Unix socket where workloads **retrieve SVIDs**.
+- **❸** ServiceAccount token for **agent-to-server** authentication.
+
+After deploying SPIRE, **register each workload** by mapping Kubernetes selectors (namespace + ServiceAccount name) to a SPIFFE ID. This creates a registration entry telling SPIRE which identity to issue to which pods.
+
+**Example 9-10. Registering the MCP server workload**
+
+```bash
+kubectl exec -n spire spire-server-0 -- \
+  /opt/spire/bin/spire-server entry create \
+  -spiffeID spiffe://example.com/ns/mcp/sa/customer-support \   # ❶
+  -parentID spiffe://example.com/spire-agent \
+  -selector k8s:ns:mcp \   # ❷
+  -selector k8s:sa:customer-support
+```
+
+- **❶** SPIFFE ID assigned to matching workloads.
+- **❷** Selectors match pods in namespace `mcp` with ServiceAccount `customer-support`.
+
+> For clusters with hundreds or thousands of workloads, **manual registration doesn't scale**. The **SPIRE Controller Manager** automates it by watching Kubernetes resources and creating registration entries automatically. Install it via **Helm** alongside the SPIRE Server; it registers new pods as they appear based on **annotations** or **`ClusterSPIFFEID`** custom resources.
+
+###### Using SPIFFE
+
+Your MCP server retrieves its SVID from the SPIRE Agent and uses it to establish mTLS connections. The **`py-spiffe`** library simplifies this in Python.
+
+**Example 9-11. MCP server using SPIFFE for mTLS**
+
+```python
+import ssl
+import tempfile
+import httpx
+from spiffe import WorkloadApiClient
+from cryptography.hazmat.primitives import serialization
+
+def svid_to_pem_files(svid):   # ❶
+    """Write SVID certificate chain and private key to temporary PEM files."""
+    ...   # ❷
+    return cert_path, key_path
+
+with WorkloadApiClient() as client:
+    x509_ctx = client.fetch_x509_context()   # ❸
+    svid = x509_ctx.default_svid
+    cert_path, key_path = svid_to_pem_files(svid)
+
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)   # ❹
+
+    for bundle in x509_ctx.x509_bundle_set.bundles:   # ❺
+        for ca_cert in bundle.x509_authorities:
+            ssl_context.load_verify_locations(
+                cadata=ca_cert.public_bytes(serialization.Encoding.PEM).decode()
+            )
+
+    async with httpx.AsyncClient(verify=ssl_context) as http_client:
+        response = await http_client.post(
+            "https://api.example.com/endpoint",
+            json={"query": "list tickets"}
+        )   # ❻
+```
+
+- **❶** Helper to **serialize SVID credentials** to temporary PEM files for Python's `ssl` module.
+- **❷** Code to store `svid.cert_chain` and `svid.private_key` into files is intentionally omitted.
+- **❸** Retrieves an **X.509 context** (SVID and trust bundles) from the local SPIRE Agent.
+- **❹** Loads the SVID **certificate chain and private key** from the temporary files.
+- **❺** Iterates over **trust bundles** and loads each CA certificate for server verification.
+- **❻** `httpx` uses **mTLS** so the upstream API can validate the MCP server's SPIFFE ID.
+
+> The SPIRE Agent handles **SVID rotation automatically** (typically hourly). The `WorkloadApiClient` library manages rotation **in the background** — when your certificate nears expiration, it transparently fetches a new one. **No reload or restart** needed.
+
+When validating **inbound** connections, extract the SPIFFE ID from the client certificate and check it against an **allowlist**.
+
+**Example 9-12. Validating client SPIFFE ID in the MCP server**
+
+```python
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID
+
+ssl_info = request.transport.get_extra_info('ssl_object')
+if not ssl_info:
+    raise PermissionDenied("TLS connection required")
+
+client_cert_der = ssl_info.getpeercert(binary_form=True)   # ❶
+if not client_cert_der:
+    raise PermissionDenied("Client certificate required")
+
+cert = x509.load_der_x509_certificate(client_cert_der)
+san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+spiffe_ids = [
+    name.value for name in san_ext.value
+    if isinstance(name, x509.UniformResourceIdentifier)
+    and name.value.startswith("spiffe://")
+]   # ❷
+
+if not spiffe_ids:
+    raise PermissionDenied("No SPIFFE ID in client certificate")
+
+client_spiffe_id = spiffe_ids[0]
+allowed_ids = ["spiffe://example.com/ns/agents/sa/agent-runtime"]
+if client_spiffe_id not in allowed_ids:   # ❸
+    raise PermissionDenied(f"Unknown SPIFFE ID: {client_spiffe_id}")
+```
+
+- **❶** Extracts the **DER-encoded** client certificate from a TLS connection.
+- **❷** Parses the certificate and extracts SPIFFE IDs from the **SAN** extension.
+- **❸** Compares the full SPIFFE ID URI against the **allowlist**.
+
+> **SPIFFE authenticates workloads (pods/containers), not end users.** For user-level attribution, **combine** SPIFFE for workload auth with user identity in **request headers or JWT claims**: the agent runtime establishes mTLS via its SPIFFE ID while passing user context in an `X-User-ID` header; the MCP server validates the SPIFFE ID to trust the workload, then uses the user ID for authorization and audit logs.
+
+**Benefits and costs:**
+
+- **Eliminates secret sprawl entirely** — no API keys, tokens, or client secrets to manage. SPIRE handles issuance and automatic hourly rotation without restarts.
+- **Service mesh integration** — if you already use a mesh, configure it to use **SPIRE as the CA**, unifying workload identity without separate CAs.
+- **Significant operational setup** — the SPIRE Server is your **root of trust** and critical infrastructure: run it in a dedicated namespace with strict **NetworkPolicies**, restrict RBAC to a small admin team, back up its persistent volume, handle upgrades carefully, and **alert** on unexpected SPIFFE IDs or failed attestation.
+- **Steeper learning curve** than bearer tokens — but you get workload identity that **cannot be exfiltrated** and credentials that rotate automatically, **eliminating credential-theft attacks**.
+
+> **SIDEBAR — MCP Gateways**
+>
+> An alternative to implementing security patterns in **every** MCP server is deploying an **MCP gateway** as a **centralized policy enforcement point**. Gateways act as **reverse proxies** between agent runtimes and MCP servers, enforcing **authentication, authorization, rate limiting, and audit logging** in one place.
+>
+> Several implementations emerged in 2025 (and this is just the beginning):
+>
+> - **Microsoft's MCP Gateway** — session-aware **stateful routing** and Kubernetes lifecycle management with OAuth 2.0 + RBAC.
+> - **IBM's ContextForge** — **federation** across gateways, **virtual server composition** (bundling multiple MCP servers into one logical endpoint), and protocol translation among **stdio, SSE, and HTTP**.
+> - **Envoy AI Gateway** — extends Envoy with an MCP proxy handling **JSON-RPC multiplexing** and Envoy's security extensions.
+> - **Solo.io's agentgateway** — automated MCP server **discovery**, multiplexing tool servers into a single endpoint, and centralized **observability** (metrics, logging, tracing).
+>
+> Gateways centralize SSO integration with IdPs like **Keycloak** and fine-grained access control via policy engines like **OPA** or **Cedar**. **Trade-offs:** operational complexity, added **latency**, and a **single point of failure** (requiring HA with multiple replicas and load balancing). For many MCP servers, multitenant environments, or complex authorization, the benefits outweigh the costs; for smaller deployments, embedding security in the servers or relying on a **service mesh** may be better.
+
+##### Choosing the Right Security Pattern
+
+> **No single pattern fits all scenarios.** The right choice depends on your **security maturity, compliance requirements, existing infrastructure, and operational capacity**. Each pattern — agent impersonation, service account delegation, token exchange, SPIFFE/SPIRE — makes different trade-offs among **simplicity, security depth, and operational overhead**.
+
+In practice, production systems rarely use a single pattern in isolation. **Layering** creates **defense in depth** while preserving flexibility. A common combination:
+
+- **SPIFFE/SPIRE** for workload-to-workload **mTLS**, with **user identity passed in request metadata**. The agent runtime establishes an encrypted, mutually authenticated channel via its SPIFFE ID, including the user's identity in an `X-User-ID` header or an exchanged-token claim. The MCP server validates the SPIFFE ID to **trust the workload**, then extracts the user identity for **authorization and audit**.
+- This gives SPIFFE's benefits (cryptographic workload identity, automatic rotation, theft protection) **while** maintaining per-user attribution.
+
+You can refine authorization further by combining **workload and user identities** in policy decisions. A policy engine like **Open Policy Agent** can enforce: *"allow this request only if the calling workload is `customer-support-mcp` **AND** the user has access to the requested customer record."* This **composite authorization** prevents compromised workloads from accessing arbitrary data and ensures **both** the service and the user must be authorized.
+
+> **External third-party agents** add considerations: **token exchange** requires **IdP federation** so your provider can validate tokens from external organizations; **SPIFFE/SPIRE** requires **trust-bundle federation** between your SPIRE deployment and the external party's. Both work, but federation adds operational complexity that internal-only deployments avoid.
+
+MCP solves connecting agents to external **tools and data**, but production systems face another integration problem: when you have **multiple specialized agents** that must collaborate, **how do they communicate?** Most frameworks invent their own coordination mechanisms — recreating the same fragmentation MCP solved for tools. The **A2A protocol** emerged to standardize this **cross-agent coordination**.
 
 [Back to Contents](#contents)
 
