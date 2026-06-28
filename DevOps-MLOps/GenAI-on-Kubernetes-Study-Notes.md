@@ -540,6 +540,38 @@ The **kubelet** is the Kubernetes **representative on the node**. It communicate
 - **Report the status** of the node and each pod
 - **Run** container **liveness, readiness, and startup probes**
 
+#### Infographic Series — Kubernetes Fundamentals
+
+A seven-part visual recap of the **Kubernetes Concepts** and **Kubernetes Components** primer above.
+
+![Infographics for K8s 1](<assets/Infographics for K8s 1.png>)
+
+**Infographic 1 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 2](<assets/Infographics for K8s 2.png>)
+
+**Infographic 2 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 3](<assets/Infographics for K8s 3.png>)
+
+**Infographic 3 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 4](<assets/Infographics for K8s 4.png>)
+
+**Infographic 4 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 5](<assets/Infographics for K8s 5.png>)
+
+**Infographic 5 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 6](<assets/Infographics for K8s 6.png>)
+
+**Infographic 6 / 7 — Kubernetes fundamentals.**
+
+![Infographics for K8s 7](<assets/Infographics for K8s 7.png>)
+
+**Infographic 7 / 7 — Kubernetes fundamentals.**
+
 [Back to Contents](#contents)
 
 ## Model Servers & Controllers
@@ -11451,6 +11483,10 @@ LangGraph = workflow graph / state machine
 CrewAI = team of agents with roles
 ```
 
+![Infographics for LangChain & LangGraph](<assets/Infographics for LangChain & LangGraph.png>)
+
+**Infographic: LangChain & LangGraph — visual recap.**
+
 ##### Elaboration — Server-Side Runtimes: Llama Stack / OGX vs. Ollama / vLLM
 
 **Server-side agentic runtime** — moves the agent loop into a **separate backend service**; your app calls it over **HTTP/API** instead of owning the full loop in code.
@@ -12736,6 +12772,10 @@ Operational principles that save pain in production:
 - **Start simple** — deploy agents as standard Deployments before introducing service meshes or custom operators. **Layer complexity only when you hit concrete limitations**, not because the architecture looks elegant on a whiteboard.
 
 > The protocols may change, but the need for **secure communication, standardized coordination, and persistent state** will remain constant.
+
+![Infographics for MCP & A2A](<assets/Infographics for MCP & A2A.png>)
+
+**Infographic: MCP & A2A — visual recap of the two agent-communication protocols.**
 
 [Back to Contents](#contents)
 
