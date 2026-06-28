@@ -11413,6 +11413,140 @@ Building an agentic workflow from scratch is hard, so **frameworks and runtimes*
 
 The practical distinction is **where the orchestrator runs**. **Server-side** runtimes hide the loop behind a network API (simpler clients, centralized scaling and governance); **client-side** frameworks keep logic local (maximum customization and composability). You can **mix both** — e.g., use LangChain in your app while targeting a Llama Stack backend for inference and server-side tools, or keep tools local as client-executed functions even when planning happens server-side.
 
+##### Elaboration — What "Client-Side" Really Means (LangChain / LangGraph / CrewAI)
+
+> Deeper personal notes on the **client-side vs. server-side** distinction above — clarifying a common point of confusion.
+
+**"Client-side framework" does not mean browser/frontend.**
+
+- In this context, **client-side means application-embedded**.
+- LangChain, LangGraph, and CrewAI are usually **imported into your own app/backend service**.
+- Your backend may run in Kubernetes, but the **agent loop still lives inside your service code**.
+- So "client-side" really means: **the client application owns the orchestration loop**.
+
+**LangChain / LangGraph** — mostly **client-side / application-embedded** orchestration frameworks.
+
+- You install/import them into your Python/JS service.
+- Your service controls: **LLM calls, tool calls, state, retries, stopping conditions, workflow logic**.
+- In Kubernetes this usually means:
+
+```text
+Pod A: your backend service
+  └─ LangChain/LangGraph code runs inside it
+```
+
+**CrewAI** — also mostly an **application-embedded** framework; main abstraction is **teams of role-based agents**.
+
+```text
+Researcher agent → Analyst agent → Writer agent
+```
+
+**LangGraph vs. CrewAI:**
+
+- **LangGraph** — a **graph / state-machine** style framework. Best for **explicit control, branching, durable workflows, human-in-the-loop, retries, and state**.
+- **CrewAI** — a **multi-agent / team** abstraction. Best for **role-based collaboration, delegation, and agent specialization**.
+
+```text
+LangGraph = workflow graph / state machine
+CrewAI = team of agents with roles
+```
+
+##### Elaboration — Server-Side Runtimes: Llama Stack / OGX vs. Ollama / vLLM
+
+**Server-side agentic runtime** — moves the agent loop into a **separate backend service**; your app calls it over **HTTP/API** instead of owning the full loop in code.
+
+```text
+User / frontend
+  ↓
+Your backend service
+  ↓
+Agent runtime service
+  ├─ manages agent loop
+  ├─ calls model
+  ├─ calls tools
+  ├─ manages state
+  └─ returns result
+```
+
+**Llama Stack / OGX** *(Llama Stack has been repositioned/renamed as **OGX**)*:
+
+- Best understood as a **server-side agentic runtime / API server** — **not** just a library you import like LangChain.
+- Can run as a **separate service**, including in Kubernetes.
+
+```text
+Your backend service
+  ↓ HTTP
+Llama Stack / OGX runtime
+  ↓
+Ollama / vLLM / cloud model / tools / RAG / MCP
+```
+
+**Is Llama Stack / OGX on-prem?** Yes — it can be an **open-source / self-hosted / on-prem** runtime, depending on configuration. Fully on-prem keeps all pieces internal:
+
+```text
+Your backend
+  → OGX / Llama Stack
+  → vLLM or Ollama
+  → local model weights
+  → local vector DB
+  → internal tools / MCP servers
+```
+
+> **Not** fully on-prem if OGX routes to **OpenAI, Anthropic, Bedrock, Together**, or another cloud model provider.
+
+**Is OGX like Ollama?** Similar in that **both deploy as backend services/pods**, but they operate at **different layers**:
+
+- **Ollama / vLLM** — mainly **model-serving / inference** layers: `Your app → Ollama/vLLM → model`.
+- **OGX / Llama Stack** — a higher-level **agent runtime**: `Your app → OGX/Llama Stack → Ollama/vLLM/model/tools/RAG`.
+- So **OGX can sit above Ollama or vLLM**.
+
+**Kubernetes division** — the architecture can split into separate pods/services:
+
+```text
+Pod A: business backend
+Pod B: OGX / Llama Stack runtime
+Pod C: Ollama or vLLM inference server
+Pod D: MCP/tool service
+Pod E: vector database
+```
+
+- Your backend calls the **OGX pod**; OGX handles agentic orchestration and calls models/tools/RAG systems.
+
+**Is OGX downloadable/containerized or just importable?** Primarily a **deployable runtime/server**, not merely an importable framework:
+
+- Install and run as a **server process**, or **containerize** and deploy as a Kubernetes service.
+- It may provide SDK/client pieces, but those are mainly for **calling the runtime**.
+
+**Why use OGX if LangChain/LangGraph already give full control?** You don't necessarily need it:
+
+- **LangGraph / LangChain** — better when orchestration is **highly custom** and belongs **inside app logic**.
+- **OGX** — useful when agentic capabilities become **shared platform infrastructure**, centralizing: **model-provider abstraction, tool/MCP access, RAG/files/vector APIs, observability, governance, policy enforcement, shared runtime behavior**.
+
+```text
+LangGraph = maximum custom code control
+OGX = shared runtime / platform standardization
+```
+
+**Can LangGraph and OGX be used together?** Yes — use LangGraph in your app while calling OGX underneath:
+
+```text
+Your app with LangGraph
+  ↓
+OGX / Llama Stack
+  ↓
+vLLM / Ollama / tools / vector DB
+```
+
+…or keep your backend thin and let OGX handle more of the agent loop:
+
+```text
+Your thin backend
+  ↓
+OGX agent runtime
+  ↓
+models + tools + RAG
+```
+
 #### OpenAI's Responses API
 
 OpenAI's **Responses API** is designed for agentic workflows in a **single, stateful API call**, adding features that simplify agent development: **automatic conversation state** across turns, **structured outputs**, **integrated tool usage**, **streaming** of intermediate tool events, and **built-in error handling**.
@@ -11430,6 +11564,50 @@ The takeaway is **portability**: standardize client code on the Responses API wh
 **Human-in-the-loop** fits naturally: **pause** on model-requested actions to ask for approval, collect additional inputs, or escalate to a reviewer before resuming, and enforce **approval gates** for sensitive tools so the model can't proceed until you confirm. With remote providers via MCP, the API can surface explicit **approval requests**, giving an **auditable checkpoint** before any side effect happens.
 
 In short, Responses provides **agentic reasoning as a service** while you control **which tools exist, which calls execute on your side, and when to require approval** — and the growing set of compatible backends makes it a pragmatic choice for **portable agent architectures**.
+
+##### Elaboration — Responses API: Product vs. Contract, and Self-Hosted Options
+
+**OpenAI Responses API** — itself a **paid, proprietary, hosted cloud API**; **not** something you download and run fully on-prem from OpenAI. It provides a **server-side agentic API** where OpenAI's service manages:
+
+- **stateful turns**
+- **tool usage**
+- **structured outputs**
+- **streaming tool events**
+- **built-in orchestration**
+- **human-in-the-loop-style pauses/resumes**
+
+**Responses API as a contract** — separate the **OpenAI product** from the **API shape/contract**:
+
+- The OpenAI Responses API is **proprietary cloud**.
+- But the **`/responses`-style interface** is becoming a common **compatibility target** that other systems can implement.
+
+**Responses-compatible self-hosted options** — possible on-prem implementations include **OGX / Llama Stack**, a **vLLM Responses-compatible endpoint**, and the **LiteLLM proxy** (depending on routing).
+
+Fully on-prem:
+
+```text
+Your backend
+  → OGX or vLLM in Kubernetes
+  → local model weights
+  → local vector DB
+  → internal tools/MCP servers
+```
+
+Not fully on-prem:
+
+```text
+Your backend
+  → OGX or LiteLLM
+  → OpenAI / Anthropic / Bedrock / other cloud model
+```
+
+> **Main takeaway**
+>
+> - **LangChain / LangGraph / CrewAI** — agent orchestration lives **inside your application code**.
+> - **OGX / Llama Stack** — agent orchestration can live in a **separate self-hosted runtime service**.
+> - **Ollama / vLLM** — the **model inference layer**.
+> - **OpenAI Responses API** — a **paid hosted agentic runtime** from OpenAI.
+> - **Responses-compatible runtimes** — give similar **API portability** while running **on-prem**.
 
 #### Agents on Kubernetes
 
