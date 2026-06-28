@@ -11810,6 +11810,79 @@ Scaling and placement considerations:
 - **Co-location** — if an MCP server is tightly coupled to the agent's data (e.g., a filesystem tool operating on the same files the agent sees), deploy it as a **sidecar** in the agent's pod for **low-latency local calls** and **shared storage volumes**. The trade-off is **resource duplication** and **coupled lifecycles** (a sidecar per agent pod vs. one shared service).
 - **Discovery** — with many MCP servers, managing endpoint URLs gets cumbersome. Options include a **service registry** or **naming conventions**. In practice, many teams **group related tools** into a single MCP server to reduce the number of services — but this works only so far, since the number of functions an agent can consider is **limited**. More advanced techniques are emerging: **RAG-based similarity search** for appropriate tools, or **programmatic tool discovery** where agents write code to navigate a filesystem of tool definitions and load only what a task needs.
 
+##### Elaboration — One MCP Server Is Not Necessarily One Tool
+
+> Deeper personal note clarifying the **server ↔ tool cardinality**, since "MCP server" is easy to misread as "one server per tool."
+
+An **MCP server is not necessarily one server per tool.** The mental model is:
+
+```text
+Agent / MCP client → MCP server → one or more tools
+```
+
+An MCP server is a **program/service that exposes capabilities** to MCP clients. Those capabilities can include **tools**, **resources**, and **prompts**; **tools** are callable functions like `weather_lookup`, `send_email`, `query_postgres`, etc. ([build an MCP server](https://modelcontextprotocol.io/docs/develop/build-server)). Three common patterns:
+
+**1. One MCP server for one tool** — use when the tool needs special **isolation, credentials, scaling, or deployment**.
+
+```text
+postgres-mcp-server
+  └── query_postgres
+```
+
+**2. One MCP server for a related group of tools** — very common; the tools share the same **domain, permissions, auth model, and runtime**.
+
+```text
+email-mcp-server
+  ├── search_email
+  ├── read_email
+  ├── send_email
+  └── create_draft
+```
+
+**3. One MCP server for all tools in an application** — fine for a **smaller application**, especially when all tools belong to the same **product boundary** and share the same **security model**.
+
+```text
+my-app-mcp-server
+  ├── get_customer
+  ├── update_order
+  ├── issue_refund
+  ├── search_docs
+  └── create_ticket
+```
+
+> The important point: **MCP lets a server expose multiple tools**, and each tool is described with metadata (a **name** and **schema**) so the model can decide how to call it. ([Tools — MCP spec](https://modelcontextprotocol.io/specification/2025-11-25/server/tools))
+
+In a real system you choose the **boundary** based on engineering concerns:
+
+```text
+Separate MCP servers when:
+- different security permissions
+- different backend systems
+- different scaling needs
+- different teams own them
+- failure isolation matters
+- one tool group is local and another is remote
+
+Group tools together when:
+- they belong to the same domain
+- they share credentials/auth
+- they are deployed together
+- the tool list is still manageable
+```
+
+In architecture diagrams, the blue **"Tools"** box can therefore mean **either** several tools inside one server **or** multiple backend services hidden behind one MCP server:
+
+```text
+MCP server
+  ├── Tool 1
+  ├── Tool 2
+  └── Tool 3
+```
+
+The official architecture also allows an AI host to connect to **multiple MCP servers**, typically with **one MCP client connection per server** ([architecture overview](https://modelcontextprotocol.io/docs/learn/architecture)). So the most accurate phrasing is:
+
+> An MCP server is usually dedicated to a **tool domain or backend capability** — **not** necessarily to a single tool, and **not** necessarily to the whole application. It exposes **one or more tools** through a standard protocol.
+
 #### MCP Security
 
 When an AI agent calls an MCP tool that reads customer records, posts to Slack, or queries a database, a fundamental question surfaces: **whose identity should the upstream API see?** The end user who triggered the agent, the agent's own service account, or something else?
