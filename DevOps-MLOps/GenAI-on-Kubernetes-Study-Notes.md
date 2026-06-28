@@ -224,7 +224,12 @@
      - [Multiagent Systems](#multiagent-systems)
      - [Ambient Agents](#ambient-agents)
    - [Lessons Learned](#lessons-learned-2)
-12. [High-Value Recall Checklist](#high-value-recall-checklist)
+12. [Running Agentic Applications in Production](#running-agentic-applications-in-production)
+    - [The Model Context Protocol](#the-model-context-protocol)
+      - [MCP Security](#mcp-security)
+        - [Agent Impersonation (Token Passthrough)](#agent-impersonation-token-passthrough)
+        - [Service Account Delegation](#service-account-delegation)
+13. [High-Value Recall Checklist](#high-value-recall-checklist)
 
 ## Purpose
 
@@ -11537,6 +11542,454 @@ This chapter explored how to **architect complete AI-driven applications** on Ku
 - **Agentic workflows add explicit control loops** around models and make **tools first-class**. **Human-in-the-loop approval gates** for risky actions are **essential, not afterthoughts**. Capture **rationale and artifacts**, make every step **auditable**, and improve **portability** with standards like **MCP**.
 
 > With these patterns and boundaries in hand, the **next chapter** turns these high-level designs into **production guidance** — standing up agentic applications on Kubernetes and tackling trickier challenges like **securing MCP and A2A communications**.
+
+[Back to Contents](#contents)
+
+## Running Agentic Applications in Production
+
+In [AI-Driven Applications](#ai-driven-applications) (Chapter 8 in the book) we explored **architectural patterns** for AI-driven applications and introduced agentic workflows at the conceptual level. This chapter shifts from **architecture** to the **practical challenges of running these systems in production**.
+
+> Because the AI landscape in 2026 still evolves so rapidly, technical details can become **obsolete within months**. Rather than cataloging frameworks that may vanish, this chapter concentrates on **operational patterns that endure** across tools and standards — guidance you can apply **regardless of the framework** you choose.
+
+Three core challenges for running agentic applications on Kubernetes:
+
+- **Security** — agents interact with external tools and data sources, often **on behalf of users**. You need robust **identity management**, **authentication patterns**, and **authorization controls** that preserve user context while letting agents operate autonomously.
+- **Agent coordination** — multiagent systems require **standardized communication protocols**. Agents must **discover each other's capabilities**, **delegate tasks**, and **track progress** across service boundaries.
+- **State management** — unlike stateless REST APIs, agents maintain **conversational context** across multiple turns. Production deployments require **persistent storage patterns** that survive pod restarts and support horizontal scaling.
+
+Two protocols emerged as **de facto standards in late 2024**:
+
+- **Model Context Protocol (MCP)** — standardizes **agent-to-tool** communication.
+- **Agent-to-Agent (A2A)** — standardizes **inter-agent coordination**.
+
+> These are **not** theoretical specs from an official standards body; nevertheless, industry leaders like **OpenAI, Google, Microsoft, AWS**, and the open source community have converged on them. The **Agentic AI Foundation** emerged in 2025 to provide a neutral home for these standardization efforts.
+
+> **SIDEBAR — The Agentic AI Foundation**
+>
+> The **Agentic AI Foundation (AAIF)** is a **Linux Foundation** project launched in **2025** to develop open standards for agentic AI systems. The eight founding platinum members are **AWS, Anthropic, Block, Bloomberg, Cloudflare, Google, Microsoft, and OpenAI**.
+>
+> Its stated vision is to provide *"a neutral, open foundation to ensure this critical capability evolves transparently, collaboratively, and in ways that advance the adoption of leading open source AI projects."*
+>
+> It launched with **three initial projects**:
+>
+> - **Model Context Protocol (MCP)** — an open protocol defining how LLM applications connect to external data sources and tools. Agents discover available functions through **JSON schema** definitions and invoke them using a standard **JSON-RPC** message format.
+> - **goose** — an open source AI agent that can install packages, run shell commands, modify files, and execute tests. Unlike code-completion tools that *suggest* edits, goose performs these operations **directly** and works with **any LLM backend**.
+> - **AGENTS.md** — a file-format spec for documenting how AI coding agents should interact with a codebase (directory structure, build processes, testing conventions, preferred workflows).
+>
+> The foundation operates under **Linux Foundation governance**: technical decisions go through **steering committees** rather than any single company. Though only months old at the time of writing, the participation of **eight major technology companies** suggests it will play a significant role in how agentic AI standards develop.
+
+[Back to Contents](#contents)
+
+### The Model Context Protocol
+
+The **Model Context Protocol (MCP)** is an open protocol that lets AI-driven agents connect with **external tools, data sources, and services** in a consistent, structured way. Introduced by **Anthropic in late 2024** as a *"USB-C for AI applications,"* MCP quickly became the **de facto standard** for agent-tool interoperability.
+
+It solves the integration pain points of early tool-calling approaches:
+
+- **Before MCP** — frameworks used **ad hoc API calls**, proprietary plug-ins, and **M × N** integrations that did not scale; passing context between tools was **brittle and error-prone**.
+- **With MCP** — drawing inspiration from the **Language Server Protocol (LSP)**, MCP replaces the web of custom integrations with a clean **M + N** architecture: any MCP-compatible **agent** can invoke any MCP-exposed **tool**.
+
+Tools are described with **names, descriptions, and input schemas** in metadata, so the LLM can decide when to use them. Think of an **MCP server** as a collection of functions — similar to how an OS provides **system calls** or a language offers a **standard library**.
+
+![Unified protocol to simplify access to backend systems](<assets/Unified protocol to simplify access to backend systems.png>)
+
+**Figure 9-1. Unified protocol to simplify access to backend systems**
+
+> In essence, MCP provides a **common language** for AI agents and tools, letting each evolve **independently** while remaining interoperable.
+
+A typical interaction proceeds as follows: an AI assistant receives a user query, recognizes it needs external information, and **queries an MCP server for its tool list**. It selects and **invokes** an appropriate tool. The MCP server **executes the action** and **returns the result**, which the agent uses to compose its final answer.
+
+![MCP usage in an agentic loop](<assets/MCP usage in an agentic loop.png>)
+
+**Figure 9-2. MCP usage in an agentic loop**
+
+In this flow, the agent's LLM constructs a **sequence of tool calls** by selecting tools and supplying arguments, guided by the provided descriptions and metadata.
+
+> **Example:** if the user asks *"What's the weather in Paris, and could you email me the forecast?"*, the agent might call a `weather_lookup` tool on a weather MCP server with `"Paris"`, then call an `email_send` tool on an email MCP server with the forecast data. MCP ensures these calls are made in a **structured, traceable** way rather than via brittle prompt text.
+
+#### Running MCP Servers on Kubernetes
+
+An **MCP server** is essentially a **microservice** exposing one or more tools to AI agents via the MCP protocol. On Kubernetes you typically run each MCP server as a **Deployment**, containerized with the necessary runtime.
+
+> **Example:** to offer a PostgreSQL query tool to your agents, deploy the official **Postgres MCP server** container and configure it with the database connection string as an **environment variable or a Secret**.
+
+Scaling and placement considerations:
+
+- **Horizontal scaling** — each MCP server can scale behind a Kubernetes **Service**. While MCP maintains session state for ongoing conversations, most implementations **externalize this state** to databases or caches, making individual instances **stateless for request handling**. Define **resource requests and limits**, and use a **Horizontal Pod Autoscaler (HPA)** for variable load.
+- **Co-location** — if an MCP server is tightly coupled to the agent's data (e.g., a filesystem tool operating on the same files the agent sees), deploy it as a **sidecar** in the agent's pod for **low-latency local calls** and **shared storage volumes**. The trade-off is **resource duplication** and **coupled lifecycles** (a sidecar per agent pod vs. one shared service).
+- **Discovery** — with many MCP servers, managing endpoint URLs gets cumbersome. Options include a **service registry** or **naming conventions**. In practice, many teams **group related tools** into a single MCP server to reduce the number of services — but this works only so far, since the number of functions an agent can consider is **limited**. More advanced techniques are emerging: **RAG-based similarity search** for appropriate tools, or **programmatic tool discovery** where agents write code to navigate a filesystem of tool definitions and load only what a task needs.
+
+#### MCP Security
+
+When an AI agent calls an MCP tool that reads customer records, posts to Slack, or queries a database, a fundamental question surfaces: **whose identity should the upstream API see?** The end user who triggered the agent, the agent's own service account, or something else?
+
+In a traditional microservices architecture, service-to-service authorization is well understood — **mutual TLS** with a service mesh, **OAuth2 client credentials**, or **API keys** scoped to services. Identity propagation patterns like **token relay** or the **ambassador pattern** thread user context through multiple hops. **Agentic architectures add two challenges:**
+
+- **Nondeterminism** — an agent's behavior is shaped by the **LLM's reasoning**, so you can't predict exactly which tools it will call or in what order. Traditional policies like *"Service A can call endpoint B"* don't translate cleanly when Service A is an agent that might call **10 different tools** based on a prompt.
+- **Identity ambiguity** — when an agent calls a tool on behalf of a user, should the upstream API see the **user's** identity (per-user permissions and quotas) or the **agent's** identity (agent-level tracking and rate limits)? The answer depends on compliance requirements, but the question itself is **harder** than in traditional flows.
+
+These force **explicit choices** about identity propagation that were implicit before. The four approaches below represent different points on the trade-off curve among **security**, **operational simplicity**, and **integration with existing infrastructure**:
+
+| Approach | What it does |
+| --- | --- |
+| **Agent Impersonation (Token Passthrough)** | The agent forwards the **user's access token** to MCP servers and upstream APIs, preserving user identity for RBAC and audit logging. |
+| **Service Account Delegation** | Kubernetes **ServiceAccount tokens** authenticate communication between agent, MCP server, and upstream APIs within a cluster. |
+| **Delegated Identity via OAuth2 Token Exchange** | Token exchange (**RFC 8693**) creates credentials carrying **both** user and agent identity — combining attribution with service-level visibility. |
+| **Mutual TLS with SPIFFE/SPIRE** | Cryptographically bound **workload identities** and **short-lived certificates** enable zero-trust auth without stealable tokens. |
+
+##### Agent Impersonation (Token Passthrough)
+
+To propagate user identity, the agent **represents (impersonates) the user** for MCP interactions. The advantage: it **preserves your existing RBAC** without modification. Audit logs naturally capture **which end user** accessed which data, satisfying compliance in one stroke, and you can enforce **per-user quotas and rate limits**.
+
+In this pattern, the MCP server receives the **end user's credentials** from the agent runtime and uses them directly when calling upstream APIs — the upstream service sees the request as coming from the **user**, not the agent. This is conceptually similar to the **OAuth2 token passthrough** pattern: the agent runtime passes the user's access token to the MCP server, which includes it in the `Authorization` header when calling upstream.
+
+> **Worked example — Nurse Alice.** Nurse Alice queries patient records through a medical assistant agent. She authenticates to the agent runtime via **OpenID Connect**, obtaining an access token. When she asks *"Show me lab results for patient 4711,"* the agent runtime **forwards Alice's token** to the MCP server with the tool request. The MCP server calls the hospital's patient-records API with **Alice's token** in the `Authorization` header. The API enforces its existing **user-level permissions** (is *this nurse* allowed to read patient 4711?), and the audit log shows that **Nurse Alice** accessed patient 4711's lab results — not just *"the agent."*
+
+Operational trade-offs:
+
+- **Token lifetimes** — user access tokens typically expire within **minutes to hours**; if the agent's task outlives the token, calls fail unless you implement **refresh logic**.
+- **Scope explosion** — the user's token must be valid for **every** upstream API the agent might call, often forcing **broad OAuth scopes** that violate least privilege. A patient assistant that might call the lab, pharmacy, and scheduling APIs needs the nurse's token to carry scopes for **all three**, even if a query touches just one.
+- **Credential theft risk** — if the MCP server is compromised, an attacker can **exfiltrate and replay** user tokens. Defense requires **short token lifetimes**, strong **mTLS** between services, and **runtime security** within the pod.
+
+On Kubernetes, this pattern often uses an **ingress controller** that authenticates the user and injects the access token into a header — e.g., **Traefik**, **NGINX with oauth2-proxy**, or **Istio with `RequestAuthentication`** handling token passing at the edge.
+
+![Agent impersonation flow showing user token propagation and validation](<assets/Agent impersonation flow showing user token propagation and validation.png>)
+
+**Figure 9-3. Agent impersonation flow showing user token propagation and validation**
+
+> Even though you pass the user token for authorization, still use **mutual TLS** (directly or via a service mesh like **Istio** or **Linkerd**) to **encrypt** traffic between the MCP server and upstream APIs and to **verify** traffic comes from authorized workloads.
+
+##### Service Account Delegation
+
+Impersonation works well when **user-level permissions** matter and your identity infrastructure supports it. But when **both the agent and the upstream services run in the same cluster** and **agent-level attribution is sufficient**, a simpler alternative exists: rely on **Kubernetes-native workload identity** instead of external token servers — fewer moving parts, less operational overhead.
+
+Every pod already has a **ServiceAccount** that can carry permissions through standard **RBAC**. This pattern uses these built-in primitives to establish trust among the agent runtime, the MCP server, and upstream APIs **without a separate identity provider**.
+
+###### ServiceAccounts as Workload Identity
+
+A **ServiceAccount** is a **namespaced identity for pods**. When you create a pod, Kubernetes assigns it a ServiceAccount — one you specify or the namespace `default`. This identity is tied to a **workload, not a human**, making it ideal for service-to-service authentication.
+
+Every ServiceAccount has an associated **token** that Kubernetes automatically mounts into the pod at:
+
+```text
+/var/run/secrets/kubernetes.io/serviceaccount/token
+```
+
+This is a signed **JWT** containing claims identifying the ServiceAccount (name, namespace, unique ID). The **API server signs** these tokens with its private key, and any component that trusts the API server can validate them. You assign a ServiceAccount to a pod via the `serviceAccountName` field; Kubernetes injects the token as a file and keeps it **refreshed automatically**.
+
+> **That token refresh is critical.** ServiceAccount tokens are **not static** — Kubernetes rotates them periodically. Any code that reads the token must do so **on every use** (read from the filesystem each time) rather than caching it in memory.
+
+ServiceAccount tokens can be used in **two contexts**:
+
+- **Inside the cluster** — first-class citizens the API server natively understands. When a pod calls the Kubernetes API with its token in the `Authorization` header, the API server validates the signature, extracts the identity, and checks **RBAC**.
+- **Outside the cluster** — valid if the API server exposes an **OIDC discovery endpoint** (most managed services — **GKE, EKS, AKS** — enable this by default). The token is a valid JWT verifiable by any service with the cluster's **OIDC public keys**. The trade-off is added complexity: configure the external service to **trust your cluster's OIDC issuer**, retrieve signing keys, and handle validation *(see [External Validation via OIDC/JWT](#external-validation-via-oidcjwt))*.
+
+###### Server Identity Versus Agent Identity
+
+ServiceAccount delegation splits into two flows, depending on **whose identity the upstream API sees**. Both use ServiceAccount tokens, but differ in **which** token reaches the upstream API:
+
+- **Server identity** — the MCP server uses its **own** ServiceAccount token when calling upstream APIs. The agent runtime's identity does **not** propagate. Simpler; works well when all agent runtimes using a given MCP server have **uniform access** to upstream resources.
+- **Agent identity** — the agent runtime sends **its own** ServiceAccount token to the MCP server, which **relays** it to the upstream API. The upstream enforces permissions based on the **agent runtime's** identity, allowing **different agent runtimes** to have different access levels even when calling the same MCP server.
+
+![Server identity versus agent identity flows](<assets/Server identity versus agent identity flows.png>)
+
+**Figure 9-4. Server identity versus agent identity flows**
+
+> The key decision is **granularity**. Same permissions for every agent runtime on a given MCP server → **server identity**. Different runtimes need different permission levels → **agent identity**.
+
+###### ServiceAccount Usage
+
+To grant ServiceAccounts appropriate permissions, define **RBAC rules**. For agent security, use **use-case-specific custom API groups and resources** rather than standard Kubernetes resources.
+
+> **Critical distinction:** protecting access to the Kubernetes **`Service` resource** does **not** protect access to the **service's endpoints**. A ServiceAccount with `get` on a Service can only read the **service metadata**, not call the actual service. Instead, define **application-specific resources** representing application-level permissions.
+
+**Example 9-1. ServiceAccount with custom resource RBAC**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: customer-support-mcp
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: data-platform
+  name: customer-data-reader
+rules:
+- apiGroups: ["agents.example.com"]   # ❶
+  resources: ["customer-queries"]     # ❷
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: customer-support-mcp-binding
+  namespace: data-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: customer-data-reader
+subjects:
+- kind: ServiceAccount
+  name: customer-support-mcp
+  namespace: agents   # ❸
+```
+
+- **❶** Use an **agent-specific API group** for your application domain.
+- **❷** Define **custom resource names** representing application-level permissions, **not** Kubernetes resources.
+- **❸** Bind the ServiceAccount from the `agents` namespace to this Role that lives in the `data-platform` namespace.
+
+> Application-specific resources like `customer-queries` (or `medical-records`, `support-tickets`, etc.) **do not** need to be registered as **CRDs**. They exist **only in RBAC rules** and are used purely for authorization checks via **`SubjectAccessReview`** — giving fine-grained, application-specific permissions **without** the overhead of managing CRDs.
+
+Kubernetes mounts the ServiceAccount token at a well-known path. Read it **correctly** to avoid using expired tokens — the function below reads the token **each time it's called**.
+
+**Example 9-2. Reading the ServiceAccount token correctly**
+
+```python
+from pathlib import Path
+
+def get_serviceaccount_token() -> str:
+    """Read the current ServiceAccount token from the filesystem."""
+    token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    return token_path.read_text().strip()   # ❶
+```
+
+- **❶** Read the token on **every call** to ensure it is current — do **not** cache in memory, as Kubernetes refreshes this token automatically on the filesystem.
+
+###### Making Authenticated Requests
+
+In **server identity**, the MCP server uses its **own** ServiceAccount token when calling upstream APIs. For **agent identity**, the agent sends its ServiceAccount token, and after validation the MCP **copies** that agent token into the `Authorization` header when calling any upstream API.
+
+**Example 9-3. MCP server calling upstream with its own token**
+
+```python
+import httpx
+from pathlib import Path
+
+async def call_upstream_with_service_token(
+    endpoint: str,
+    payload: dict,
+    user_id: str | None = None
+) -> dict:
+    """Call upstream API with the MCP server's ServiceAccount token."""
+    sa_token = get_serviceaccount_token()   # ❶
+
+    headers = {
+        "Authorization": f"Bearer {sa_token}",   # ❷
+        "Content-Type": "application/json"
+    }
+
+    if user_id:
+        payload["_audit_user_id"] = user_id   # ❸
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+```
+
+- **❶** Read the ServiceAccount token **fresh** from the filesystem (the function from Example 9-2).
+- **❷** Include the token as a **Bearer token** in the `Authorization` header.
+- **❸** Optionally include the **end user's ID** in the payload for audit purposes.
+
+> The upstream API sees the **MCP server's identity** and enforces permissions accordingly. To track **which end user** triggered the request, include it in the payload or a custom header like `X-User-ID`. Simple and low-overhead, but **all** agent runtimes using this MCP server get the **same** level of access.
+
+###### Authentication via Token Validation
+
+When an MCP server receives a ServiceAccount token from an agent runtime (under **agent identity**), it must **validate** that token before trusting it — and so must any upstream API receiving a request from an MCP server. Kubernetes provides the **`TokenReview` API** for this: it takes a token and returns whether it's **valid**, along with the **identity** it represents.
+
+**Example 9-4. Validating agent tokens with TokenReview**
+
+```python
+import httpx
+from kubernetes import client, config
+
+config.load_incluster_config()   # ❶
+auth_v1 = client.AuthenticationV1Api()
+
+async def validate_agent_runtime_token(token: str) -> dict:
+    """Validate agent runtime token using Kubernetes TokenReview API."""
+    token_review = client.V1TokenReview(
+        spec=client.V1TokenReviewSpec(token=token)   # ❷
+    )
+
+    result = auth_v1.create_token_review(token_review)   # ❸
+
+    if not result.status.authenticated:   # ❹
+        raise ValueError("Token validation failed: not authenticated")
+
+    username = result.status.user.username   # ❺
+
+    if not username.startswith("system:serviceaccount:agents:"):   # ❻
+        raise ValueError(f"Token from unauthorized namespace: {username}")
+
+    return {
+        "username": username,
+        "uid": result.status.user.uid,
+        "groups": result.status.user.groups
+    }
+```
+
+- **❶** Load the Kubernetes configuration from the in-cluster service account.
+- **❷** Create a `TokenReview` object with the token to validate.
+- **❸** Submit it to the API server — a **synchronous** call that populates the `status` section.
+- **❹** Check the token is **authenticated** (valid signature and not expired).
+- **❺** Extract the ServiceAccount username in the format `system:serviceaccount:namespace:name`.
+- **❻** Enforce an **allowlist** policy: accept tokens only from the `agents` namespace.
+
+> This validation is **critical** — by calling `TokenReview`, the MCP server confirms the **Kubernetes API server issued and signed** the token. The allowlist check is a simple **namespace-based filter** for initial access control, preventing pods from unrelated namespaces from calling your tools. For fine-grained authorization, use **`SubjectAccessReview`** (next).
+>
+> Token validation adds small **latency**; you can **cache** validation results keyed by the token's **hash** with a short **TTL** — but ensure the cache respects token expiration.
+
+###### Authorization with SubjectAccessReview
+
+Validating a token proves **identity**, but not whether that identity has **permission** for a specific action. Kubernetes provides the **`SubjectAccessReview` API**, which asks the API server: *"Can this ServiceAccount perform this action on this resource?"* It respects all **RBAC** policies, giving a definitive answer based on the cluster's current state.
+
+**Example 9-5. Checking permissions with SubjectAccessReview**
+
+```python
+from kubernetes import client
+
+authz_v1 = client.AuthorizationV1Api()
+
+async def check_agent_permission(
+    username: str,
+    namespace: str,
+    api_group: str,
+    resource: str,
+    verb: str
+) -> bool:
+    """Check if a ServiceAccount has permission to perform an action."""
+    sar = client.V1SubjectAccessReview(
+        spec=client.V1SubjectAccessReviewSpec(
+            user=username,   # ❶
+            resource_attributes=client.V1ResourceAttributes(
+                namespace=namespace,
+                group=api_group,   # ❷
+                resource=resource,   # ❸
+                verb=verb,   # ❹
+            )
+        )
+    )
+
+    result = authz_v1.create_subject_access_review(sar)   # ❺
+    return result.status.allowed
+```
+
+- **❶** The ServiceAccount username from `TokenReview`, e.g., `system:serviceaccount:agents:agent-runtime`.
+- **❷** The API group for custom resources, e.g., `agents.example.com`.
+- **❸** The resource type, e.g., `customer-queries`.
+- **❹** The action: `get`, `list`, `create`, `update`, `delete`, etc.
+- **❺** Submit the `SubjectAccessReview` to the API server.
+
+> This lets you leverage the Kubernetes RBAC from Example 9-1 for **application-level permissions** without building a separate authorization system. The custom resources you check against (`customer-queries`, `medical-records`, …) need **not** exist as CRDs — they are **virtual resources** used purely for authorization decisions.
+
+###### External Validation via OIDC/JWT
+
+While the common case is **in-cluster** usage, sometimes you must validate ServiceAccount tokens **outside** the cluster — e.g., calling a cloud-provider API that supports **OIDC federation**, or a hybrid architecture where some services run outside Kubernetes but must trust cluster identities.
+
+Kubernetes can expose ServiceAccount tokens as **OIDC-compliant JWTs** that any OIDC-aware service can validate. This requires the API server to be configured with an **OIDC issuer URL** (most managed services enable this by default). The API server exposes a discovery endpoint at:
+
+```text
+<cluster-url>/.well-known/openid-configuration
+```
+
+This publishes the cluster's **OIDC issuer URL** and the location of the **JWKS** (JSON Web Key Set) used to sign tokens. An external service retrieves the JWKS, verifies the token's **signature**, and validates standard JWT claims like **expiration** and **audience**.
+
+**Example 9-6. Validating ServiceAccount tokens externally via OIDC**
+
+```python
+import jwt
+import httpx
+
+async def validate_sa_token_externally(
+    token: str,
+    cluster_issuer: str,
+    expected_audience: str
+) -> dict:
+    """Validate a Kubernetes ServiceAccount token using OIDC discovery."""
+    discovery_url = f"{cluster_issuer}/.well-known/openid-configuration"   # ❶
+
+    async with httpx.AsyncClient() as client:
+        discovery_resp = await client.get(discovery_url)
+        discovery_resp.raise_for_status()
+        discovery = discovery_resp.json()
+
+        jwks_uri = discovery["jwks_uri"]   # ❷
+        jwks_resp = await client.get(jwks_uri)
+        jwks_resp.raise_for_status()
+        jwks = jwks_resp.json()
+
+    signing_key = jwt.PyJWKClient(jwks_uri).get_signing_key_from_jwt(token)   # ❸
+
+    claims = jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=expected_audience,   # ❹
+        issuer=cluster_issuer
+    )
+
+    return claims   # ❺
+```
+
+- **❶** Discover the OIDC configuration endpoint from the cluster's issuer URL.
+- **❷** Retrieve the **JWKS** containing the public keys used to sign tokens.
+- **❸** Extract the correct **signing key** based on the token's key-ID header.
+- **❹** Validate the token's **audience** claim to ensure it's intended for your service.
+- **❺** Return the validated **claims**, including the ServiceAccount identity.
+
+> For this to work, the cluster must include an **audience claim** in the tokens it creates. By default, a cluster uses its own **issuer URL** (set via `--service-account-issuer`) as the audience. Override the default with a comma-separated list via **`--api-audiences`**.
+
+**Example 9-7. Declare the audience for a pod's ServiceAccount**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo
+spec:
+  serviceAccountName: my-sa   # ❶
+  containers:
+  - name: app
+    image: ghcr.io/example/app:latest
+    volumeMounts:
+    - name: oidc   # ❷
+      mountPath: /var/run/my-audience
+      readOnly: true
+  volumes:
+  - name: oidc
+    projected:
+      sources:   # ❸
+      - serviceAccountToken:
+          path: token   # ❹
+          audience: "https://my.service.example"   # ❺
+          expirationSeconds: 3600
+```
+
+- **❶** Attached **ServiceAccount**.
+- **❷** Directory where the service account tokens are mounted.
+- **❸** List of service account tokens to mount, with different entries for **multiple audiences**.
+- **❹** Name of the file that holds the token.
+- **❺** Audience added to the token JWT's **`aud:`** claim.
+
+> For **multiple audiences** (calling different upstream services), either specify multiple `serviceAccountToken` entries (each mounted in a different file) or use the **`TokenRequest` API** to mint a token targeted to multiple audiences.
+
+ServiceAccount delegation works well for **workload-to-workload** authentication **within** cluster boundaries — but it is fundamentally **workload-based**, not user-based. When you need to **attribute actions to individual users across system boundaries**, **OAuth2** provides the dominant standard for delegated access: a user grants an application permission to act on their behalf **without sharing credentials** — exactly what's needed when an agent calls upstream APIs on a user's behalf.
+
+> **SIDEBAR — OAuth2 and the Model Context Protocol**
+>
+> The MCP specification uses **OAuth 2.1** for authorization when MCP servers require authenticated access. MCP servers act as **OAuth Resource Servers**, protecting their tools and resources with standard OAuth2 mechanisms.
+>
+> MCP implementations follow established specs:
+>
+> - MCP **clients** must implement **OAuth 2.0 Authorization Server Metadata (RFC 8414)** to discover authorization endpoints.
+> - Implementations should support **Dynamic Client Registration (RFC 7591)** to streamline setup.
+> - All clients must use **Proof Key for Code Exchange (PKCE)** for authorization-code flows.
+>
+> For multiuser agentic systems requiring **delegation semantics**, **RFC 8693 (Token Exchange)** provides the mechanism to preserve **both** user and agent identities — explored next. For comprehensive coverage, see *Cloud Native Data Security with OAuth* by Gary Archer et al. (O'Reilly).
 
 [Back to Contents](#contents)
 
