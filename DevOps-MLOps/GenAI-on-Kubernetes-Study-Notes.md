@@ -12606,6 +12606,8 @@ The **Agent-to-Agent (A2A) protocol** standardizes how agents **discover capabil
 
 #### A2A Complements MCP
 
+![MCP+A2A](<assets/MCP+A2A.png>)
+
 Both MCP and A2A are standards for connecting AI components, but they serve **different purposes** at **different abstraction levels**:
 
 - **MCP connects agents to tools and data sources** — a **synchronous request-response** pattern: the agent sends a typed request, the tool performs an operation, the tool returns a result. Ideal for integrating an agent with its **operational environment**.
