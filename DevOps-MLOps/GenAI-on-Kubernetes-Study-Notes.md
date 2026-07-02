@@ -12687,7 +12687,7 @@ A2A enables a deployment model where **each agent runs as a separate Deployment 
 - **Security** — **NetworkPolicies** restrict which agents can communicate, implementing defense-in-depth.
 - **Resilience** — **circuit breakers** via service-mesh policies enable graceful degradation when an agent becomes unhealthy, preventing **cascading failures**.
 
-> The **agent card becomes a deployment-time contract**. Before rolling out a new agent version, verify its card remains compatible with existing consumers. If a new reviewer drops `text/plain` input but all planners send plain-text diffs, you catch the incompatibility **before** production.
+> The **agent card becomes a deployment-time contract**. Before rolling out a new agent version of an agent, verify its agent card remains compatible with existing consumer agents. If a new reviewer agent drops support for `text/plain` input but all planner agents send plain-text diffs, you catch the incompatibility **before** production deployment, *rather than discovering this in production*. 
 
 **Task-lifecycle tracking makes multiagent operations observable.** Instrument your monitoring to track tasks **stuck in `in_progress`** too long, agents with **high failure rates**, and **bottlenecks** in multistep workflows — crucial for debugging and optimizing at scale.
 
