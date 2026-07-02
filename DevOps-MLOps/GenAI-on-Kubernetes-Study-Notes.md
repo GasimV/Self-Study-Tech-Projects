@@ -12655,6 +12655,30 @@ created → in_progress → completed | failed | cancelled
 
 > **Key insight:** tasks have **lifecycles independent of HTTP requests**. A planner can submit a task and **disconnect**, then reconnect later to check progress. This decoupling makes A2A **robust** in distributed environments where network partitions or agent restarts can occur during long-running work.
 
+**Follow-up note — can streaming use WebSockets?** Yes, but WebSockets are **not** one of A2A's standard built-in bindings. The current (July 2026) spec defines **three standard protocol bindings**:
+
+1. **JSON-RPC 2.0 over HTTP(S)** with **Server-Sent Events (SSE)** for streaming.
+2. **gRPC over HTTP/2 (TLS)** with server streaming for updates.
+3. **HTTP+JSON/REST**, also using **SSE** for streaming.
+
+So the "normal" A2A way to stream artifacts is `SendStreamingMessage` + an **SSE** stream of task/artifact updates (or **gRPC** server-streamed responses).
+
+> The spec explicitly allows **custom protocol bindings** for other transports, and gives **WebSockets** (`wss://…`) as an example. A custom binding must preserve the A2A data model, implement the core operations, document streaming behavior, define reconnection/termination semantics, and **declare itself in the Agent Card**.
+
+An Agent Card can advertise both a standard and a custom transport:
+
+```json
+{
+  "supportedInterfaces": [
+    { "url": "https://agent.example.com/rpc", "protocolBinding": "JSON-RPC" },
+    { "url": "wss://agent.example.com/a2a/websocket",
+      "protocolBinding": "https://example.com/bindings/websocket/v1" }
+  ]
+}
+```
+
+> **Design point:** A2A is **not** limited to one HTTP request/response cycle — tasks have independent lifecycles observed via streaming/subscription. **Default to HTTP JSON-RPC + SSE or gRPC streaming** for maximum interoperability; reach for **WebSockets** only when you control both agents, need bidirectional low-latency communication, and are willing to document the custom binding in the Agent Card. *(Source: [A2A specification](https://github.com/a2aproject/A2A/blob/main/docs/specification.md).)*
+
 #### Running A2A on Kubernetes
 
 A2A enables a deployment model where **each agent runs as a separate Deployment with its own Service endpoint** — the microservices pattern, now extended to autonomous reasoning systems:
