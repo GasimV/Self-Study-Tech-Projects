@@ -12651,7 +12651,7 @@ created → in_progress → completed | failed | cancelled
 
 > The requester can **poll** the `/task` endpoint or **subscribe** to push notifications. This handles long-running work gracefully and gives clear visibility into what each agent is doing.
 
-**3. Artifact streaming** — a mechanism for passing **large or incremental results** without blocking. A documentation agent generating a multisection report can **stream each section** as it completes, letting downstream agents process early sections while later ones are still generated — reducing end-to-end latency and exposing progress.
+**3. Artifact streaming** — a mechanism for passing **large or incremental results** without blocking. *As an agent works on a task, it can **stream partial results** back to the requester.* For example, a documentation agent generating a multisection report can **stream each section** as it completes, letting downstream agents process early sections while later ones are still generated — reducing end-to-end latency and exposing progress.
 
 > **Key insight:** tasks have **lifecycles independent of HTTP requests**. A planner can submit a task and **disconnect**, then reconnect later to check progress. This decoupling makes A2A **robust** in distributed environments where network partitions or agent restarts can occur during long-running work.
 
