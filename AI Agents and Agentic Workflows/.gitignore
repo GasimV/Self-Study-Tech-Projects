@@ -14,3 +14,4 @@ env_*/
 
 # Re-include files the repo-root .gitignore excludes globally
 !requirements.txt
+!Moby-Dick.txt
