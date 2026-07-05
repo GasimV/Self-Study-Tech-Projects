@@ -1,0 +1,16 @@
+# Local ignores for the AI Agents & Agentic Workflows journey
+# (scoped to this folder; does not touch the repo-root .gitignore)
+
+# Virtual environment
+.venv/
+venv/
+env_*/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+
+# Re-include files the repo-root .gitignore excludes globally
+!requirements.txt
