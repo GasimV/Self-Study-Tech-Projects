@@ -7,3 +7,4 @@ langchain-community==0.4.1
 wikipedia==1.4.0
 docx2txt==0.9
 pypdf==6.0.0
+langchain-core
