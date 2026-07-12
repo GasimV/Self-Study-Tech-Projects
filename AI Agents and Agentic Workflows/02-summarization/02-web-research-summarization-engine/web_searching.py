@@ -4,7 +4,10 @@ from typing import List
 def web_search(
     web_query: str,
     num_results: int) -> List[str]:
-    search = DuckDuckGoSearchAPIWrapper()
+    search = DuckDuckGoSearchAPIWrapper(
+        backend="duckduckgo",
+        time=None,
+    )
     return [r["link"]
             for r in search.results(web_query, num_results)]
 
