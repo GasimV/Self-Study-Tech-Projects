@@ -7,3 +7,7 @@ def web_search(
     search = DuckDuckGoSearchAPIWrapper()
     return [r["link"]
             for r in search.results(web_query, num_results)]
+
+# NOTE: Other web search engine wrappers provided by LangChain are
+# TavilySearchResults and GoogleSearchAPIWrapper.
+# Both require an API key, so the DuckDuckGoSearchAPIWrapper is used because it doesn’t.
