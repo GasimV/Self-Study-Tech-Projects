@@ -32,7 +32,6 @@ selection_llm = llm.with_structured_output(
     method="json_schema",
 )
 assistant_instructions = selection_llm.invoke(assistant_selection_prompt)
-
 print(assistant_instructions)
 
 # (.venv) PS E:\...\AI Agents and Agentic Workflows\02-summarization\02-web-research-summarization-engine> python research_engine_seq.py
@@ -50,7 +49,6 @@ print(assistant_instructions)
 # The relevant information is in the "content" property.
 # To convert it into a Python object, we can proceed as follows:
 assistant_instructions_dict = assistant_instructions.model_dump()
-
 print(assistant_instructions_dict)
 
 # Output:
@@ -89,4 +87,53 @@ print(web_search_queries_list)
 # {'search_query': 'Khankendi tourism infrastructure and current state', 'user_question': 'What is the current level of tourism
 # development in Khankendi? Are there any specific challenges facing tourists, and what improvements are being made to enhance
 # visitor experiences (e.g., accommodation, facilities, accessibility)?'}]
+
+searches_and_result_urls = [
+    {
+        "result_urls": web_search(
+            web_query=wq["search_query"],
+            num_results=NUM_SEARCH_RESULTS_PER_QUERY
+        ),
+        "search_query": wq["search_query"]
+    }
+    for wq in web_search_queries_list
+]
+print(searches_and_result_urls)
+# Output:
+# [{'result_urls': ['https://caliber.az/en/post/khankendi-the-khan-is-back-to-its-throne', 'https://khankendihotels.az/',
+# 'https://caspiannews.com/news-detail/khankendi-preserves-historical-identity-through-toponyms-cultural-heritage-2026-4-10-45/',
+# 'https://www.tiktok.com/@diyardandiyara_2/video/7634889731771288853', 'https://team.7msport.com/677043/index.shtml'],
+# 'search_query': 'Khankendi history overview'}, {'result_urls': ['https://en.wikipedia.org/wiki/Stepanakert',
+# 'https://www.destimap.com/index.php?act=place&p=Khankendi,-Azerbaijan',
+# 'https://www.tripadvisor.ie/Tourism-g667458-Khankendi_Nagorny_Karabakh-Vacations.html', 'https://mapcarta.com/Khankendi',
+# 'https://www.tiktok.com/@subhantravel/video/7507227133274672391'], 'search_query': 'cultural attractions in Khankendi Azerbaijan'},
+# {'result_urls': ['https://en.wikipedia.org/wiki/Microsoft', 'https://www.microsoft.com/en-us?msockid=1bf05dcf21186cd322a94a5a200a6dd2',
+# 'https://account.microsoft.com/account', 'https://www.office.com/', 'https://signup.live.com/'],
+# 'search_query': 'Khankendi tourism infrastructure & opportunities'}]
+
+# flatten the search result urls
+search_query_and_result_url_list = []
+for qr in searches_and_result_urls:
+    search_query_and_result_url_list.extend([{
+        "search_query": qr["search_query"],
+        "result_url": r}
+        for r in qr["result_urls"]]
+    )
+print(search_query_and_result_url_list)
+# Output:
+# [{'search_query': 'Khankendi history overview', 'result_url': 'https://fr.wikipedia.org/wiki/Patrouille_de_France'},
+# {'search_query': 'Khankendi history overview', 'result_url': ''},
+# {'search_query': 'Khankendi history overview', 'result_url': 'https://www.facebook.com/patrouilledefrance.officiel/'},
+# {'search_query': 'Khankendi history overview', 'result_url': 'https://www.facebook.com/patrouilledefrance.officiel/posts/1273283854359917/'},
+# {'search_query': 'Khankendi history overview', 'result_url': 'https://airshowdisplay.fr/actualites/calendrier-2026-et-tournee-us-patrouille-de-france'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'result_url': 'https://zormor.com/destinations/asia-azerbaijan-khankendi'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'result_url': 'https://president.az/en/articles/view/69239'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'result_url': 'https://www.tripadvisor.com/Attractions-g667458-Activities-Khankendi_Nagorny_Karabakh.html'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'result_url': 'https://caspiannews.com/news-detail/khankendi-preserves-historical-identity-through-toponyms-cultural-heritage-2026-4-10-45/'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'result_url': 'https://pinktravel.az/en/blog/khankendi-today-guide'},
+# {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://simplicable.com/life/activities'},
+# {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.funaroundme.com/'},
+# {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.checkwhatsgood.com/'},
+# {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.tripadvisor.com/Attractions-g2260696-Activities-c56-Sremska_Mitrovica_Vojvodina.html'},
+# {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://activibees.com/'}]
 
