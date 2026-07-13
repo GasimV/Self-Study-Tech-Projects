@@ -106,6 +106,6 @@ You must write the report in apa format.
 Please do your best, this is very important to my career.
 """
 
-RESEARCH_PROMPT_TEMPLATE = PromptTemplate.from_template(
+RESEARCH_REPORT_PROMPT_TEMPLATE = PromptTemplate.from_template(
     template=RESEARCH_REPORT_INSTRUCTIONS
 )
