@@ -9,3 +9,9 @@ from prompts import (
     RESEARCH_REPORT_PROMPT_TEMPLATE
 )
 
+NUM_SEARCH_QUERIES = 3
+NUM_SEARCH_RESULTS_PER_QUERY = 5
+RESULT_TEXT_MAX_CHARS = 10000
+
+question = 'What can I see and do in the Azerbaijani town of Khankendi?'
+
