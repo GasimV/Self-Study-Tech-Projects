@@ -174,9 +174,40 @@ print(result_text_summary_list[:1])
 # 'search_query': 'Khankendi history overview'}]
 
 # create a text including result summary and url from each result
+stringified_summary_list = [
+    f'Source URL: {sr["result_url"]}\nSummary: {sr["text_summary"]}'
+        for sr in result_text_summary_list]
+print(stringified_summary_list[:1])
+# Output:
+# ["Source URL: https://caliber.az/en/post/khankendi-the-khan-is-back-to-its-throne\nSummary: Khankendi is a relatively young city
+# compared to other Azerbaijan cities, established in the 18th century as a residence for the khans of the Karabakh Khanate.
+# It was initially a recreational town for the royal family and later became a settlement for the khans’ relatives.
+# After the Karabakh Khanate's incorporation into Russian Empire, Khankendi was designated as a headquarters for Armenian families,
+# leading to significant ethnic tensions. Following the Soviet Union’s collapse in 1991, Armenians migrated to Khankendi,
+# resulting in a massive relocation policy and the establishment of an Armenian Republic.
+# The Soviet government encouraged Armenian migration to Khankendi, with the aim of consolidating their presence.
+# The Soviet Union's occupation of Karabakh led to the displacement of Azerbaijani population, and the Armenian authorities propped up
+# a separatist entity in the occupied region. On September 19th, 2023, Azerbaijani army launched an anti-terror
+# operation to oust separatists. The swift 23-hour campaign led to the surrender of separatist forces and
+# the full restoration of Azerbaijan's sovereignty across the region."]
 
-
-# merge all result summaries
-
+# merge all summary entries into one
+appended_result_summaries = "\n".join(stringified_summary_list)
+print(appended_result_summaries)
+# This outputs a single text block with all summaries and URLs:
+# Source URL: https://www....
+# Summary:
+# ...
+# Source URL: https://.../
+# Summary:
+# ...
 
 # compile report from summaries
+research_report_prompt = RESEARCH_REPORT_PROMPT_TEMPLATE.format(
+    research_summary=appended_result_summaries,
+    user_question=question
+)
+research_report = llm.invoke(research_report_prompt)
+print(f'Research report: {research_report}')
+# Output:
+#
