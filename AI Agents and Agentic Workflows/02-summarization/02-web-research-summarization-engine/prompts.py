@@ -17,7 +17,7 @@ Response:
 {{
     "assistant_type": "Financial analyst assistant",
     "assistant_instructions": "You are a seasoned finance analyst AI assistant. Your primary goal is to compose comprehensive, astute, impartial, and methodically arranged financial reports based on provided data and trends.",
-    "user_question": {user_question}
+    "user_question": "{user_question}"
 }}
 Question: "what are the most interesting sites in Tel Aviv?"
 Response: 
