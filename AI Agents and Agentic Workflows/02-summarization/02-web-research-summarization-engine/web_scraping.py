@@ -19,7 +19,7 @@ def web_scrape(url: str) -> str:
 
             return page_text
         else:
-            return f"Could not retrieve the web page: Status Code: {response.status_code}"
+            return ""
     except Exception as e:
-        print(e)
-        return f"Could not retrieve the web page: Status Code: {e}"
+        print(f"Skipping {url}: {e}")
+        return ""

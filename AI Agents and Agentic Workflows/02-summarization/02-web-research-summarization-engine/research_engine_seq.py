@@ -73,6 +73,9 @@ web_search_llm = llm.with_structured_output(
 )
 web_search_queries = web_search_llm.invoke(web_search_prompt)
 web_search_queries_list = web_search_queries.model_dump()
+# The research question is pipeline state, not something the model should rewrite.
+for web_search_query in web_search_queries_list:
+    web_search_query["user_question"] = question
 print(web_search_queries_list)
 # Output:
 # [{'search_query': 'Khankendi history overview', 'user_question': 'Can you provide a detailed historical timeline for Khankendi,
@@ -133,13 +136,18 @@ print(search_query_and_result_url_list)
 # {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.tripadvisor.com/Attractions-g2260696-Activities-c56-Sremska_Mitrovica_Vojvodina.html'},
 # {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://activibees.com/'}]
 
-# scrape the result text from each result url
-result_text_list = [{
-    'result_text': web_scrape(
-        url=re['result_url'])[:RESULT_TEXT_MAX_CHARS],
-    'result_url': re['result_url'],
-    'search_query': re['search_query']}
-        for re in search_query_and_result_url_list]
+# Scrape result text, excluding pages that failed or returned no useful text.
+result_text_list = []
+for result in search_query_and_result_url_list:
+    result_text = web_scrape(url=result["result_url"])
+    if not result_text:
+        continue
+
+    result_text_list.append({
+        "result_text": result_text[:RESULT_TEXT_MAX_CHARS],
+        "result_url": result["result_url"],
+        "search_query": result["search_query"],
+    })
 print(result_text_list[:1])
 
 # summarize each result text
@@ -152,8 +160,23 @@ for rt in result_text_list:
     text_summary = llm.invoke(summary_prompt)
 
     result_text_summary_list.append({
-        "text_summary": text_summary,
+        "text_summary": text_summary.content,
         "result_url": rt["result_url"],
         "search_query": rt["search_query"]
     })
-print(result_text_summary_list[:2])
+print(result_text_summary_list[:1])
+# Output:
+# [{'text_summary': "Khankendi is a significant city located in the heart of the Qarabagh region of Azerbaijan and serves as the
+# administrative and economic hub of the area. It’s known for its historical and cultural importance, particularly due to its ancient
+# traditions and resilient spirit. The text highlights Khankendi's role as a center of deep historical and cultural significance
+# within the broader context of the Qarabagh region.",
+# 'result_url': 'https://khankendihotels.az/',
+# 'search_query': 'Khankendi history overview'}]
+
+# create a text including result summary and url from each result
+
+
+# merge all result summaries
+
+
+# compile report from summaries
