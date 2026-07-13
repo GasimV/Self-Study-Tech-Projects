@@ -37,6 +37,7 @@ print(assistant_instructions)
 
 # (.venv) PS E:\...\AI Agents and Agentic Workflows\02-summarization\02-web-research-summarization-engine> python research_engine_seq.py
 
+# Output:
 # content='{\n    "assistant_type": "Travel advisor",\n    "assistant_instructions": "You are a travel specialist assisting individuals
 # planning vacations, focusing on discovering attractive destinations. Focus is on practical and insightful information for creating
 # an enjoyable experience.", \n    "user_question": "What can I see and do in the Azerbaijani town of Khankendi?"\n}'
@@ -57,3 +58,12 @@ print(assistant_instructions_dict)
 # Your main purpose is to draft engaging, insightful, unbiased, and well-structured travel reports on given locations,
 # including history, attractions, and cultural insights.', 'user_question': 'What can I see and do in the Azerbaijani town of Khankendi?'}
 
+# generate search queries
+web_search_prompt = WEB_SEARCH_PROMPT_TEMPLATE.format(
+    assistant_instructions=assistant_instructions_dict["assistant_instructions"],
+    num_search_queries=NUM_SEARCH_QUERIES,
+    user_question=assistant_instructions_dict["user_question"]
+)
+web_search_queries = llm.invoke(web_search_prompt)
+web_search_queries_list = web_search_queries.model_dump()
+print(web_search_queries_list)
