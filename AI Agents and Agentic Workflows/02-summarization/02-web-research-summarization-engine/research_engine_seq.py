@@ -140,5 +140,20 @@ result_text_list = [{
     'result_url': re['result_url'],
     'search_query': re['search_query']}
         for re in search_query_and_result_url_list]
-print(result_text_list)
+print(result_text_list[:1])
 
+# summarize each result text
+result_text_summary_list = []
+for rt in result_text_list:
+    summary_prompt = SUMMARY_PROMPT_TEMPLATE.format(
+        search_query=rt["search_query"],
+        search_result_text=rt["result_text"]
+    )
+    text_summary = llm.invoke(summary_prompt)
+
+    result_text_summary_list.append({
+        "text_summary": text_summary,
+        "result_url": rt["result_url"],
+        "search_query": rt["search_query"]
+    })
+print(result_text_summary_list[:2])
