@@ -1,7 +1,7 @@
 from web_searching import web_search
 from web_scraping import web_scrape
 from llm_models import get_llm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 from prompts import (
     ASSISTANT_SELECTION_PROMPT_TEMPLATE,
     WEB_SEARCH_PROMPT_TEMPLATE,
@@ -64,6 +64,29 @@ web_search_prompt = WEB_SEARCH_PROMPT_TEMPLATE.format(
     num_search_queries=NUM_SEARCH_QUERIES,
     user_question=assistant_instructions_dict["user_question"]
 )
-web_search_queries = llm.invoke(web_search_prompt)
+
+class WebSearchQuery(BaseModel):
+    search_query: str
+    user_question: str
+
+class WebSearchQueryList(RootModel[list[WebSearchQuery]]):
+    pass
+
+web_search_llm = llm.with_structured_output(
+    WebSearchQueryList,
+    method="json_schema",
+)
+web_search_queries = web_search_llm.invoke(web_search_prompt)
 web_search_queries_list = web_search_queries.model_dump()
 print(web_search_queries_list)
+
+# Output:
+# [{'search_query': 'Khankendi history overview', 'user_question': 'Can you provide a detailed historical timeline for Khankendi,
+# focusing on its key events that shaped its identity and development as a region?'},
+# {'search_query': 'cultural attractions in Khankendi Azerbaijan', 'user_question': 'Beyond the main tourist sites, what are
+# some lesser-known cultural traditions, crafts, or artistic expressions prevalent within Khankendi?
+# What’s the significance of local folklore?'},
+# {'search_query': 'Khankendi tourism infrastructure and current state', 'user_question': 'What is the current level of tourism
+# development in Khankendi? Are there any specific challenges facing tourists, and what improvements are being made to enhance
+# visitor experiences (e.g., accommodation, facilities, accessibility)?'}]
+
