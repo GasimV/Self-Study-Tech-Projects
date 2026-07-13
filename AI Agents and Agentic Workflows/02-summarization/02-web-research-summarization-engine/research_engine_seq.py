@@ -33,9 +33,7 @@ selection_llm = llm.with_structured_output(
 )
 assistant_instructions = selection_llm.invoke(assistant_selection_prompt)
 print(assistant_instructions)
-
 # (.venv) PS E:\...\AI Agents and Agentic Workflows\02-summarization\02-web-research-summarization-engine> python research_engine_seq.py
-
 # Output:
 # content='{\n    "assistant_type": "Travel advisor",\n    "assistant_instructions": "You are a travel specialist assisting individuals
 # planning vacations, focusing on discovering attractive destinations. Focus is on practical and insightful information for creating
@@ -50,7 +48,6 @@ print(assistant_instructions)
 # To convert it into a Python object, we can proceed as follows:
 assistant_instructions_dict = assistant_instructions.model_dump()
 print(assistant_instructions_dict)
-
 # Output:
 # {'assistant_type': 'Travel guide assistant', 'assistant_instructions': 'You are a world-travelled AI tour guide assistant.
 # Your main purpose is to draft engaging, insightful, unbiased, and well-structured travel reports on given locations,
@@ -77,7 +74,6 @@ web_search_llm = llm.with_structured_output(
 web_search_queries = web_search_llm.invoke(web_search_prompt)
 web_search_queries_list = web_search_queries.model_dump()
 print(web_search_queries_list)
-
 # Output:
 # [{'search_query': 'Khankendi history overview', 'user_question': 'Can you provide a detailed historical timeline for Khankendi,
 # focusing on its key events that shaped its identity and development as a region?'},
@@ -136,4 +132,13 @@ print(search_query_and_result_url_list)
 # {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.checkwhatsgood.com/'},
 # {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://www.tripadvisor.com/Attractions-g2260696-Activities-c56-Sremska_Mitrovica_Vojvodina.html'},
 # {'search_query': 'activities and tourism in Khankendi Azerbaijan', 'result_url': 'https://activibees.com/'}]
+
+# scrape the result text from each result url
+result_text_list = [{
+    'result_text': web_scrape(
+        url=re['result_url'])[:RESULT_TEXT_MAX_CHARS],
+    'result_url': re['result_url'],
+    'search_query': re['search_query']}
+        for re in search_query_and_result_url_list]
+print(result_text_list)
 
