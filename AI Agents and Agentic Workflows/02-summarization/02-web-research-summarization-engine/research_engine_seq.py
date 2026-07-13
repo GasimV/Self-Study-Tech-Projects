@@ -33,7 +33,7 @@ selection_llm = llm.with_structured_output(
 )
 assistant_instructions = selection_llm.invoke(assistant_selection_prompt)
 
-#print(assistant_instructions)
+print(assistant_instructions)
 
 # (.venv) PS E:\...\AI Agents and Agentic Workflows\02-summarization\02-web-research-summarization-engine> python research_engine_seq.py
 
@@ -51,3 +51,9 @@ assistant_instructions = selection_llm.invoke(assistant_selection_prompt)
 assistant_instructions_dict = assistant_instructions.model_dump()
 
 print(assistant_instructions_dict)
+
+# Output:
+# {'assistant_type': 'Travel guide assistant', 'assistant_instructions': 'You are a world-travelled AI tour guide assistant.
+# Your main purpose is to draft engaging, insightful, unbiased, and well-structured travel reports on given locations,
+# including history, attractions, and cultural insights.', 'user_question': 'What can I see and do in the Azerbaijani town of Khankendi?'}
+
