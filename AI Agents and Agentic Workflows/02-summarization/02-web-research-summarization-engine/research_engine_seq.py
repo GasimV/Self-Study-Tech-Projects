@@ -23,6 +23,12 @@ class AssistantSelection(BaseModel):
     assistant_instructions: str = Field(description="Instructions for that assistant")
     user_question: str = Field(description="The original user question, unchanged")
 
+
+class ResearchReport(BaseModel):
+    report_markdown: str = Field(
+        description="The complete research report formatted as Markdown"
+    )
+
 # select research assistant instructions
 assistant_selection_prompt = ASSISTANT_SELECTION_PROMPT_TEMPLATE.format(
     user_question=question
@@ -207,7 +213,40 @@ research_report_prompt = RESEARCH_REPORT_PROMPT_TEMPLATE.format(
     research_summary=appended_result_summaries,
     user_question=question
 )
-research_report = llm.invoke(research_report_prompt)
-print(f'Research report: {research_report}')
+report_llm = llm.with_structured_output(
+    ResearchReport,
+    method="json_schema",
+)
+research_report = report_llm.invoke(research_report_prompt)
+research_report_dict = research_report.model_dump()
+print(research_report_dict["report_markdown"])
 # Output:
-#
+# Khankendi Azerbaijan: A Detailed Overview of Attractions and Activities
+
+# **Introduction:**
+# The Azerbaijani town of Khankendi, nestled within the Karabakh region of Azerbaijan, represents a compelling case study in post-war reconstruction, cultural preservation, and tourism development. This report will delve into what visitors can expect to see and do in Khankendi, drawing upon information from various sources – including historical records, tourist guides, and recent developments – to provide an exhaustive overview.
+
+# **1. Historical Context & Significance:**
+# The story of Khankendi begins with its strategic location within the mountainous region of Karabakh, historically a vital crossroads for trade and cultural exchange between East Anatolia and Central Asia.
+
+# ....
+
+# **2. Key Attractions & Activities – A Detailed Exploration:**
+# Khankendi offers a unique blend of historical sites, architectural marvels, natural beauty, and cultural experiences.  Here’s a breakdown of the most prominent attractions:
+
+# ...
+
+# **3. Practical Considerations & Visitor Experience:**
+
+# ...
+
+# **4.  Challenges and Future Prospects:**
+# The reconstruction of Khankendi has been a complex undertaking, facing challenges related to security concerns, economic instability, and the need for sustainable tourism practices.
+
+# However, with ongoing efforts focused on infrastructure improvements, cultural preservation, and community engagement, Khankendi is poised for continued growth as a significant tourist destination. The focus on developing sustainable tourism practices – minimizing environmental impact while maximizing visitor experience – will be crucial to ensuring its long-term success.
+
+# **5.  Conclusion:**
+# Khankendi represents more than just a historical site; it’s a dynamic cultural hub, shaped by the resilience of its people and the ambition of its reconstruction efforts. The combination of its rich history, stunning natural beauty, and vibrant local culture makes Khankendi an unforgettable destination for travelers seeking to experience Azerbaijan's unique heritage.
+
+# **Sources:**
+# ....
