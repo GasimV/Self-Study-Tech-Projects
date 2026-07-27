@@ -7,7 +7,7 @@ search_result_urls_chain = (
     RunnableLambda(lambda x: 
                 [
                     {
-                        "result['url']": url,
+                        "result_url": url,
                         "search_query": x["search_query"],
                         "user_question": x["user_question"]
                     }
