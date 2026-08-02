@@ -217,6 +217,45 @@ For this 24 GB GPU, the practical choices are:
 - `gemma4:12b-it-q8_0` (about 13 GB) when improving model capability matters
   more than preserving the E4B architecture.
 
+### Recommended primary model: 12B Q8 vs E4B BF16
+
+For quality-focused local agents, Azerbaijani generation, and multimodal work,
+the provisional recommendation is `gemma4:12b-it-q8_0`. Keep
+`gemma4:e4b-it-bf16` as the faster, lower-memory alternative.
+
+| Key point | `gemma4:12b-it-q8_0` | `gemma4:e4b-it-bf16` |
+| --- | --- | --- |
+| Overall quality | Expected to be better because of the larger 12B architecture | Good, but limited by the smaller E4B architecture |
+| Azerbaijani | Expected to improve grammar, nuance, translation, and long-form coherence; local evidence is pending | Demonstrated good conversational Azerbaijani locally, with one minor spacing error |
+| Multimodality | Stronger unified text, image, and audio architecture | Supports text, image, and audio through smaller dedicated encoders |
+| Native context | 256K | 128K |
+| Agent and tool use | Expected to be more reliable for complex instructions and tool selection | Suitable for lighter and less complex workflows |
+| Expected 64K VRAM use | Approximately 15-17 GB dedicated VRAM and likely 100% GPU layer allocation | Observed 12.5 GB total dedicated GPU usage and 100% GPU layer allocation |
+| Best role | Primary quality-focused local model | Faster, efficient fallback |
+
+Official model benchmarks favor Gemma 4 12B over E4B:
+
+| Benchmark | 12B | E4B |
+| --- | ---: | ---: |
+| Multilingual MMMLU | 83.4 | 76.6 |
+| MMLU Pro | 77.2 | 69.4 |
+| MMMU Pro multimodal | 69.1 | 52.6 |
+| MRCR 128K long-context retrieval | 43.4 | 25.4 |
+
+These published results are architecture-level evidence, not direct results
+for Ollama's Q8 variant. Q8 quantization introduces some precision loss, but
+the working hypothesis is that the 12B model's additional capacity will
+outweigh that loss. No official Azerbaijani-specific benchmark is available,
+so the Azerbaijani recommendation remains provisional.
+
+#### Pending Azerbaijani A/B benchmark
+
+After `gemma4:12b-it-q8_0` finishes downloading, both local models will be
+tested with identical Azerbaijani prompts and matching generation settings.
+The comparison will cover conversational fluency, orthography and grammar,
+formal writing, translation, instruction following, and consistency. Results
+will be documented here without replacing the already recorded E4B evidence.
+
 Do not increase context merely to fill unused VRAM. Context capacity only
 helps when the prompt, conversation, retrieved documents, and generated output
 actually need those tokens. GPU utilization also falls to zero between
@@ -224,4 +263,5 @@ requests even when the model remains loaded in VRAM.
 
 References: [Ollama context length documentation](https://docs.ollama.com/context-length),
 [Ollama Gemma 4 tags](https://ollama.com/library/gemma4/tags), and
-[Google's Gemma 4 model overview](https://ai.google.dev/gemma/docs/core).
+[Google's Gemma 4 model overview](https://ai.google.dev/gemma/docs/core) and
+[model card](https://ai.google.dev/gemma/docs/core/model_card_4).
