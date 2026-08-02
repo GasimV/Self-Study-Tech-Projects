@@ -144,10 +144,41 @@ generated and returned to 0% when the model became idle. This is expected: the
 weights can remain loaded in VRAM during Ollama's keep-alive period even though
 the GPU is not performing inference between requests.
 
+> **Why an 8B BF16 model used less than 16 GB of dedicated VRAM:** The
+> calculation `8B parameters x 2 bytes = 16 GB` correctly estimates total BF16
+> weight storage, but it does not imply that every weight is stored in
+> dedicated VRAM. Gemma 4 E4B has 4.5B effective transformer parameters and 8B
+> total parameters after including its unusually large Per-Layer Embedding
+> (PLE) lookup tables.
+>
+> The Ollama load log recorded `8,964.66 MiB` of model tensors in the CUDA GPU
+> buffer and `6,656.00 MiB` in the CUDA host model buffer. The host allocation
+> matches the model's embedding tables:
+>
+> ```text
+> Normal token embeddings:
+> 262,144 vocabulary x 2,560 dimensions x 2 bytes = 1,280 MiB
+>
+> Per-layer embeddings:
+> 262,144 vocabulary x 42 layers x 256 dimensions x 2 bytes = 5,376 MiB
+>
+> Total embedding lookup tables:
+> 1,280 MiB + 5,376 MiB = 6,656 MiB
+> ```
+>
+> Its approximate GPU-side allocation was `8,964.66 MiB` for model tensors,
+> `1,064 MiB` for the 64K KV caches, and `166.02 MiB` for the compute buffer.
+> Task Manager's 12.5 GB reading additionally included Windows, display-driver,
+> application, and other GPU allocations. The log confirmed that all `43/43`
+> computational layers were offloaded to the GPU. Thus, `100% GPU` describes
+> layer offload; it does not mean every auxiliary lookup tensor resides in
+> dedicated VRAM. The full BF16 weight footprint still exists, split between
+> GPU memory and CUDA host memory.
+
 Task Manager also displayed 6.7 GB of shared GPU memory, but that number is
-system-wide and includes Windows and other applications. It is not evidence of
-Ollama CPU offloading; `ollama ps` reporting `100% GPU` is the relevant model
-offload measurement.
+system-wide and includes Windows and other applications. By itself, it is not
+evidence of transformer-layer CPU offloading; `ollama ps` reporting `100% GPU`
+is the relevant layer-offload measurement.
 
 ### Configure the context window
 
