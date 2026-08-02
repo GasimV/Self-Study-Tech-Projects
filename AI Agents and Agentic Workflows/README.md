@@ -138,8 +138,8 @@ the prompt using `Azərbaycanda` where `Azərbaycanca` would be more precise. It
 was a strong practical result, although `əlbəttəki` should conventionally be
 written as two words: `əlbəttə ki`.
 
-Windows Task Manager showed 12.5 GB of 24 GB dedicated GPU memory in use after
-generation. The GPU activity graph rose to nearly 100% while tokens were being
+*Windows Task Manager showed ***12.5 GB of 24 GB dedicated GPU memory*** in use after
+generation.* The GPU activity graph rose to nearly 100% while tokens were being
 generated and returned to 0% when the model became idle. This is expected: the
 weights can remain loaded in VRAM during Ollama's keep-alive period even though
 the GPU is not performing inference between requests.
