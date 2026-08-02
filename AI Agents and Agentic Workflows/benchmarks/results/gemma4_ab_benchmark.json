@@ -1,0 +1,632 @@
+{
+  "settings": {
+    "num_ctx": 65536,
+    "temperature": 0.0,
+    "seed": 42,
+    "top_k": 64,
+    "top_p": 0.95,
+    "num_predict": 500,
+    "reasoning": false,
+    "keep_alive": "15m"
+  },
+  "language_system": "Sən Azərbaycan dilində yüksək səviyyədə yazan köməkçisən. Tapşırığı dəqiq yerinə yetir, yalnız tələb olunan nəticəni ver və Azərbaycan dilinin orfoqrafiya, qrammatika və üslub normalarına əməl et.",
+  "tool_system": "Sən Azərbaycan dilində işləyən agent köməkçisən. İstək uyğun olduqda yalnız təqdim edilmiş alətlərdən istifadə et. Alət arqumentlərini sxemə tam uyğun yarat, alət nəticələrini uydurma və bütün lazım olan addımlar bitdikdən sonra Azərbaycan dilində qısa yekun cavab ver.",
+  "models": {
+    "gemma4:12b-it-q8_0": {
+      "language_cases": [
+        {
+          "id": "orthography_grammar",
+          "category": "orthography and grammar",
+          "prompt": "Aşağıdakı mətni orfoqrafik və qrammatik baxımdan düzəlt. İzah vermə, yalnız düzəldilmiş variantı yaz:\n\nMən sabah Bakıya gələcəm və səninlə görüşməy istəyirəm. Əlbətdəki vaxtın olsa mənə xəbər elə.",
+          "response": "Mən sabah Bakıya gələcəyəm və səninlə görüşmək istəyirəm. Əlbəttə, vaxtın olsa, mənə xəbər elə.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 1.725,
+            "prompt_eval_count": 168,
+            "prompt_eval_duration_ns": 354771000,
+            "eval_count": 46,
+            "eval_duration_ns": 1127480000,
+            "load_duration_ns": 210219700,
+            "total_duration_ns": 1722058100
+          }
+        },
+        {
+          "id": "formal_writing",
+          "category": "formal writing",
+          "prompt": "Aşağıdakı qeyri-rəsmi mesajı 70-90 sözlük rəsmi iş e-poçtuna çevir. Mövzu sətri, müraciət, əsas hissə və nəzakətli sonluq olsun:\n\nSalam müəllim, layihəni bu gün çatdıra bilmirəm, çünki məlumatlarda problem çıxdı. İki gün də vaxt versəniz yaxşı olar.",
+          "response": "**Mövzu:** Layihənin təhvil tarixi ilə bağlı məlumat\n\nHörmətli müəllim,\n\nSizinlə layihənin təqdim edilməsi planı ilə bağlı əlaqə saxlamaq istəyirəm. Hazırda işlədiyimiz məlumatlarda texniki çətinliklər və uyğunsuzluqlar aşkar edilmişdir. Bu problemlərin aradan qaldırılması və layihənin yüksək keyfiyyətdə tamamlanması üçün əlavə vaxta ehtiyac duyulur.\n\nSizdən layihəni təhvil vermək müddətini iki gün uzatmağınızı xahiş edirəm. Anlayışınız üçün öncədən təşəkkür edirəm.\n\nHörmətlə,\n[Adınız Soyadınız]",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 5.05,
+            "prompt_eval_count": 192,
+            "prompt_eval_duration_ns": 99602000,
+            "eval_count": 195,
+            "eval_duration_ns": 4649408000,
+            "load_duration_ns": 257744000,
+            "total_duration_ns": 5048210100
+          }
+        },
+        {
+          "id": "translation_nuance",
+          "category": "translation",
+          "prompt": "Bu mətni təbii və peşəkar Azərbaycan dilinə tərcümə et:\n\nHuman oversight should not eliminate autonomy; it should make the agent accountable for high-impact decisions while preserving its ability to investigate and propose solutions independently.",
+          "response": "İnsan nəzarəti avtonomiyanı aradan qaldırmamalıdır; əksinə, o, agentin yüksək təsir gücünə malik qərarlar üçün məsuliyyət daşımasını təmin etməli, eyni zamanda onun müstəqil araşdırma aparmaq və həll yolları təklif etmək qabiliyyətini qorumalıdır.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 2.879,
+            "prompt_eval_count": 140,
+            "prompt_eval_duration_ns": 106192000,
+            "eval_count": 95,
+            "eval_duration_ns": 2458946000,
+            "load_duration_ns": 240444300,
+            "total_duration_ns": 2878163300
+          }
+        },
+        {
+          "id": "constraint_following",
+          "category": "instruction following",
+          "prompt": "Agent əsaslı sistemlərdə təhlükəsizlik haqqında məhz 3 maddə yaz. Hər maddə 8-12 sözdən ibarət olsun, fel ilə başlasın və heç bir ingilis sözü işlətmə.",
+          "response": "1. Məlumatların gizliliyini qorumaq üçün güclü şifrələmə üsullarından istifadə edin.\n2. Agentlərin icra etdiyi hər bir əmri mütləq nəzarət altına alın.\n3. Sistem girişlərinə qarşı davamlı monitorinq və müdafiə mexanizmləri qurun.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 2.516,
+            "prompt_eval_count": 148,
+            "prompt_eval_duration_ns": 99326000,
+            "eval_count": 87,
+            "eval_duration_ns": 2125478000,
+            "load_duration_ns": 243228200,
+            "total_duration_ns": 2514901000
+          }
+        },
+        {
+          "id": "reasoning_consistency",
+          "category": "consistency",
+          "prompt": "Bir maliyyə köməkçisi istifadəçinin hesab qalığını oxuya, ödəniş hazırlaya və ödənişi təsdiqləyə bilir. Aşağıdakı üç suala qısa və ardıcıl cavab ver: 1) Hansı əməl sərbəst icra oluna bilər? 2) Hansı əməl üçün istifadəçi təsdiqi lazımdır? 3) Niyə?",
+          "response": "1) Hesab qalığını oxumaq.\n2) Ödənişi təsdiqləmək.\n3) Çünki ödəniş maliyyə əməliyyatıdır və təhlükəsizlik üçün istifadəçinin birbaşa razılığı şərtdir.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 2.09,
+            "prompt_eval_count": 191,
+            "prompt_eval_duration_ns": 100152000,
+            "eval_count": 66,
+            "eval_duration_ns": 1666597000,
+            "load_duration_ns": 275799900,
+            "total_duration_ns": 2088614900
+          }
+        }
+      ],
+      "tool_selection_cases": [
+        {
+          "id": "no_tool",
+          "prompt": "Agent əsaslı iş axınının nə olduğunu bir cümlə ilə izah et.",
+          "expected_tool": null,
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "search_knowledge_base",
+              "args": {
+                "query": "agent-based workflow definition"
+              },
+              "id": "861af8a1-2e1b-4aae-8841-d73229438643",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 1.095,
+            "prompt_eval_count": 643,
+            "prompt_eval_duration_ns": 237419000,
+            "eval_count": 21,
+            "eval_duration_ns": 542530000,
+            "load_duration_ns": 254060500,
+            "total_duration_ns": 1092800800
+          }
+        },
+        {
+          "id": "weather_tool",
+          "prompt": "Sabah Bakı şəhərində hava necə olacaq?",
+          "expected_tool": "get_weather",
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "get_weather",
+              "args": {
+                "city": "Bakı",
+                "date": "tomorrow"
+              },
+              "id": "ab8ff483-62af-4ea7-bcb3-eb6400f6b66e",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 0.964,
+            "prompt_eval_count": 639,
+            "prompt_eval_duration_ns": 247652000,
+            "eval_count": 22,
+            "eval_duration_ns": 465518000,
+            "load_duration_ns": 244935800,
+            "total_duration_ns": 962521700
+          }
+        },
+        {
+          "id": "knowledge_tool",
+          "prompt": "LangGraph-da şərti keçidin necə işlədiyini bilik bazasında axtar və 2 nəticə gətir.",
+          "expected_tool": "search_knowledge_base",
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "search_knowledge_base",
+              "args": {
+                "query": "LangGraph-da şərti keçid necə işləyir",
+                "top_k": 2
+              },
+              "id": "853584e7-32f3-4671-8bfe-311adf8daac7",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 1.352,
+            "prompt_eval_count": 655,
+            "prompt_eval_duration_ns": 260172000,
+            "eval_count": 36,
+            "eval_duration_ns": 867042000,
+            "load_duration_ns": 218484300,
+            "total_duration_ns": 1350171500
+          }
+        }
+      ],
+      "multi_step_agent": {
+        "prompt": "leyla@example.com ünvanlı müştərinin son 2 sifarişini tap. Sifarişlərdən hər hansı biri gecikibsə, həmin müştəri üçün yüksək vaciblikli dəstək bileti yarat və nəticəni Azərbaycan dilində qısa şəkildə yekunlaşdır.",
+        "expected_tool_sequence": [
+          "lookup_customer",
+          "get_orders",
+          "create_support_ticket"
+        ],
+        "actual_tool_trace": [
+          {
+            "tool": "lookup_customer",
+            "args": {
+              "email": "leyla@example.com"
+            },
+            "result": {
+              "customer_id": 42,
+              "name": "Leyla Əliyeva",
+              "email": "leyla@example.com"
+            }
+          },
+          {
+            "tool": "get_orders",
+            "args": {
+              "customer_id": 42,
+              "limit": 2
+            },
+            "result": {
+              "customer_id": 42,
+              "orders": [
+                {
+                  "order_id": "AZ-1042",
+                  "status": "delayed",
+                  "amount_azn": 84.5
+                },
+                {
+                  "order_id": "AZ-1031",
+                  "status": "delivered",
+                  "amount_azn": 39.9
+                }
+              ]
+            }
+          },
+          {
+            "tool": "create_support_ticket",
+            "args": {
+              "customer_id": 42,
+              "severity": "high",
+              "summary": "Sifariş AZ-1042 gecikib."
+            },
+            "result": {
+              "ticket_id": "TKT-9001",
+              "customer_id": 42,
+              "severity": "high",
+              "summary": "Sifariş AZ-1042 gecikib."
+            }
+          }
+        ],
+        "messages": [
+          {
+            "type": "system",
+            "content": "Sən Azərbaycan dilində işləyən agent köməkçisən. İstək uyğun olduqda yalnız təqdim edilmiş alətlərdən istifadə et. Alət arqumentlərini sxemə tam uyğun yarat, alət nəticələrini uydurma və bütün lazım olan addımlar bitdikdən sonra Azərbaycan dilində qısa yekun cavab ver."
+          },
+          {
+            "type": "human",
+            "content": "leyla@example.com ünvanlı müştərinin son 2 sifarişini tap. Sifarişlərdən hər hansı biri gecikibsə, həmin müştəri üçün yüksək vaciblikli dəstək bileti yarat və nəticəni Azərbaycan dilində qısa şəkildə yekunlaşdır."
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "lookup_customer",
+                "args": {
+                  "email": "leyla@example.com"
+                },
+                "id": "698b0514-21b8-4de9-9595-478ad6c9e5a9",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"customer_id\": 42, \"name\": \"Leyla Əliyeva\", \"email\": \"leyla@example.com\"}",
+            "name": "lookup_customer",
+            "tool_call_id": "698b0514-21b8-4de9-9595-478ad6c9e5a9"
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "get_orders",
+                "args": {
+                  "customer_id": 42,
+                  "limit": 2
+                },
+                "id": "ccc39acd-ced7-498a-840c-364cb98c70c8",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"customer_id\": 42, \"orders\": [{\"order_id\": \"AZ-1042\", \"status\": \"delayed\", \"amount_azn\": 84.5}, {\"order_id\": \"AZ-1031\", \"status\": \"delivered\", \"amount_azn\": 39.9}]}",
+            "name": "get_orders",
+            "tool_call_id": "ccc39acd-ced7-498a-840c-364cb98c70c8"
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "create_support_ticket",
+                "args": {
+                  "customer_id": 42,
+                  "severity": "high",
+                  "summary": "Sifariş AZ-1042 gecikib."
+                },
+                "id": "952bf0d4-090f-4856-af45-1b67e2a6eff0",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"ticket_id\": \"TKT-9001\", \"customer_id\": 42, \"severity\": \"high\", \"summary\": \"Sifariş AZ-1042 gecikib.\"}",
+            "name": "create_support_ticket",
+            "tool_call_id": "952bf0d4-090f-4856-af45-1b67e2a6eff0"
+          },
+          {
+            "type": "ai",
+            "content": "Leyla Əliyevanın (ID: 42) son iki sifarişi tapıldı. Sifariş AZ-1042-nin statusu \"gecikmiş\" olduğu üçün müştəri üçün yüksək vaciblikli dəstək bileti (TKT-9001) yaradıldı.",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          }
+        ],
+        "elapsed_seconds": 6.034
+      },
+      "ollama_ps": "NAME                  ID              SIZE     PROCESSOR    CONTEXT    UNTIL               \ngemma4:12b-it-q8_0    41c402fdddc2    13 GB    100% GPU     65536      14 minutes from now",
+      "nvidia_smi": "NVIDIA GeForce RTX 5090 Laptop GPU, 24463 MiB, 15619 MiB, 8519 MiB"
+    },
+    "gemma4:e4b-it-bf16": {
+      "language_cases": [
+        {
+          "id": "orthography_grammar",
+          "category": "orthography and grammar",
+          "prompt": "Aşağıdakı mətni orfoqrafik və qrammatik baxımdan düzəlt. İzah vermə, yalnız düzəldilmiş variantı yaz:\n\nMən sabah Bakıya gələcəm və səninlə görüşməy istəyirəm. Əlbətdəki vaxtın olsa mənə xəbər elə.",
+          "response": "Mən sabah Bakıya gələcəm və səninlə görüşmək istəyirəm. Əgər vaxtın olsa, mənə xəbər ver.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 8.21,
+            "prompt_eval_count": 164,
+            "prompt_eval_duration_ns": 186817000,
+            "eval_count": 40,
+            "eval_duration_ns": 704233000,
+            "load_duration_ns": 7314568900,
+            "total_duration_ns": 8208348900
+          }
+        },
+        {
+          "id": "formal_writing",
+          "category": "formal writing",
+          "prompt": "Aşağıdakı qeyri-rəsmi mesajı 70-90 sözlük rəsmi iş e-poçtuna çevir. Mövzu sətri, müraciət, əsas hissə və nəzakətli sonluq olsun:\n\nSalam müəllim, layihəni bu gün çatdıra bilmirəm, çünki məlumatlarda problem çıxdı. İki gün də vaxt versəniz yaxşı olar.",
+          "response": "**Mövzu:** Layihənin təqdim edilməsi ilə bağlı xahiş\n\nHörmətli [Müəllimin Adı/Soyadı],\n\nBu e-poçt vasitəsilə layihəni müddətindən əvvəl çatdıra bilməməkdə çətinlik çəkdiyimi bildirirəm. Layihənin hazırlanması zamanı məlumat bazasında gözlənilməz texniki problemlər yaranıb.\n\nBu vəziyyəti aradan qaldırmaq üçün əlavə vaxta ehtiyac duyuram. Buna görə də, layihəni təqdim etmək üçün iki günlük gecikməyə icazə verməyinizi xahiş edirəm. Bu müddət ərzində bütün problemləri həll edib, keyfiyyətli nəticə təqdim etməyə zəmanət verirəm.\n\nHörmətlə,\n\n[Adınız Soyadınız]",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 4.311,
+            "prompt_eval_count": 188,
+            "prompt_eval_duration_ns": 63078000,
+            "eval_count": 226,
+            "eval_duration_ns": 4022311000,
+            "load_duration_ns": 213542400,
+            "total_duration_ns": 4309101600
+          }
+        },
+        {
+          "id": "translation_nuance",
+          "category": "translation",
+          "prompt": "Bu mətni təbii və peşəkar Azərbaycan dilinə tərcümə et:\n\nHuman oversight should not eliminate autonomy; it should make the agent accountable for high-impact decisions while preserving its ability to investigate and propose solutions independently.",
+          "response": "İnsan nəzarəti avtonomiyanı ləğv etməməlidir; əksinə, onun yüksək təsirli qərarlar üçün məsuliyyət daşımasını təmin edərkən müstəqil şəkildə araşdırma və həll yolları təklif etmə qabiliyyətini qorumaq lazımdır.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 1.954,
+            "prompt_eval_count": 136,
+            "prompt_eval_duration_ns": 58166000,
+            "eval_count": 88,
+            "eval_duration_ns": 1643294000,
+            "load_duration_ns": 236707500,
+            "total_duration_ns": 1952870400
+          }
+        },
+        {
+          "id": "constraint_following",
+          "category": "instruction following",
+          "prompt": "Agent əsaslı sistemlərdə təhlükəsizlik haqqında məhz 3 maddə yaz. Hər maddə 8-12 sözdən ibarət olsun, fel ilə başlasın və heç bir ingilis sözü işlətmə.",
+          "response": "1. Təyin etmək lazımdır agentlərin hədəflərini sərt şəkildə məhdudlaşdıraraq.\n2. Monitorinq etmək vacibdir sistemlərdə baş verən bütün fəaliyyətləri davamlı olaraq.\n3. Müdafiə etmək lazımdır potensial hücum nöqtələrini proaktiv şəkildə aşkar edərək.",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 2.147,
+            "prompt_eval_count": 144,
+            "prompt_eval_duration_ns": 55693000,
+            "eval_count": 105,
+            "eval_duration_ns": 1825217000,
+            "load_duration_ns": 255346900,
+            "total_duration_ns": 2145370200
+          }
+        },
+        {
+          "id": "reasoning_consistency",
+          "category": "consistency",
+          "prompt": "Bir maliyyə köməkçisi istifadəçinin hesab qalığını oxuya, ödəniş hazırlaya və ödənişi təsdiqləyə bilir. Aşağıdakı üç suala qısa və ardıcıl cavab ver: 1) Hansı əməl sərbəst icra oluna bilər? 2) Hansı əməl üçün istifadəçi təsdiqi lazımdır? 3) Niyə?",
+          "response": "1) Hesab qalığını oxumaq.\n2) Ödəniş hazırlamaq və ödənişi təsdiqləmək.\n3) Çünki bu əməllər maliyyəyə birbaşa təsir edir (pulun çıxarılması/hərəkət etdirilməsi).",
+          "reasoning": null,
+          "metrics": {
+            "elapsed_seconds": 1.595,
+            "prompt_eval_count": 187,
+            "prompt_eval_duration_ns": 59456000,
+            "eval_count": 73,
+            "eval_duration_ns": 1294185000,
+            "load_duration_ns": 230754500,
+            "total_duration_ns": 1594159000
+          }
+        }
+      ],
+      "tool_selection_cases": [
+        {
+          "id": "no_tool",
+          "prompt": "Agent əsaslı iş axınının nə olduğunu bir cümlə ilə izah et.",
+          "expected_tool": null,
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "search_knowledge_base",
+              "args": {
+                "query": "Agent əsaslı iş axını nədir?"
+              },
+              "id": "8eafd3cc-6c9a-44ae-adf0-a4145dfad491",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 0.836,
+            "prompt_eval_count": 639,
+            "prompt_eval_duration_ns": 151467000,
+            "eval_count": 26,
+            "eval_duration_ns": 438616000,
+            "load_duration_ns": 231439900,
+            "total_duration_ns": 834915000
+          }
+        },
+        {
+          "id": "weather_tool",
+          "prompt": "Sabah Bakı şəhərində hava necə olacaq?",
+          "expected_tool": "get_weather",
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "get_weather",
+              "args": {
+                "city": "Bakı",
+                "date": "tomorrow"
+              },
+              "id": "8124ea29-1973-41a5-9a05-49cf10864b05",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 3.212,
+            "prompt_eval_count": 635,
+            "prompt_eval_duration_ns": 2565315000,
+            "eval_count": 22,
+            "eval_duration_ns": 424728000,
+            "load_duration_ns": 215868600,
+            "total_duration_ns": 3210484100
+          }
+        },
+        {
+          "id": "knowledge_tool",
+          "prompt": "LangGraph-da şərti keçidin necə işlədiyini bilik bazasında axtar və 2 nəticə gətir.",
+          "expected_tool": "search_knowledge_base",
+          "response": "",
+          "tool_calls": [
+            {
+              "name": "search_knowledge_base",
+              "args": {
+                "query": "LangGraph-da şərti keçid necə işləyir",
+                "top_k": 2
+              },
+              "id": "5f708970-0e66-43c9-8d73-64b87fa0948f",
+              "type": "tool_call"
+            }
+          ],
+          "invalid_tool_calls": [],
+          "metrics": {
+            "elapsed_seconds": 0.889,
+            "prompt_eval_count": 651,
+            "prompt_eval_duration_ns": 61622000,
+            "eval_count": 36,
+            "eval_duration_ns": 608062000,
+            "load_duration_ns": 214402600,
+            "total_duration_ns": 888089600
+          }
+        }
+      ],
+      "multi_step_agent": {
+        "prompt": "leyla@example.com ünvanlı müştərinin son 2 sifarişini tap. Sifarişlərdən hər hansı biri gecikibsə, həmin müştəri üçün yüksək vaciblikli dəstək bileti yarat və nəticəni Azərbaycan dilində qısa şəkildə yekunlaşdır.",
+        "expected_tool_sequence": [
+          "lookup_customer",
+          "get_orders",
+          "create_support_ticket"
+        ],
+        "actual_tool_trace": [
+          {
+            "tool": "lookup_customer",
+            "args": {
+              "email": "leyla@example.com"
+            },
+            "result": {
+              "customer_id": 42,
+              "name": "Leyla Əliyeva",
+              "email": "leyla@example.com"
+            }
+          },
+          {
+            "tool": "get_orders",
+            "args": {
+              "customer_id": 42,
+              "limit": 2
+            },
+            "result": {
+              "customer_id": 42,
+              "orders": [
+                {
+                  "order_id": "AZ-1042",
+                  "status": "delayed",
+                  "amount_azn": 84.5
+                },
+                {
+                  "order_id": "AZ-1031",
+                  "status": "delivered",
+                  "amount_azn": 39.9
+                }
+              ]
+            }
+          },
+          {
+            "tool": "create_support_ticket",
+            "args": {
+              "customer_id": 42,
+              "severity": "high",
+              "summary": "Gecikmiş sifariş AZ-1042 mövcuddur."
+            },
+            "result": {
+              "ticket_id": "TKT-9001",
+              "customer_id": 42,
+              "severity": "high",
+              "summary": "Gecikmiş sifariş AZ-1042 mövcuddur."
+            }
+          }
+        ],
+        "messages": [
+          {
+            "type": "system",
+            "content": "Sən Azərbaycan dilində işləyən agent köməkçisən. İstək uyğun olduqda yalnız təqdim edilmiş alətlərdən istifadə et. Alət arqumentlərini sxemə tam uyğun yarat, alət nəticələrini uydurma və bütün lazım olan addımlar bitdikdən sonra Azərbaycan dilində qısa yekun cavab ver."
+          },
+          {
+            "type": "human",
+            "content": "leyla@example.com ünvanlı müştərinin son 2 sifarişini tap. Sifarişlərdən hər hansı biri gecikibsə, həmin müştəri üçün yüksək vaciblikli dəstək bileti yarat və nəticəni Azərbaycan dilində qısa şəkildə yekunlaşdır."
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "lookup_customer",
+                "args": {
+                  "email": "leyla@example.com"
+                },
+                "id": "8e7803ac-19bf-4ccd-924a-7236003520db",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"customer_id\": 42, \"name\": \"Leyla Əliyeva\", \"email\": \"leyla@example.com\"}",
+            "name": "lookup_customer",
+            "tool_call_id": "8e7803ac-19bf-4ccd-924a-7236003520db"
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "get_orders",
+                "args": {
+                  "customer_id": 42,
+                  "limit": 2
+                },
+                "id": "37c254b6-5104-4465-be20-4b2907766616",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"customer_id\": 42, \"orders\": [{\"order_id\": \"AZ-1042\", \"status\": \"delayed\", \"amount_azn\": 84.5}, {\"order_id\": \"AZ-1031\", \"status\": \"delivered\", \"amount_azn\": 39.9}]}",
+            "name": "get_orders",
+            "tool_call_id": "37c254b6-5104-4465-be20-4b2907766616"
+          },
+          {
+            "type": "ai",
+            "content": "",
+            "tool_calls": [
+              {
+                "name": "create_support_ticket",
+                "args": {
+                  "customer_id": 42,
+                  "severity": "high",
+                  "summary": "Gecikmiş sifariş AZ-1042 mövcuddur."
+                },
+                "id": "e454217d-44c9-4019-8530-33cdef04bb4f",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": []
+          },
+          {
+            "type": "tool",
+            "content": "{\"ticket_id\": \"TKT-9001\", \"customer_id\": 42, \"severity\": \"high\", \"summary\": \"Gecikmiş sifariş AZ-1042 mövcuddur.\"}",
+            "name": "create_support_ticket",
+            "tool_call_id": "e454217d-44c9-4019-8530-33cdef04bb4f"
+          },
+          {
+            "type": "ai",
+            "content": "Müştəri Leyla Əliyeva (ID: 42) üçün son iki sifariş yoxlanıldı. Birinci sifariş (AZ-1042) gecikdir və buna görə müştəri üçün yüksək vaciblikli dəstək bileti yaradıldı (Bilet ID: TKT-9001). İkinci sifariş isə çatdırılıb.",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          }
+        ],
+        "elapsed_seconds": 4.182
+      },
+      "ollama_ps": "NAME                  ID              SIZE      PROCESSOR    CONTEXT    UNTIL               \ngemma4:e4b-it-bf16    d0d10a1b1ddb    9.7 GB    100% GPU     65536      14 minutes from now",
+      "nvidia_smi": "NVIDIA GeForce RTX 5090 Laptop GPU, 24463 MiB, 12518 MiB, 11620 MiB"
+    }
+  }
+}

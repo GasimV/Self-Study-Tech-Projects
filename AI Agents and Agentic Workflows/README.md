@@ -220,18 +220,22 @@ For this 24 GB GPU, the practical choices are:
 ### Recommended primary model: 12B Q8 vs E4B BF16
 
 For quality-focused local agents, Azerbaijani generation, and multimodal work,
-the provisional recommendation is `gemma4:12b-it-q8_0`. Keep
+the measured recommendation is `gemma4:12b-it-q8_0`. Keep
 `gemma4:e4b-it-bf16` as the faster, lower-memory alternative.
 
 | Key point | `gemma4:12b-it-q8_0` | `gemma4:e4b-it-bf16` |
 | --- | --- | --- |
-| Overall quality | Expected to be better because of the larger 12B architecture | Good, but limited by the smaller E4B architecture |
-| Azerbaijani | Expected to improve grammar, nuance, translation, and long-form coherence; local evidence is pending | Demonstrated good conversational Azerbaijani locally, with one minor spacing error |
+| Overall quality | Stronger in the matched local language benchmark | Good, but limited by the smaller E4B architecture |
+| Azerbaijani | Better grammar correction, translation, policy reasoning, and grounded summaries in the local test | Fluent and useful, but made more grammatical and semantic errors |
 | Multimodality | Stronger unified text, image, and audio architecture | Supports text, image, and audio through smaller dedicated encoders |
 | Native context | 256K | 128K |
-| Agent and tool use | Expected to be more reliable for complex instructions and tool selection | Suitable for lighter and less complex workflows |
-| Expected 64K VRAM use | Approximately 15-17 GB dedicated VRAM and likely 100% GPU layer allocation | Observed 12.5 GB total dedicated GPU usage and 100% GPU layer allocation |
+| Agent and tool use | Completed the exact three-tool workflow with valid typed arguments and a cleaner final summary | Completed the same workflow correctly, with a minor grammatical error in the summary |
+| Observed 64K GPU use | 15,619 MiB total dedicated usage; 13 GB Ollama allocation; 100% GPU | 12,518 MiB total dedicated usage; 9.7 GB Ollama allocation; 100% GPU |
+| Generation speed | 40.7 tokens/s across the five language cases | 56.1 tokens/s across the five language cases |
 | Best role | Primary quality-focused local model | Faster, efficient fallback |
+
+The multimodality comparison above is based on the published architecture and
+benchmarks; a matched local image/audio A/B test has not yet been performed.
 
 Official model benchmarks favor Gemma 4 12B over E4B:
 
@@ -244,20 +248,60 @@ Official model benchmarks favor Gemma 4 12B over E4B:
 
 These published results are architecture-level evidence, not direct results
 for Ollama's Q8 variant. Q8 quantization introduces some precision loss, but
-the working hypothesis is that the 12B model's additional capacity will
-outweigh that loss. No official Azerbaijani-specific benchmark is available,
-so the Azerbaijani recommendation remains provisional.
+the local comparison supports the conclusion that the 12B model's additional
+capacity outweighs that loss for the tested tasks. No official
+Azerbaijani-specific benchmark is available, so broader conclusions still
+require a larger test set.
 
-#### Pending Azerbaijani A/B benchmark
+#### Measured Azerbaijani and agentic A/B benchmark
 
-After `gemma4:12b-it-q8_0` finishes downloading, both local models will be
-tested with identical Azerbaijani prompts and matching generation settings.
-The comparison will cover conversational fluency, orthography and grammar,
-formal writing, translation, instruction following, consistency, and agentic
-tool-use behavior for LangChain and LangGraph workflows, including correct tool
-selection, typed argument generation, schema adherence, tool-result handling,
-and multi-step decision consistency. Results will be documented here without
-replacing the already recorded E4B evidence.
+The reproducible local benchmark used the same settings for both models:
+
+- 65,536-token context;
+- temperature `0`, seed `42`, and a 500-token output limit;
+- thinking disabled so hidden reasoning length could not truncate final output;
+- identical Azerbaijani system instructions and prompts;
+- identical typed tools and an explicit LangGraph agent/tool loop;
+- one loaded model and one parallel request at a time.
+
+The [benchmark harness](benchmarks/gemma4_ab_benchmark.py) and
+[raw JSON evidence](benchmarks/results/gemma4_ab_benchmark.json) preserve every
+prompt, response, tool call, tool result, timing value, and memory observation.
+
+##### Azerbaijani results
+
+| Test | Measured result |
+| --- | --- |
+| Orthography and grammar | 12B correctly changed `gələcəm` to `gələcəyəm`, `görüşməy` to `görüşmək`, and `Əlbətdəki` to `Əlbəttə`; E4B retained colloquial `gələcəm` and avoided rather than corrected the last expression. |
+| Formal writing | 12B produced more natural professional prose, but both missed the requested 70-90 words: 12B produced about 60 and E4B about 69. |
+| Translation | Both were usable; 12B preserved the explicit agent referent and expressed accountability more precisely, while E4B introduced a more ambiguous pronoun. |
+| Constrained output | Both produced exactly three items within the requested word range, but neither followed every lexical and verb-first constraint perfectly. |
+| Policy consistency | 12B correctly reserved confirmation for payment approval; E4B also required confirmation for merely preparing the payment. |
+
+The small five-prompt test therefore favors 12B Q8 for Azerbaijani quality,
+while also recording that neither model achieved perfect constraint adherence.
+
+##### LangChain and LangGraph tool-use results
+
+Both models were tested through `ChatOllama.bind_tools` with Pydantic argument
+schemas and an explicit LangGraph state loop using deterministic local mock
+tools.
+
+| Test | 12B Q8 | E4B BF16 |
+| --- | --- | --- |
+| Direct tool selection | 2/3 expected decisions | 2/3 expected decisions |
+| Weather arguments | Correct `city="Bakı"`, `date="tomorrow"` | Correct `city="Bakı"`, `date="tomorrow"` |
+| Knowledge-search arguments | Correct query and `top_k=2` | Correct query and `top_k=2` |
+| No-tool restraint | Failed by unnecessarily calling knowledge search | Failed in the same way |
+| Multi-step sequence | Exact: customer lookup, order lookup, ticket creation | Exact: customer lookup, order lookup, ticket creation |
+| Conditional handling | Created a high-severity ticket only after observing the delayed order | Same correct conditional behavior |
+| Final grounded answer | Correct and grammatically clean | Correct, but used the malformed phrase `sifariş gecikdir` |
+
+The agentic mechanics were effectively tied: both models generated valid typed
+arguments, consumed tool results, and completed the required three-step flow.
+The 12B model's advantage appeared in the quality of the grounded Azerbaijani
+answer, not in tool-call correctness. Both models need stronger prompting or a
+deterministic policy gate to avoid unnecessary tool calls.
 
 Do not increase context merely to fill unused VRAM. Context capacity only
 helps when the prompt, conversation, retrieved documents, and generated output
