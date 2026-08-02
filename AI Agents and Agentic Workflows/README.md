@@ -278,7 +278,7 @@ prompt, response, tool call, tool result, timing value, and memory observation.
 | Constrained output | Both produced exactly three items within the requested word range, but neither followed every lexical and verb-first constraint perfectly. |
 | Policy consistency | 12B correctly reserved confirmation for payment approval; E4B also required confirmation for merely preparing the payment. |
 
-The small five-prompt test therefore favors 12B Q8 for Azerbaijani quality,
+The **small five-prompt test therefore favors 12B Q8 for Azerbaijani quality**,
 while also recording that neither model achieved perfect constraint adherence.
 
 ##### LangChain and LangGraph tool-use results
@@ -299,9 +299,9 @@ tools.
 
 The agentic mechanics were effectively tied: both models generated valid typed
 arguments, consumed tool results, and completed the required three-step flow.
-The 12B model's advantage appeared in the quality of the grounded Azerbaijani
-answer, not in tool-call correctness. Both models need stronger prompting or a
-deterministic policy gate to avoid unnecessary tool calls.
+***The 12B model's advantage appeared in the quality of the grounded Azerbaijani
+answer***, *not in tool-call correctness*. **Both models need stronger prompting or a
+deterministic policy gate to avoid unnecessary tool calls**.
 
 Do not increase context merely to fill unused VRAM. Context capacity only
 helps when the prompt, conversation, retrieved documents, and generated output
