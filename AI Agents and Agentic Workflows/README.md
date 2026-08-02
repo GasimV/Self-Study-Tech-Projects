@@ -253,8 +253,11 @@ so the Azerbaijani recommendation remains provisional.
 After `gemma4:12b-it-q8_0` finishes downloading, both local models will be
 tested with identical Azerbaijani prompts and matching generation settings.
 The comparison will cover conversational fluency, orthography and grammar,
-formal writing, translation, instruction following, and consistency. Results
-will be documented here without replacing the already recorded E4B evidence.
+formal writing, translation, instruction following, consistency, and agentic
+tool-use behavior for LangChain and LangGraph workflows, including correct tool
+selection, typed argument generation, schema adherence, tool-result handling,
+and multi-step decision consistency. Results will be documented here without
+replacing the already recorded E4B evidence.
 
 Do not increase context merely to fill unused VRAM. Context capacity only
 helps when the prompt, conversation, retrieved documents, and generated output
