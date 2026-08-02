@@ -26,6 +26,33 @@ embeddings, and the default Ollama tag stores most model weights at 4-bit
 precision. Low VRAM use does not mean layers are being offloaded: the
 `PROCESSOR` column from `ollama ps` is the authoritative check.
 
+### Verified default Q4 runtime evidence
+
+The original `gemma4:e4b` run used the default `Q4_K_M` weights and a 32K
+context. While the model was loaded, `ollama ps` reported:
+
+```text
+NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL
+gemma4:e4b    c6eb396dbd59    3.4 GB    100% GPU     32768      14 seconds from now
+```
+
+The same run produced these Windows Task Manager readings after generation:
+
+| Measurement | Observed value |
+| --- | --- |
+| Dedicated GPU memory | 6.1 GB / 24.0 GB |
+| Shared GPU memory | 6.0 GB / 47.4 GB |
+| Total GPU memory | 12.1 GB / 71.4 GB |
+| GPU utilization while idle | 0% |
+| GPU temperature | 42 C |
+
+This is direct evidence that the quantized model ran with all layers assigned
+to the GPU while using substantially less dedicated VRAM than the BF16
+variant. The 3.4 GB value is Ollama's loaded runtime allocation, whereas the
+6.1 GB Task Manager value is total dedicated GPU memory in use by the system at
+that moment. Shared and total GPU-memory readings are also system-wide and
+should not be interpreted as Ollama CPU offload.
+
 ### Inspect a model and its runtime allocation
 
 Show the stored model's parameter count, maximum context, and weight
