@@ -16,3 +16,5 @@ env_*/
 !requirements.txt
 !Moby-Dick.txt
 !gemma4_ab_benchmark.json
+!03-qa-chatbots-with-rag/Paestum-Britannica.txt
+!03-qa-chatbots-with-rag/Prompt_section_6_1_1.txt
