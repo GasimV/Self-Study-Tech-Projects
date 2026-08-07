@@ -42,7 +42,7 @@ All nodes must receive and return updates compatible with this state structure.
 
 ## Nodes and edges
 
-Node functions perform discrete tasks such as searching, parsing, or summarizing. They should be pure functions when possible. A node receives the current state and returns only the fields it needs to update, not a complete replacement state:
+Node functions perform discrete tasks such as searching, parsing, or summarizing. They should be pure functions when possible. A node receives the current state and returns only the fields it needs to update (return partial updates such as ```{"search_queries": queries}```), not a complete replacement state:
 
 ```python
 def generate_queries(state: ResearchState) -> dict:
@@ -80,7 +80,7 @@ graph.add_edge("write_report", END)
 
 Conditional edges choose the next node from runtime conditions. For example, a research workflow can return to search when the retrieved content is insufficient or proceed to synthesis when enough sources have been found.
 
-Router functions return a string that matches one of the configured route keys:
+Router functions for conditional edges must return a string that matches (the next node names) one of the configured route keys:
 
 ```python
 def route_after_evaluation(state: ResearchState) -> str:
