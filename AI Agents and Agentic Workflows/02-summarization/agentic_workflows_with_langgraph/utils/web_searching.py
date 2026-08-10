@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 import time
 import random
 import requests
-from duckduckgo_search.exceptions import DuckDuckGoSearchException
+from ddgs.exceptions import DDGSException, RatelimitException
 
 # Create a singleton instance of the DuckDuckGoSearchAPIWrapper to reuse
 _ddg_instance = None
@@ -68,8 +68,8 @@ def web_search(web_query: str, num_results: int) -> List[str]:
                     break
                 time.sleep(1)  # Brief pause before retrying
                 
-        except DuckDuckGoSearchException as e:
-            if "Ratelimit" in str(e) and attempt < max_retries - 1:
+        except RatelimitException as e:
+            if attempt < max_retries - 1:
                 # Exponential backoff with jitter for rate limit errors
                 delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
                 print(f"DuckDuckGo sorğu limitinə çatdı. {delay:.2f} saniyədən sonra yenidən sınanır... (Cəhd {attempt+1}/{max_retries})")
@@ -77,6 +77,9 @@ def web_search(web_query: str, num_results: int) -> List[str]:
             else:
                 print(f"DuckDuckGo axtarışı uğursuz oldu: {str(e)}")
                 break
+        except DDGSException as e:
+            print(f"DuckDuckGo axtarışı uğursuz oldu: {str(e)}")
+            break
         except Exception as e:
             print(f"Veb axtarışı zamanı xəta baş verdi: {str(e)}")
             if attempt < max_retries - 1:
