@@ -6,6 +6,16 @@ This repo is where I work through books, tutorials, and my own experiments while
 studying the modern agent stack. All examples are adapted to run against a **local
 LLM** instead of paid cloud APIs, so everything here runs offline and free.
 
+## Learning source and disclaimer
+
+This repository uses Roberto Infante's Manning book [*AI Agents and
+Applications: With LangChain, LangGraph, and MCP*](https://www.manning.com/books/ai-agents-and-applications)
+as a primary learning resource. The code and notes here are personal self-study
+adaptations, including changes for local Ollama models, and are not an official
+companion repository. This project is not affiliated with or endorsed by
+Roberto Infante or Manning Publications. The original book and its associated
+materials remain the property of their respective copyright holders.
+
 ## Local Ollama configuration
 
 The local development machine uses Ollama `0.32.5` with an NVIDIA GeForce RTX
