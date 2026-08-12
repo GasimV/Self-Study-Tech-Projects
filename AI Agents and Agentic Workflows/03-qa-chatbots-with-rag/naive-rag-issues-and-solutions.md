@@ -71,8 +71,7 @@ The advantage is that `MultiVectorRetriever` is **more general**. The vectors re
 `Parent document`
 → child-chunk embeddings
 → LLM-generated summary embedding
-→ hypothetical questions
-→ generated-question embeddings
+→ hypothetical questions / generated-question embeddings
 → other representations
 
 > and **any of those vectors can lead back to the same parent document**.
