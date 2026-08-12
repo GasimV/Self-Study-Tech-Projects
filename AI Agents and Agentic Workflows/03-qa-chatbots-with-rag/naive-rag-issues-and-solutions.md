@@ -26,3 +26,58 @@
 In one line:
 
 > Search small chunks for precision → return their larger parent chunks for context.**
+
+# MultiVectorRetriever
+
+### Key concept of `MultiVectorRetriever`
+
+**Search using multiple small/vector representations → return the larger parent document.**
+
+Mechanics:
+
+> query → semantic search over child chunks → matching child → read doc_id → fetch parent chunk → return parent to LLM
+
+So again:
+
+- **small child chunks = retrieval units**
+- **large parent chunks = synthesis/context units**
+
+### Main difference from `ParentDocumentRetriever`
+
+`ParentDocumentRetriever` is basically a **specialized convenience version** of this pattern.
+
+With `ParentDocumentRetriever`:
+
+* you give it `parent_splitter` and `child_splitter`
+* `add_documents()` automatically:
+
+  * creates parents
+  * creates children
+  * assigns parent IDs
+  * stores children in vector store
+  * stores parents in document store
+
+With `MultiVectorRetriever`, **you manage those steps yourself** in the code:
+
+* create parents
+* create children
+* generate IDs
+* attach `doc_id`
+* store children
+* store parents
+
+The advantage is that `MultiVectorRetriever` is **more general**. The vectors representing one parent do not have to be only child chunks. Later you could have:
+
+`Parent document`
+→ child-chunk embeddings
+→ LLM-generated summary embedding
+→ hypothetical questions
+→ generated-question embeddings
+→ other representations
+
+> and **any of those vectors can lead back to the same parent document**.
+
+So the easiest way to remember it is:
+
+**`ParentDocumentRetriever` = convenient parent/child retriever.**
+**`MultiVectorRetriever` = more general framework where many vector representations can point to the same parent.**
