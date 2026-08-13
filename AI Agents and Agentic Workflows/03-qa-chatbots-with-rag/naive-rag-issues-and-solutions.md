@@ -10,7 +10,14 @@
 | Irrelevant retrieved results fed to the LLM | Retrieval postprocessing |
 
 
-## ParentDocumentRetriever — simple concept
+## Table of Contents
+* [`ParentDocumentRetriever` — simple concept](#parentdocumentretriever--simple-concept)
+* [`MultiVectorRetriever`](#multivectorretriever)
+  * [Key concept of `MultiVectorRetriever`](#key-concept-of-multivectorretriever)
+  * [Main difference from `ParentDocumentRetriever`](#main-difference-from-parentdocumentretriever)
+* [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
+
+## `ParentDocumentRetriever` — simple concept
 
 * Split each document into **large parent chunks**.
 * Split each parent into **small child chunks**.
@@ -27,7 +34,7 @@ In one line:
 
 > Search small chunks for precision → return their larger parent chunks for context.**
 
-# MultiVectorRetriever
+## `MultiVectorRetriever`
 
 ### Key concept of `MultiVectorRetriever`
 
@@ -80,3 +87,43 @@ So the easiest way to remember it is:
 
 **`ParentDocumentRetriever` = convenient parent/child retriever.**
 **`MultiVectorRetriever` = more general framework where many vector representations can point to the same parent.**
+
+## Embedding document summaries `MultiVectorRetriever`
+
+In [**this specific implementation**](advanced_indexing.ipynb), the idea is even simpler:
+
+**Search using summary embeddings → return the original large/coarse chunk.**
+
+- There are **no child chunks at all** in this version.
+
+Mechanically:
+
+> `coarse chunk → LLM creates summary → summary is embedded → vector store`
+
+while:
+
+> `coarse chunk → document store`
+
+At query time:
+
+> `query → similarity search over SUMMARY embeddings only → matched summary → doc_id → fetch original coarse chunk → return coarse chunk to LLM`
+
+So for the code in the notebook:
+
+* **Coarse/original chunk:** stored in `docstore`, **not embedded**
+* **Summary:** stored + embedded in the vector store
+* **Child chunks:** **not created or used**
+* **Similarity search:** searches **only summary embeddings**
+* **Final retrieved document:** the **original coarse chunk**
+
+Summary embeddings could be stored “alongside the original chunk embeddings,” but **the notenook's code only embeds the summaries**.
+
+So compare the two strategies:
+
+**Previous strategy:**
+> `query → child embeddings → parent/coarse chunk`
+
+**Summary strategy:**
+> `query → summary embeddings → parent/coarse chunk`
+
+Same final goal, but a different representation is used for searching.
