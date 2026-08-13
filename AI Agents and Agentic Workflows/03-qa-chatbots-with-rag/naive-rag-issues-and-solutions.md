@@ -16,6 +16,7 @@
   * [Key concept of `MultiVectorRetriever`](#key-concept-of-multivectorretriever)
   * [Main difference from `ParentDocumentRetriever`](#main-difference-from-parentdocumentretriever)
 * [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
+* [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -127,3 +128,16 @@ So compare the two strategies:
 > `query → summary embeddings → parent/coarse chunk`
 
 Same final goal, but a different representation is used for searching.
+
+## Why these techniques are called **multi-vector embedding approach**?
+
+Because **one parent document/chunk can be represented by multiple vectors** for retrieval.
+
+For example, one parent chunk can be represented by vectors from:
+
+* several **child chunks**, or
+* its **summary**, generated questions, etc.
+
+All those vectors point back to the **same parent chunk**.
+
+> So: **multiple vectors for one document → MultiVector retrieval.**
