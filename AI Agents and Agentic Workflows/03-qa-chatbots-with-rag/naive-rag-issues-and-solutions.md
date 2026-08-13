@@ -18,6 +18,7 @@
 * [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
 * [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
 * [**Hypothetical-question embeddings — simple concept**](#hypothetical-question-embeddings--simple-concept)
+* [Can we combine all these techniques in our RAG solution (and is this good) or not?](#can-we-combine-all-these-techniques-in-our-rag-solution-and-is-this-good-or-not)
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -157,3 +158,20 @@ In one line:
 **Search question-like embeddings → return the full source chunk.**
 
 > Why it helps: a user query is often more semantically similar to another **question** than to the wording of the answer/document itself.
+
+
+## Can we combine all these techniques in our RAG solution (and is this good) or not?
+
+Yes, you **can combine them** in one RAG system.
+
+For the same parent chunk, you could store vectors from:
+
+* child chunks
+* summaries
+* hypothetical questions
+* optionally the parent itself
+
+Then any matching vector points back to the same parent chunk.
+
+This can improve recall and robustness, but **more is not always better**: it increases storage, ingestion cost, latency, and can add noisy matches. Usually, test combinations and keep only the ones that measurably improve retrieval quality.
+
