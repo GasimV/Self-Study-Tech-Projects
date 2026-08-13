@@ -17,6 +17,7 @@
   * [Main difference from `ParentDocumentRetriever`](#main-difference-from-parentdocumentretriever)
 * [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
 * [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
+* [**Hypothetical-question embeddings — simple concept**](#hypothetical-question-embeddings--simple-concept)
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -141,3 +142,18 @@ For example, one parent chunk can be represented by vectors from:
 All those vectors point back to the **same parent chunk**.
 
 > So: **multiple vectors for one document → MultiVector retrieval.**
+
+## **Hypothetical-question embeddings — simple concept**
+
+* Split content into **large/coarse chunks**.
+* For each chunk, use an LLM to generate several **questions that this chunk could answer**.
+* Embed and store those **hypothetical questions** in the vector store.
+* Store the original **coarse chunk** in the document store.
+* At query time, compare the user’s question against the **hypothetical-question embeddings**.
+* When one matches, use its `doc_id` to fetch and return the **original coarse chunk** to the LLM. 
+
+In one line:
+
+**Search question-like embeddings → return the full source chunk.**
+
+> Why it helps: a user query is often more semantically similar to another **question** than to the wording of the answer/document itself.
