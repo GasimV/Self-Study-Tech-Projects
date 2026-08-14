@@ -19,6 +19,10 @@
 * [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
 * [**Hypothetical-question embeddings — simple concept**](#hypothetical-question-embeddings--simple-concept)
 * [Can we combine all these techniques in our RAG solution (and is this good) or not?](#can-we-combine-all-these-techniques-in-our-rag-solution-and-is-this-good-or-not)
+* [Granular chunk expansion — simple concept](#granular-chunk-expansion--simple-concept)
+* [Semi-structured RAG](#semi-structured-rag)
+* [Multimodal RAG](#multimodal-rag)
+* [Advanced RAG — overall idea](#advanced-rag--overall-idea)
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -174,4 +178,85 @@ For the same parent chunk, you could store vectors from:
 Then any matching vector points back to the same parent chunk.
 
 This can improve recall and robustness, but **more is not always better**: it increases storage, ingestion cost, latency, and can add noisy matches. Usually, test combinations and keep only the ones that measurably improve retrieval quality.
+
+
+## Granular chunk expansion — simple concept
+
+* Split the document into **small granular chunks**.
+* For each chunk, create an **expanded version** containing:
+  **previous chunk + current chunk + next chunk**.
+* Store:
+
+  * **small granular chunks + embeddings** in the vector store
+  * **expanded chunks** in the document store
+* Query searches the **small chunk embeddings**.
+* When a small chunk matches, use its `doc_id` to return the **expanded chunk** instead.
+* Send that richer expanded context to the LLM.
+
+**Key idea:**
+**Search small chunks for precision → return the matched chunk plus its neighbors for more context.**
+
+
+## Semi-structured RAG
+
+For content containing **text + tables**:
+
+* Store the **full text chunks / full tables** in the document store.
+* Create **summaries** of them.
+* Embed the summaries in the vector store.
+* User query searches the **summary embeddings**.
+* Matching summary → retrieve the **original full text/table**.
+* Send **user query + retrieved original content + optionally its summary** to the LLM.
+
+**Key idea:**
+**Search compact summaries → answer using the full original content.**
+
+## Multimodal RAG
+
+Same pattern for **images** and **audio**:
+
+* Image → generate a textual description/summary.
+* Audio → generate a transcript and/or summary.
+* Embed those text representations.
+* Store the **original image/audio** separately.
+* User query searches the summary/transcript embeddings.
+* Matching representation → retrieve the **original image/audio**.
+* Send **user query + original image/audio + optionally summary/transcript** to a multimodal LLM.
+
+**Key idea:**
+**Search using textual representations → return and reason over the original media.**
+
+## Advanced RAG — overall idea
+
+Advanced RAG improves **what is searched** and **what is finally given to the LLM**.
+
+* **Better chunking** → split content at meaningful semantic or structural boundaries.
+* **SemanticChunker** → uses **embedding similarity** to detect natural breakpoints instead of fixed sizes; this requires extra embedding API calls during ingestion.
+* **Parent-child retrieval** → search small child chunks → return larger parent chunks with more context.
+* **Multi-vector retrieval** → one source can have several searchable vector representations.
+* **Summary embeddings** → search summaries → return full chunks.
+* **Hypothetical-question embeddings** → search question-like representations → return full chunks.
+* **Context window retrieval / context expansion** → after a chunk matches, also fetch **N chunks before and after it**, usually using document ID and chunk-position metadata.
+* **Metadata filtering** → narrow retrieval by date, type, category, source, etc. Support and syntax depend on the vector database; for example, ChromaDB provides filtering, but implementations vary across platforms.
+* **Hybrid search** → combine keyword/sparse retrieval with vector/semantic retrieval.
+* **Semi-structured RAG** → search summaries of text/tables → return the full originals.
+* **Multimodal RAG** → search image descriptions or audio transcripts/summaries → return the original media.
+
+### Important tradeoff
+
+Parent-child retrieval stores **both parent and child chunks**, and combining several retrieval approaches can increase:
+
+**storage + ingestion cost + embedding/LLM calls + computation + latency + system complexity**
+
+So:
+
+> **Benchmark the quality improvement against storage and computational costs before deploying.**
+
+### Core principle to remember
+
+> **Use the representation that is best for retrieval, but give the LLM the richer original content for answering.**
+
+Or even shorter:
+
+**Optimize search for precision → retrieve rich context for synthesis.**
 
