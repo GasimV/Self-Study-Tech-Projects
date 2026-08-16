@@ -22,7 +22,14 @@
 * [Granular chunk expansion — simple concept](#granular-chunk-expansion--simple-concept)
 * [Semi-structured RAG](#semi-structured-rag)
 * [Multimodal RAG](#multimodal-rag)
-* [Advanced RAG — overall idea](#advanced-rag--overall-idea)
+* [Advanced Document Indexing for RAG — Summary](#advanced-document-indexing-for-rag--summary)
+* [LangChain: **`SelfQueryRetriever`** - Simple concept](#langchain-selfqueryretriever---simple-concept)
+* [Rewrite–Retrieve–Read — simple concept](#rewriteretrieveread--simple-concept)
+* [Multi-query retrieval — simple concept](#multi-query-retrieval--simple-concept)
+* [Step-back question — simple concept](#step-back-question--simple-concept)
+* [HyDE — simple concept](#hyde--simple-concept)
+* [Single-step vs multi-step decomposition — simple concept](#single-step-vs-multi-step-decomposition--simple-concept)
+* [Question Transformations — summary](#question-transformations--summary)
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -226,9 +233,9 @@ Same pattern for **images** and **audio**:
 **Key idea:**
 **Search using textual representations → return and reason over the original media.**
 
-## Advanced RAG — overall idea
+## Advanced Document Indexing for RAG — Summary
 
-Advanced RAG improves **what is searched** and **what is finally given to the LLM**.
+Advanced Document Indexing for RAG improves **what is searched** and **what is finally given to the LLM**.
 
 * **Better chunking** → split content at meaningful semantic or structural boundaries.
 * **SemanticChunker** → uses **embedding similarity** to detect natural breakpoints instead of fixed sizes; this requires extra embedding API calls during ingestion.
@@ -246,7 +253,7 @@ Advanced RAG improves **what is searched** and **what is finally given to the LL
 
 Parent-child retrieval stores **both parent and child chunks**, and combining several retrieval approaches can increase:
 
-**storage + ingestion cost + embedding/LLM calls + computation + latency + system complexity**
+> **storage + ingestion cost + embedding/LLM calls + computation + latency + system complexity**
 
 So:
 
@@ -260,3 +267,228 @@ Or even shorter:
 
 **Optimize search for precision → retrieve rich context for synthesis.**
 
+## LangChain: **`SelfQueryRetriever`** - Simple concept
+
+The `SelfQueryRetriever` is a powerful tool in the LangChain ecosystem designed to enhance document retrieval by ***combining semantic search with structured filtering***. It takes a natural-language query and lets an LLM turn it into:
+
+**semantic search text + structured metadata filters**
+
+Unlike traditional retrieval methods that rely solely on semantic similarity, the SelfQueryRetriever leverages a large language model (LLM) to generate structured queries that can *filter documents based on metadata fields* such as *genre, year, rating, or any other custom attributes*. This hybrid approach allows users to perform more precise and context-aware searches, making it an invaluable tool for applications like movie recommendations, product searches, or any domain where **metadata** plays a crucial role.
+
+Example:
+
+User asks:
+
+> “Find sci-fi movies after 2015 with rating above 8.”
+
+The retriever may interpret that roughly as:
+
+`semantic query: "sci-fi movies"`
+`filters: year > 2015 AND rating > 8`
+
+> Filtered Retrieval: Applies the structured filter to the database first, then runs vector similarity only on the filtered subset.
+
+
+## Rewrite–Retrieve–Read — simple concept
+
+* User asks a question.
+* An LLM **rewrites the question into a clearer search query**.
+* The retriever uses the **rewritten query** to search the vector store.
+* The original user question is still kept for the final answer generation. 
+
+**Key idea:**
+> **Rewrite for better retrieval → retrieve relevant context → answer the original question.**
+
+### Example
+
+User asks:
+
+> “Tell me some fun things I can enjoy in Cornwall.”
+
+LLM rewrites it as:
+
+> “fun activities to do in Cornwall”
+
+The vector store searches using the **rewritten query**, retrieves chunks about surfing, cycling, festivals, etc., and then the LLM answers the **original question** using those retrieved chunks. 
+
+In one line:
+
+> **Original question → optimized search query → retrieval → original question + retrieved context → final answer.**
+
+
+## Multi-query retrieval — simple concept
+
+* Start with **one user question**.
+* An LLM generates **several alternative versions/sub-questions** of it.
+* Run **each query separately** against the vector store.
+* Combine/deduplicate the retrieved documents.
+* Send the **original user question + combined retrieved context** to the LLM for the final answer.
+
+LangChain provides **`MultiQueryRetriever`** for this.
+
+**Key idea:**
+> **One question → multiple search queries → broader retrieval → one final answer.**
+
+### Example
+
+Original question:
+
+> “Is LA warmer than Miami in April?”
+
+Possible generated queries:
+
+* “What is the average April temperature in Los Angeles?”
+* “What is the average April temperature in Miami?”
+* “How do April temperatures in LA and Miami compare?”
+
+Each query retrieves relevant chunks separately. Then the LLM combines those chunks and answers the **original comparison question**.
+
+So compared with simple query rewriting:
+
+* **Rewrite-Retrieve-Read** → usually **one improved query**
+* **MultiQueryRetriever** → **multiple alternative queries** for the same original question
+
+
+## Step-back question — simple concept
+
+* Start with the **original detailed question**.
+* Retrieve context for that detailed question.
+* Ask an LLM to generate a **broader, more abstract version** of the question.
+* Retrieve additional context using that broader question.
+* Give the final LLM the **original question + detailed context + broader context**.
+
+**Key idea:**
+> **Retrieve both specific details and the bigger picture, then combine them for a fuller answer.**
+
+### Example
+
+Original question:
+
+> “Can you give me some tips for a trip to Brighton?”
+
+Step-back question:
+
+> “What are some general tips for planning a successful trip to a coastal city?”
+
+Then retrieve:
+
+* **Detailed context** about Brighton specifically
+* **Broader context** about coastal-trip planning
+
+Finally:
+
+> **original question + both contexts → final answer**
+
+In one line:
+
+> **Detailed query + broader step-back query → combine both retrieval results → better contextual answer.**
+
+
+## HyDE — simple concept
+
+* User asks a question.
+* An LLM first generates a **hypothetical answer/document** that could answer it.
+* Embed/search using that hypothetical document instead of the raw question.
+* Retrieve the real document chunks whose embeddings are semantically closest.
+* Send **original user question + retrieved real context** to the LLM for the final answer.
+
+**Key idea:**
+> **Transform the question into answer-like text → use that for retrieval → answer from real retrieved documents.**
+
+Difference from **hypothetical-question embeddings**:
+
+* **Hypothetical questions** → generated at **ingestion time** for each document chunk.
+* **HyDE** → hypothetical document generated at **query time** for each user question.
+
+**Simple HyDE example:**
+
+User asks:
+
+> “What are the best beaches in Cornwall?”
+
+Instead of embedding that question directly, HyDE first asks an LLM to generate something like:
+
+> “Some of the best beaches in Cornwall include Fistral Beach, Porthcurno Beach, and St Ives Bay.”
+
+Then:
+
+1. Embed this hypothetical answer.
+2. Search the vector store with that embedding.
+3. Retrieve real chunks about Cornwall beaches.
+4. Give the LLM:
+   **original question + real retrieved chunks**
+5. Generate the final grounded answer.
+
+Why it helps: **answer-like text is often closer in embedding space to real document text than the original question is.**
+
+
+## Single-step vs multi-step decomposition — simple concept
+
+**Single-step decomposition**
+
+* Break one complex question into several **independent subquestions**.
+* Each can be retrieved **separately or in parallel**.
+* Combine all retrieved information for the final answer.
+
+Example:
+
+> “Compare PostgreSQL and MongoDB for time-series data.”
+
+Becomes:
+
+* “How does PostgreSQL handle time-series data?”
+* “How does MongoDB handle time-series data?”
+
+Both can be answered independently.
+
+**Multi-step decomposition**
+
+* Break a question into **dependent subquestions**.
+* The answer from step 1 becomes an input to step 2, and so on.
+* Execute them **sequentially**, then synthesize the final answer.
+
+Example:
+
+> “What is the average August temperature at the most popular sandy beach in Cornwall?”
+
+1. “What is the most popular sandy beach in Cornwall?”
+   → **Fistral Beach**
+2. “What are the August temperatures at **Fistral Beach**?”
+   → temperature data
+3. “What is the average of **those temperatures**?”
+   → final value
+
+**Key idea:**
+
+> **Independent subquestions → parallel retrieval.**  
+> **Dependent subquestions → sequential retrieval where each answer feeds the next step.**
+
+---
+
+## Question Transformations — summary
+
+These techniques improve RAG by **transforming the user's question before or during retrieval**, rather than only changing document indexing.
+
+* **Rewrite–Retrieve–Read** → rewrite a vague/poor query into **one clearer search query**; keep the original question for final synthesis.
+* **Multi-query retrieval** → generate **multiple alternative queries**, retrieve for each, then merge the results for broader coverage.
+* **RRF (Reciprocal Rank Fusion)** → combine several ranked retrieval lists; documents ranking highly across multiple queries receive higher overall scores.
+* **Step-back prompting** → create a **broader question** and retrieve both broad + specific context.
+* **HyDE** → generate a **hypothetical answer/document**, search using that answer-like text, then retrieve real documents.
+* **Single-step decomposition** → split a complex question into **independent subquestions** that can be searched separately/parallel.
+* **Multi-step decomposition** → split into **dependent sequential questions**, where each answer determines the next query.
+* **Coarse-to-fine retrieval** → first retrieve a broad/relevant section using coarse representations, then search more precisely inside that section.
+
+### Easy way to remember them
+
+- **Rewrite** → make the query clearer.
+- **Multi-query** → ask it several ways.
+- **Step-back** → ask a broader version too.
+- **HyDE** → search with a hypothetical answer.
+- **Decomposition** → break the problem into smaller questions.
+- **Coarse-to-fine** → search broad first, then narrow down.
+
+### Overall principle
+
+> **Transform the query into a form that makes retrieval easier and more accurate, while keeping the original user question for final answer synthesis.**
+
+And, as with indexing techniques, **benchmark these approaches on your own data**—extra LLM calls and retrievals can improve quality but also add latency, cost, and complexity.
