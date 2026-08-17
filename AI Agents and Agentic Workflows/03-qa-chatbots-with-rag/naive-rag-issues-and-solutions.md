@@ -463,6 +463,8 @@ Example:
 > **Independent subquestions → parallel retrieval.**  
 > **Dependent subquestions → sequential retrieval where each answer feeds the next step.**
 
+> While LangChain doesn’t offer a dedicated class for multi-step question decomposition, you may find inspiration in **LlamaIndex**’s `MultiStepQueryEngine` class. Explore this class for further ideas.
+
 ---
 
 ## Question Transformations — summary
@@ -470,13 +472,14 @@ Example:
 These techniques improve RAG by **transforming the user's question before or during retrieval**, rather than only changing document indexing.
 
 * **Rewrite–Retrieve–Read** → rewrite a vague/poor query into **one clearer search query**; keep the original question for final synthesis.
-* **Multi-query retrieval** → generate **multiple alternative queries**, retrieve for each, then merge the results for broader coverage.
+* **Multi-query retrieval** → generate **multiple alternative queries**, retrieve for each, then merge the results for broader coverage using Reciprocal Rank Fusion (RRF). This captures diverse phrasings of the same intent.
 * **RRF (Reciprocal Rank Fusion)** → combine several ranked retrieval lists; documents ranking highly across multiple queries receive higher overall scores.
+* **Reciprocal Rank Fusion (RRF)** scores documents by summing 1 / (rank + k) across all query result lists, with k typically set to 60. Documents appearing in multiple lists score higher.
 * **Step-back prompting** → create a **broader question** and retrieve both broad + specific context.
 * **HyDE** → generate a **hypothetical answer/document**, search using that answer-like text, then retrieve real documents.
 * **Single-step decomposition** → split a complex question into **independent subquestions** that can be searched separately/parallel.
 * **Multi-step decomposition** → split into **dependent sequential questions**, where each answer determines the next query.
-* **Coarse-to-fine retrieval** → first retrieve a broad/relevant section using coarse representations, then search more precisely inside that section.
+* **Coarse-to-fine retrieval** → first retrieve a broad/relevant section using coarse representations (high-level summaries; e.g., 500-word chunks), then re-search more precisely inside that section using fine-grained chunks (e.g., 100-word chunks). This narrows the scope progressively.
 
 ### Easy way to remember them
 
@@ -491,4 +494,4 @@ These techniques improve RAG by **transforming the user's question before or dur
 
 > **Transform the query into a form that makes retrieval easier and more accurate, while keeping the original user question for final answer synthesis.**
 
-And, as with indexing techniques, **benchmark these approaches on your own data**—extra LLM calls and retrievals can improve quality but also add latency, cost, and complexity.
+And, as with indexing techniques, **benchmark these approaches on your own data**—extra LLM calls and retrievals can improve quality but also add latency, cost, and complexity. For example, `MultiQueryRetriever` works well for ambiguous questions; `HyDE` excels when queries are conceptually different from document phrasing.
