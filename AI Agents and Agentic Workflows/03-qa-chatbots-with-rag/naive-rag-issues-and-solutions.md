@@ -2,35 +2,40 @@
 
 | Issue | Recommended solution |
 |---|---|
-| Retrieval returning the wrong content chunks | Advanced document indexing techniques |
-| Poor question formulation | Question transformations |
-| Ineffective question for retrieval | Question transformations |
+| Retrieval returning the wrong content chunks | [Advanced document indexing techniques](#advanced-document-indexing-techniques) |
+| Poor question formulation | [Question transformations](#question-transformations) |
+| Ineffective question for retrieval | [Question transformations](#question-transformations) |
+| Limited querying capabilities for structured data | [Content store query generation](#content-store-query-generation) |
 | Limited data relevance in the content store | Routing to multiple content stores |
-| Limited querying capabilities for structured data | Content store query generation |
 | Irrelevant retrieved results fed to the LLM | Retrieval postprocessing |
 
 
 ## Table of Contents
-* [`ParentDocumentRetriever` — simple concept](#parentdocumentretriever--simple-concept)
-* [`MultiVectorRetriever`](#multivectorretriever)
-  * [Key concept of `MultiVectorRetriever`](#key-concept-of-multivectorretriever)
-  * [Main difference from `ParentDocumentRetriever`](#main-difference-from-parentdocumentretriever)
-* [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
-* [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
-* [**Hypothetical-question embeddings — simple concept**](#hypothetical-question-embeddings--simple-concept)
-* [Can we combine all these techniques in our RAG solution (and is this good) or not?](#can-we-combine-all-these-techniques-in-our-rag-solution-and-is-this-good-or-not)
-* [Granular chunk expansion — simple concept](#granular-chunk-expansion--simple-concept)
-* [Semi-structured RAG](#semi-structured-rag)
-* [Multimodal RAG](#multimodal-rag)
-* [Advanced Document Indexing for RAG — Summary](#advanced-document-indexing-for-rag--summary)
-* [LangChain: **`SelfQueryRetriever`** - Simple concept](#langchain-selfqueryretriever---simple-concept)
-* [Rewrite–Retrieve–Read — simple concept](#rewriteretrieveread--simple-concept)
-* [Multi-query retrieval — simple concept](#multi-query-retrieval--simple-concept)
-* [Step-back question — simple concept](#step-back-question--simple-concept)
-* [HyDE — simple concept](#hyde--simple-concept)
-* [Single-step vs multi-step decomposition — simple concept](#single-step-vs-multi-step-decomposition--simple-concept)
-* [Question Transformations — summary](#question-transformations--summary)
-* [Self-querying / metadata query enrichment — simple concept](#self-querying--metadata-query-enrichment--simple-concept)
+* [Advanced document indexing techniques](#advanced-document-indexing-techniques)
+  * [`ParentDocumentRetriever` — simple concept](#parentdocumentretriever--simple-concept)
+  * [`MultiVectorRetriever`](#multivectorretriever)
+    * [Key concept of `MultiVectorRetriever`](#key-concept-of-multivectorretriever)
+    * [Main difference from `ParentDocumentRetriever`](#main-difference-from-parentdocumentretriever)
+  * [Embedding document summaries `MultiVectorRetriever`](#embedding-document-summaries-multivectorretriever)
+  * [Why these techniques are called **multi-vector embedding approach**?](#why-these-techniques-are-called-multi-vector-embedding-approach)
+  * [Hypothetical-question embeddings — simple concept](#hypothetical-question-embeddings--simple-concept)
+  * [Can we combine all these techniques in our RAG solution (and is this good) or not?](#can-we-combine-all-these-techniques-in-our-rag-solution-and-is-this-good-or-not)
+  * [Granular chunk expansion — simple concept](#granular-chunk-expansion--simple-concept)
+  * [Semi-structured RAG](#semi-structured-rag)
+  * [Multimodal RAG](#multimodal-rag)
+  * [Advanced Document Indexing for RAG — Summary](#advanced-document-indexing-for-rag--summary)
+* [Question transformations](#question-transformations)  
+  * [Rewrite–Retrieve–Read — simple concept](#rewriteretrieveread--simple-concept)
+  * [Multi-query retrieval — simple concept](#multi-query-retrieval--simple-concept)
+  * [Step-back question — simple concept](#step-back-question--simple-concept)
+  * [HyDE — simple concept](#hyde--simple-concept)
+  * [Single-step vs multi-step decomposition — simple concept](#single-step-vs-multi-step-decomposition--simple-concept)
+  * [Question Transformations — summary](#question-transformations--summary)
+* [Content store query generation](#content-store-query-generation)  
+  * [LangChain: **`SelfQueryRetriever`** - Simple concept](#langchain-selfqueryretriever---simple-concept)
+  * [Self-querying / metadata query enrichment — simple concept](#self-querying--metadata-query-enrichment--simple-concept)
+
+# Advanced document indexing techniques
 
 ## `ParentDocumentRetriever` — simple concept
 
@@ -156,7 +161,7 @@ All those vectors point back to the **same parent chunk**.
 
 > So: **multiple vectors for one document → MultiVector retrieval.**
 
-## **Hypothetical-question embeddings — simple concept**
+## Hypothetical-question embeddings — simple concept
 
 * Split content into **large/coarse chunks**.
 * For each chunk, use an LLM to generate several **questions that this chunk could answer**.
@@ -268,27 +273,7 @@ Or even shorter:
 
 **Optimize search for precision → retrieve rich context for synthesis.**
 
-## LangChain: **`SelfQueryRetriever`** - Simple concept
-
-The `SelfQueryRetriever` is a powerful tool in the LangChain ecosystem designed to enhance document retrieval by ***combining semantic search with structured filtering***. It takes a natural-language query and lets an LLM turn it into:
-
-**semantic search text + structured metadata filters**
-
-Unlike traditional retrieval methods that rely solely on semantic similarity, the SelfQueryRetriever leverages a large language model (LLM) to generate structured queries that can *filter documents based on metadata fields* such as *genre, year, rating, or any other custom attributes*. This hybrid approach allows users to perform more precise and context-aware searches, making it an invaluable tool for applications like movie recommendations, product searches, or any domain where **metadata** plays a crucial role.
-
-Example:
-
-User asks:
-
-> “Find sci-fi movies after 2015 with rating above 8.”
-
-The retriever may interpret that roughly as:
-
-`semantic query: "sci-fi movies"`
-`filters: year > 2015 AND rating > 8`
-
-> Filtered Retrieval: Applies the structured filter to the database first, then runs vector similarity only on the filtered subset.
-
+# Question transformations
 
 ## Rewrite–Retrieve–Read — simple concept
 
@@ -497,6 +482,28 @@ These techniques improve RAG by **transforming the user's question before or dur
 
 And, as with indexing techniques, **benchmark these approaches on your own data**—extra LLM calls and retrievals can improve quality but also add latency, cost, and complexity. For example, `MultiQueryRetriever` works well for ambiguous questions; `HyDE` excels when queries are conceptually different from document phrasing.
 
+# Content store query generation
+
+## LangChain: **`SelfQueryRetriever`** - Simple concept
+
+The `SelfQueryRetriever` is a powerful tool in the LangChain ecosystem designed to enhance document retrieval by ***combining semantic search with structured filtering***. It takes a natural-language query and lets an LLM turn it into:
+
+**semantic search text + structured metadata filters**
+
+Unlike traditional retrieval methods that rely solely on semantic similarity, the SelfQueryRetriever leverages a large language model (LLM) to generate structured queries that can *filter documents based on metadata fields* such as *genre, year, rating, or any other custom attributes*. This hybrid approach allows users to perform more precise and context-aware searches, making it an invaluable tool for applications like movie recommendations, product searches, or any domain where **metadata** plays a crucial role.
+
+Example:
+
+User asks:
+
+> “Find sci-fi movies after 2015 with rating above 8.”
+
+The retriever may interpret that roughly as:
+
+`semantic query: "sci-fi movies"`
+`filters: year > 2015 AND rating > 8`
+
+> Filtered Retrieval: Applies the structured filter to the database first, then runs vector similarity only on the filtered subset.
 
 ## Self-querying / metadata query enrichment — simple concept
 
