@@ -34,6 +34,9 @@
 * [Content store query generation](#content-store-query-generation)  
   * [LangChain: **`SelfQueryRetriever`** - Simple concept](#langchain-selfqueryretriever---simple-concept)
   * [Self-querying / metadata query enrichment — simple concept](#self-querying--metadata-query-enrichment--simple-concept)
+  * [Natural language → SQL — simple concept](#natural-language--sql--simple-concept)
+  * [Semantic SQL search — simple concept](#semantic-sql-search--simple-concept)
+  * [Graph database / KG-RAG / GraphRAG — simple concept](#graph-database--kg-rag--graphrag--simple-concept)
 
 # Advanced document indexing techniques
 
@@ -541,3 +544,140 @@ Then it searches only the relevant Newquay/Cornwall chunks for festival-related 
 **Key idea:**
 
 > **Use metadata to narrow the search space, then use embeddings to find the best matches inside it.**
+
+
+## Natural language → SQL — simple concept
+
+Use an LLM to turn a user’s natural-language question into a **SQL query**, run that query on a relational database, then use the returned rows as context for the final answer.
+
+Typical flow:
+
+> **User question → LLM generates SQL → clean/validate SQL → execute on DB → return rows → LLM synthesizes answer**
+
+A good prompt should include the **database schema** and ideally a few sample rows, because this reduces hallucinated table/column names.
+
+### Example
+
+User asks:
+
+> “Give me some offers for Cardiff, including the hotel name.”
+
+The LLM may generate SQL like:
+
+```sql
+SELECT Offer.OfferDescription,
+       Offer.DiscountRate,
+       Accommodation.Name
+FROM Offer
+JOIN Accommodation
+  ON Offer.AccommodationId = Accommodation.AccommodationId
+JOIN Destination
+  ON Accommodation.DestinationId = Destination.DestinationId
+WHERE Destination.Name = 'Cardiff'
+LIMIT 5;
+```
+
+The database returns something like:
+
+> `Early Bird Discount, 20%, Cardiff Camping`
+
+Then the LLM turns that into a natural-language answer.
+
+**Key idea:**
+> **Translate natural language into structured SQL so RAG can retrieve precise facts from relational databases.**
+
+
+## Semantic SQL search — simple concept
+
+Traditional SQL searches by **exact values or patterns**. Semantic SQL adds **embeddings** so SQL can search by **meaning/similarity**.
+
+Typical flow:
+
+> **Database value → create embedding → store embedding in vector column → embed user query → compare vectors → return nearest rows**
+
+With PostgreSQL, this is commonly done using **pgvector**.
+
+### Example
+
+Suppose the database contains names:
+
+`Roberto, Robert, Bob, Bobby, Bert`
+
+Traditional SQL:
+
+```sql
+WHERE first_name = 'Roberto'
+```
+
+returns only **Roberto**.
+
+Semantic SQL:
+
+* embed `"Roberto"`
+* compare it with stored name embeddings
+* rank rows by vector similarity
+
+This can also return semantically/linguistically related names such as **Robert, Bob, Bobby, Bert**, depending on the embedding model.
+
+### Key idea
+
+> **Use SQL for relational structure + vector embeddings for semantic similarity.**
+
+You can also combine both:
+
+> **exact SQL filters + semantic vector search + joins**
+
+So semantic SQL is essentially:
+
+> **Traditional SQL enriched with vector similarity search.**
+
+
+## Graph database / KG-RAG / GraphRAG — simple concept
+
+A **graph database** stores information as:
+
+- **nodes = entities**
+- **edges = relationships**
+
+Example:
+
+- `Roberto → isFanOf → InterMilan`
+- `InterMilan → playsIn → SerieA`
+
+For RAG, an LLM can turn a natural-language question into a graph query such as **Cypher** or **SPARQL**, run it against the graph database, then use the returned graph data to answer the user.
+
+Typical flow:
+
+> **User question → LLM generates Cypher/SPARQL → graph DB executes it → graph results → LLM synthesizes answer**
+
+### Illustrative example
+
+User asks:
+
+> “Which league does Roberto’s favorite team play in?”
+
+The LLM may generate a graph query that follows:
+
+`Roberto → isFanOf → InterMilan → playsIn → SerieA`
+
+The graph database returns:
+
+> `SerieA`
+
+Then the LLM answers:
+
+> “Roberto’s favorite team, InterMilan, plays in Serie A.”
+
+### Key idea
+
+> **Use graph relationships for retrieval when the answer depends on how entities are connected.**
+
+LLMs can also help by:
+
+* extracting **entities and relationships** from text to build the graph
+* generating **Cypher/SPARQL** from natural language
+* converting graph query results into a natural-language answer
+
+In one line:
+
+> **Natural-language question → graph query → relationship traversal → answer from connected facts.**
