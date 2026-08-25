@@ -597,7 +597,7 @@ Typical flow:
 
 With PostgreSQL, this is commonly done using **pgvector**.
 
-### Example
+### Example 1:
 
 Suppose the database contains names:
 
@@ -630,6 +630,73 @@ You can also combine both:
 So semantic SQL is essentially:
 
 > **Traditional SQL enriched with vector similarity search.**
+
+### Example 2: 
+
+Imagine a hotel database with these tables:
+
+* `Hotel(city, price, description_embedding)`
+* `Restaurant(hotel_id, cuisine_embedding)`
+
+User asks:
+
+> “Find a hotel in **London** under **£200** that feels **romantic and quiet**, with a restaurant serving food similar to **Italian cuisine**.”
+
+A semantic SQL query could combine:
+
+* **Exact filters:** `city = 'London'`, `price < 200`
+* **Semantic filter 1:** hotel description similar to “romantic and quiet”
+* **Semantic filter 2:** restaurant cuisine similar to “Italian cuisine”
+* **JOIN:** connect each hotel to its restaurant
+
+So conceptually:
+
+`London + price < £200`
+→ exact SQL filtering
+
+then
+
+`hotel description ≈ "romantic and quiet"`
+`restaurant cuisine ≈ "Italian cuisine"`
+→ vector similarity filtering
+
+then join the matching hotels and restaurants.
+
+### Why this is powerful
+
+Normal SQL might require exact labels like:
+
+`style = 'romantic' AND cuisine = 'Italian'`
+
+But semantic SQL could also match descriptions such as:
+
+* “peaceful boutique hotel ideal for couples”
+* “Mediterranean restaurant specializing in pasta and risotto”
+
+even if the words **romantic** or **Italian** are never explicitly stored.
+
+**Key idea:**
+> **SQL handles precise constraints and relationships; embeddings handle fuzzy meaning. Combining both enables much more nuanced searches.**
+
+### Example 3:
+
+Banking AI Dashboard — exact SQL + semantic SQL
+
+User asks:
+
+> “Why did cash-loan sales drop in July in Narimanov?”
+
+The AI Dashboard can use:
+
+* **Regular SQL** → calculate sales decline, conversion rate, rejection rate, affected customer segments, branches, etc.
+* **Semantic SQL** → search text-like fields such as rejection reasons, customer comments, campaign descriptions, or product categories for related meanings/themes.
+* Then return a **chart/table + short explanation**.
+
+**Key idea:**
+> **Exact SQL = numbers, trends, joins, filters.**  
+> **Semantic SQL = fuzzy meaning in text-like fields.**
+
+If the bank mainly has **numeric and well-structured data**, regular SQL is usually enough. ***Add semantic-searchable text fields only when they contain useful business meaning that exact SQL cannot capture well***.
 
 
 ## Graph database / KG-RAG / GraphRAG — simple concept
