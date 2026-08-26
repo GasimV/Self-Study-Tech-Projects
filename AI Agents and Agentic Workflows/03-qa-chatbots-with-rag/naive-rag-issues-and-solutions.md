@@ -6,7 +6,7 @@
 | Poor question formulation | [Question transformations](#question-transformations) |
 | Ineffective question for retrieval | [Question transformations](#question-transformations) |
 | Limited querying capabilities for structured data | [Content store query generation](#content-store-query-generation) |
-| Limited data relevance in the content store | Routing to multiple content stores |
+| Limited data relevance in the content store | [Routing to multiple content stores](#routing-to-multiple-content-stores) |
 | Irrelevant retrieved results fed to the LLM | Retrieval postprocessing |
 
 
@@ -37,6 +37,8 @@
   * [Natural language → SQL — simple concept](#natural-language--sql--simple-concept)
   * [Semantic SQL search — simple concept](#semantic-sql-search--simple-concept)
   * [Graph database / KG-RAG / GraphRAG — simple concept](#graph-database--kg-rag--graphrag--simple-concept)
+* [Routing to multiple content stores](#routing-to-multiple-content-stores)
+  * [Chain routing — simple concept](#chain-routing--simple-concept)
 
 # Advanced document indexing techniques
 
@@ -748,3 +750,43 @@ LLMs can also help by:
 In one line:
 
 > **Natural-language question → graph query → relationship traversal → answer from connected facts.**
+
+
+# Routing to multiple content stores
+
+## Chain routing — simple concept
+
+Chain routing means using a **router** to inspect the user’s question and send it to the **best data source / RAG chain**.
+
+Different branches can use different:
+
+* vector stores
+* SQL databases
+* graph databases
+* document stores
+* even different LLMs
+
+**Key idea:**
+> **Understand the question first → choose the right retrieval path → retrieve → answer.**
+
+### Example
+
+User asks:
+
+> “Where are the best beaches in Cornwall?”
+
+Router detects this is *general tourist information*:
+
+**Question → router → vector-store RAG → retrieve travel text → LLM answer**
+
+User asks:
+
+> “What accommodation discounts are available in Cardiff?”
+
+Router detects this needs *structured booking data*:
+
+**Question → router → SQL RAG → generate/run SQL → database results → LLM answer**
+
+So instead of forcing every question through one retriever:
+
+> **Route each question to the data source best suited to answer it.**
