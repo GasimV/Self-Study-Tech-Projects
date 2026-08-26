@@ -12,6 +12,10 @@ env_*/
 # Environment / secrets
 .env
 
+# Databse files
+/03-qa-chatbots-with-rag/UkBooking.db
+/03-qa-chatbots-with-rag/UkBooking.db-*
+
 # Re-include files the repo-root .gitignore excludes globally
 !requirements.txt
 !Moby-Dick.txt
