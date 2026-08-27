@@ -7,7 +7,7 @@
 | Ineffective question for retrieval | [Question transformations](#question-transformations) |
 | Limited querying capabilities for structured data | [Content store query generation](#content-store-query-generation) |
 | Limited data relevance in the content store | [Routing to multiple content stores](#routing-to-multiple-content-stores) |
-| Irrelevant retrieved results fed to the LLM | Retrieval postprocessing |
+| Irrelevant retrieved results fed to the LLM | [Retrieval postprocessing](#retrieval-postprocessing) |
 
 
 ## Table of Contents
@@ -39,6 +39,12 @@
   * [Graph database / KG-RAG / GraphRAG — simple concept](#graph-database--kg-rag--graphrag--simple-concept)
 * [Routing to multiple content stores](#routing-to-multiple-content-stores)
   * [Chain routing — simple concept](#chain-routing--simple-concept)
+* [Retrieval postprocessing](#retrieval-postprocessing)
+  * [Similarity threshold](#similarity-threshold)
+  * [Keyword filtering](#keyword-filtering)
+  * [Time weighting](#time-weighting)
+  * [RAG Fusion / Reciprocal Rank Fusion (RRF)](#rag-fusion--reciprocal-rank-fusion-rrf)
+  * [Overall summary](#overall-summary)
 
 # Advanced document indexing techniques
 
@@ -790,3 +796,136 @@ Router detects this needs *structured booking data*:
 So instead of forcing every question through one retriever:
 
 > **Route each question to the data source best suited to answer it.**
+
+
+# Retrieval postprocessing
+
+After retrieval, you may still have some weak or irrelevant chunks. **Postprocessing filters or re-ranks those chunks before sending them to the LLM.**
+
+**Key idea:**
+> **Retrieve first → clean/rank results → send only the best context to the LLM.**
+
+## Similarity threshold
+
+Keep only chunks whose similarity score is high enough.
+
+Example:
+
+Query:
+
+> “What are the best beaches in Cornwall?”
+
+Retrieved scores:
+
+* Chunk A: `0.84`
+* Chunk B: `0.71`
+* Chunk C: `0.42`
+
+With threshold `0.60`:
+
+→ keep A and B
+→ discard C
+
+**Key idea:**
+> **Remove weak semantic matches.**
+
+---
+
+## Keyword filtering
+
+Keep or exclude chunks based on specific words.
+
+Example:
+
+- You want chunks about:
+
+  `required = {"beach"}`
+
+- but want to exclude:
+
+  `excluded = {"hotel"}`
+
+- A chunk mentioning beaches is kept; a chunk mainly about hotels is removed.
+
+**Key idea:**
+> **Use explicit words to further control retrieved context.**
+
+---
+
+## Time weighting
+
+Re-rank chunks using both:
+
+> **semantic relevance + recency**
+
+In **LangChain**, this can be implemented with:
+
+> `TimeWeightedVectorStoreRetriever`
+
+It adjusts retrieval ranking so that more recently accessed documents can receive a boost in addition to their semantic similarity score.
+
+Example:
+
+- Two chunks are equally relevant:
+  - Chunk A last accessed yesterday
+  - Chunk B last accessed 6 months ago
+- The time-weighted retriever (`TimeWeightedVectorStoreRetriever`) may rank **Chunk A higher** because it is more recent.
+
+**Key idea:**
+> **Relevant + recent content gets priority.**
+
+## RAG Fusion / Reciprocal Rank Fusion (RRF)
+
+RAG Fusion combines **multi-query retrieval + reranking**:
+
+1. Generate several versions of the user’s question.
+2. Run each query separately against the retriever.
+3. Each query returns its own ranked document list.
+4. **RRF combines those rankings**:
+
+   * documents ranked highly get more points
+   * documents appearing highly across several query results accumulate more points
+5. Keep the top fused documents and send them to the LLM with the original question.
+
+**Key idea:**
+> **Ask the question several ways → retrieve multiple ranked lists → fuse the rankings → keep the most consistently relevant documents.**
+
+### Example
+
+Original question:
+
+> “Give me tips for visiting Brighton.”
+
+Generated queries might include:
+
+* “What should tourists know before visiting Brighton?”
+* “Best things to do in Brighton”
+* “Brighton travel and transportation tips”
+* “Brighton safety and accommodation advice”
+
+Suppose **Document A** ranks highly for 3 of those queries, while **Document B** ranks highly for only 1.
+
+RRF gives **Document A a higher combined score**, so it is more likely to be included in the final context.
+
+The scoring principle is:
+
+> **RRF score += 1 / (rank + k)**
+
+So:
+
+> **`MultiQueryRetriever` broadens retrieval; RRF gives you finer control over how the combined results are ranked.**
+
+
+## Overall summary
+
+Postprocessing helps improve final RAG context by:
+
+* removing low-similarity chunks
+* filtering by keywords
+* prioritizing recent content
+* **RAG Fusion / RRF** → combining results from multiple queries and reranking them so documents that rank highly across several query results are prioritized
+
+So:
+
+> **Retrieval gives candidates → postprocessing filters/reranks the best candidates → LLM answers using cleaner, higher-quality context.**
+
