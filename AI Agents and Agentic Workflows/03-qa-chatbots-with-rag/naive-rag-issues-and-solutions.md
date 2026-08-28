@@ -45,6 +45,10 @@
   * [Time weighting](#time-weighting)
   * [RAG Fusion / Reciprocal Rank Fusion (RRF)](#rag-fusion--reciprocal-rank-fusion-rrf)
   * [Overall summary](#overall-summary)
+* [Final summary](#final-summary)
+  * [Multi-source and hybrid RAG](#multi-source-and-hybrid-rag)
+  * [RRF across heterogeneous sources](#rrf-across-heterogeneous-sources)
+
 
 # Advanced document indexing techniques
 
@@ -929,3 +933,66 @@ So:
 
 > **Retrieval gives candidates → postprocessing filters/reranks the best candidates → LLM answers using cleaner, higher-quality context.**
 
+
+# Final summary
+
+## Multi-source and hybrid RAG
+
+- Production RAG systems can combine **vector stores, SQL databases, graph databases and APIs** through one unified interface.
+- Use each source for what it handles best:
+  - **vector store** — unstructured document content
+  - **SQL** — exact structured and transactional data
+  - **graph database** — entity relationships and paths
+  - **API** — live or external information
+- **Routing** chooses the most appropriate source; **fusion** searches multiple sources and combines their results.
+- Hybrid search combines **dense semantic retrieval** with **sparse BM25 keyword retrieval**, improving both conceptual and exact-term matching.
+- Retrieve top-*k* results from each retriever and combine their rankings with **Reciprocal Rank Fusion (RRF)**:
+
+  > `RRF score = Σ 1 / (k + rank)`
+
+- LangChain’s in-memory `BM25Retriever` is suitable for small datasets; large collections require a scalable search backend.
+- Natural-language questions can be converted into **SQL** for relational data or **Cypher** for graph data.
+- Improve routing with clear source descriptions and few-shot examples.
+- Add fallback behavior when the primary source returns empty or low-relevance results.
+- Evaluate routing and retrieval using labeled queries, then tune prompts, thresholds, retrievers and fusion settings for the specific data and use case.
+
+
+## RRF across heterogeneous sources
+
+- **Reciprocal Rank Fusion (RRF)** combines ranked results without comparing incompatible raw scores.
+- It can **fuse results from vector search, BM25, SQL, graph queries and APIs** when each source returns a meaningfully ordered list of the same entities or evidence items.
+- RRF ignores cosine distances, BM25 scores, graph metrics and API confidence values; it uses only each item’s rank:
+
+  $$
+  \operatorname{RRF}(d)
+  =
+  \sum_{m:\,d \in R_m}
+  \frac{1}{k + r_m(d)}
+  $$
+
+  where $r_m(d)$ is item $d$'s rank in list $R_m$, and $k$ is commonly set to $60$.
+
+- Items appearing highly in several lists accumulate larger scores and rise in the unified ranking.
+
+Typical workflow:
+
+  ```text
+  Query
+    → run applicable retrievers in parallel
+    → obtain ranked candidate lists
+    → map results to canonical IDs
+    → discard incompatible raw scores
+    → calculate RRF scores
+    → return unified top-k evidence
+  ```
+
+Important limitations:
+
+- **Entity resolution:** Sources must use—or be mapped to—a shared canonical identifier. *For example, if your SQL database returns a `user_id` but the API returns an `email_string`, you must map them to a common key before fusing.*
+- **Compatible result types:** Arbitrary SQL aggregates, graph paths and document passages cannot be fused directly unless converted into comparable evidence items.
+- **Loss of absolute confidence:** RRF treats equally ranked results similarly even when their original confidence differs greatly. *For example, if an API returns a result with a (99\%) confidence score, and a vector store returns a weak (10\%) match, RRF treats their top-ranked positions identically.*
+- **Source quality:** Standard RRF weights sources equally; use weighted RRF when some sources are more reliable.
+- **Latency:** Waiting for every source can make the slowest source the bottleneck; production systems should use timeouts, partial results or selective routing. *For example, the final output is blocked until the slowest source (usually the external API) finishes returning its ranked list.*
+- **Meaningful ranking required:** SQL or graph results must have an explicit ordering before they can participate in RRF.
+
+> **Core insight:** RRF is score-agnostic and effective for merging heterogeneous ranked evidence, but it does not replace routing, entity normalization or source-specific query logic.
