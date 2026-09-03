@@ -1,4 +1,38 @@
-## LangChain/LangGraph Agent Notes
+# LangChain/LangGraph Agent Notes
+
+## Table of contents
+
+- [Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems](#multi-tool-ai-agents-building-block-or-foundation-for-multi-agent-systems)
+  - [Insights summary](#insights-summary)
+  - [1. Query transformation](#1-query-transformation)
+  - [2. Why multiple tool calls?](#2-why-multiple-tool-calls)
+  - [3. What gives the LLM this freedom?](#3-what-gives-the-llm-this-freedom)
+  - [4. Responsibilities](#4-responsibilities)
+  - [5. Old ReAct approach](#5-old-react-approach)
+  - [6. `RemainingSteps`](#6-remainingsteps)
+  - [7. Old hard limit](#7-old-hard-limit)
+  - [8. Current LangChain/LangGraph direction](#8-current-langchainlanggraph-direction)
+  - [9. Current way to control limits](#9-current-way-to-control-limits)
+  - [Mental model](#mental-model)
+
+## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
+
+### Insights summary
+
+* LangGraph supports two common agent-building styles: explicit node-based graphs with predefined conditional routes, and ReAct-style agents that provide a ready-made reasoning-and-action loop with automatic tool selection.
+* Tools are typically registered as Python functions whose type hints define the input schema and whose docstrings describe their purpose. The model uses this metadata to discover and invoke the appropriate function.
+* The model chooses a tool by comparing the user's request with the available tool descriptions. Descriptions should therefore state clearly when a tool is appropriate, which arguments it accepts, and what it returns.
+* A useful tool contract is specific and self-contained. For example: `search_customer(name: str) -> dict` finds customer records by name and should be used when a request concerns a particular customer's details.
+* Inspecting agent state makes the execution path visible: which tool was selected, the arguments supplied to it, the result it produced, and how that result influenced the next tool call or final response. This is valuable for debugging and improving an agent.
+* In a multi-tool workflow, the model can pass information through a sequence such as `search_customer` -> `get_orders` -> `calculate_total`. With clear tool contracts, the model can coordinate this sequence without application code hardcoding every transition.
+* Tool chaining should still be verified with representative test prompts. If the model repeatedly chooses the wrong tool or order, refine the descriptions, schemas, and returned data rather than assuming the orchestration will always be correct.
+* ReAct-style agents built on LangGraph include the tool-calling loop and support error and retry handling, which is often simpler than manually constructing nodes and conditional edges for routine agents.
+* LangSmith and Langfuse provide observability for agent runs. Their traces can show the observable model and tool-call sequence, inputs, intermediate outputs, and final response in a timeline or span hierarchy.
+* Trace metadata can include token usage, latency, and error status, depending on the model provider and instrumentation. These measurements help diagnose slow, expensive, or failed executions in both LangSmith and Langfuse.
+* Tool-using agents are a building block for multi-agent systems. A researcher, writer, and reviewer can each receive a specialized tool set, while a supervisor coordinates their responsibilities and handoffs.
+* Prefer returning dictionaries, lists, or other structured values from tools when practical. Structured output lets the model access named fields directly instead of extracting facts from free-form text.
+* Tool-selection quality depends heavily on description quality. Run sample queries, inspect the resulting traces, and revise ambiguous descriptions when the agent selects an unsuitable tool.
+* Tools should handle expected failures explicitly. Wrap fallible operations in appropriate exception handling and return a structured result such as `{"error": "Customer not found", "details": "..."}` so the agent can respond or recover consistently.
 
 ### 1. Query transformation
 
