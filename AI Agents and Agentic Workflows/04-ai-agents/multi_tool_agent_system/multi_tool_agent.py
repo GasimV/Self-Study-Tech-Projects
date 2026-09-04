@@ -17,7 +17,7 @@ os.environ.setdefault("USER_AGENT", "AzerbaijanTravelAssistant/1.0")
 from langchain_community.document_loaders import AsyncHtmlLoader
 from langchain_community.document_transformers import Html2TextTransformer
 from langchain_chroma import Chroma
-from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -112,7 +112,13 @@ ti_retriever = ti_vectorstore_client.as_retriever() #K
 # 2. Define the tools
 # ----------------------------------------------------------------------------
 
-@tool #A
+@tool(
+    description=(
+        "Search embedded Wikivoyage content about destinations in Azerbaijan. "
+        "Use this tool to find suitable cities, towns, villages, attractions, "
+        "and other destination-specific travel information."
+    )
+) #A
 def search_travel_info(query: str) -> str: #B
     """Search embedded WikiVoyage content for 
     information about destinations in Azerbaijan."""
@@ -125,9 +131,14 @@ def search_travel_info(query: str) -> str: #B
 #C Perform a semantic search on the vectorstore and return the top 4 results
 #D Joins the top 4 results into a single string
 
-@tool
+@tool(
+    description=(
+        "Get the weather forecast for a town. Always use this tool when the user "
+        "asks about weather, including current-weather questions."
+    )
+)
 def weather_forecast(town: str) -> dict:
-    """Get a mock weather forecast for a given town. 
+    """Get a weather forecast for a given town.
     Returns a WeatherForecast object with weather and temperature."""
     forecast = WeatherForecastService.get_forecast(town)
     if forecast is None:
@@ -146,6 +157,22 @@ llm_model = ChatOllama(
     reasoning=False,
 ) #B
 llm_with_tools = llm_model.bind_tools(TOOLS) #C
+
+SYSTEM_MESSAGE = SystemMessage(
+    content=(
+        "You are a helpful Azerbaijan travel assistant that can search travel "
+        "information and get weather forecasts. Use only the tools "
+        "to find the information you need, including destination names. Do not "
+        "supplement tool results with internal knowledge. If the tools do not "
+        "provide the requested information, say that it is unavailable. Always "
+        "call weather_forecast when weather information is requested, including "
+        "questions about current conditions. For broad questions asking which "
+        "Azerbaijani cities have particular weather, first use search_travel_info "
+        "to find candidate cities, then check several of them with "
+        "weather_forecast and report the matching results. Do not refuse the "
+        "request or ask the user to choose a city first."
+    )
+)
 
 #A Define the tools list
 #B Instantiate the local Gemma model through Ollama
@@ -218,11 +245,13 @@ tools_execution_node = ToolsExecutionNode(TOOLS) #N
 # ----------------------------------------------------------------------------
 
 def llm_node(state: AgentState): #A    
-    """LLM node that decides whether to call the search tool."""
+    """LLM node that decides whether to call the available tools."""
     current_messages = state["messages"] #B
-    respose_message = llm_with_tools.invoke(current_messages) #C
+    response_message = llm_with_tools.invoke(
+        [SYSTEM_MESSAGE, *current_messages]
+    ) #C
 
-    return {"messages": [respose_message]} #D
+    return {"messages": [response_message]} #D
 
 #A Define the LLM node
 #B Get the current messages from the agent state
@@ -358,3 +387,25 @@ if __name__ == "__main__":
 # The mock weather tool can be replaced with a real API such as OpenWeatherMap,
 # using LangChain's OpenWeatherMap integration. This would allow the agent to
 # retrieve actual real-time weather data.
+#
+# ----------------------------------------------------------------------------
+# Improved behavior after updating the system message and tool descriptions
+# ----------------------------------------------------------------------------
+#
+# Downloading destination pages ...
+# Fetching pages: 100%|########################################| 5/5 [00:01<00:00, 4.30it/s]
+# Embedding 294 chunks in batches of 32 ...
+# Embedded 294/294 chunks
+# Vector store ready.
+#
+# Azerbaijan Travel Assistant (type 'exit' to quit)
+# You: suggest Azerbaijani cities where is it raining now
+# Assistant: It is currently raining in Sumqayit.
+#
+# You:
+#
+# Behavior change: After adding explicit tool descriptions and strengthening the
+# system message, the agent used the available tools and returned a result
+# directly instead of refusing the request or asking the user to choose a city.
+# The SystemMessage instructs the model to use tools for all facts, including
+# destination names, which reduces its reliance on internal knowledge.
