@@ -365,3 +365,6 @@ if __name__ == "__main__":
 # hiking.
 #
 # You:
+
+# The model can combine retrieved vector-store content with its internal knowledge 
+# because no prompt restricts it to the retrieved context. The response likely blends both.
