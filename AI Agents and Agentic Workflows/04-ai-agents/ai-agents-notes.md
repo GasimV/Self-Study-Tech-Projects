@@ -1,4 +1,4 @@
-# LangChain/LangGraph Agent Notes
+# LangChain/LangGraph AI Agents Notes
 
 ## Table of contents
 
@@ -19,6 +19,15 @@
   - [Agents as graph nodes](#agents-as-graph-nodes)
   - [Bounded loops](#bounded-loops)
   - [Hybrid architecture mental model](#hybrid-architecture-mental-model)
+- [Multi-Agent System Patterns](#multi-agent-system-patterns)
+  - [Agent tools](#agent-tools)
+  - [Specialized agents](#specialized-agents)
+  - [Router pattern](#router-pattern)
+  - [Supervisor pattern](#supervisor-pattern)
+  - [Router versus supervisor](#router-versus-supervisor)
+  - [Workflow-like versus agentic orchestration](#workflow-like-versus-agentic-orchestration)
+  - [Nested agent and tool hierarchy](#nested-agent-and-tool-hierarchy)
+  - [Multi-agent mental model](#multi-agent-mental-model)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -341,3 +350,272 @@ This is a **hybrid workflow-agent architecture**: orchestration remains
 deterministic at the graph level, while selected nodes retain agentic freedom
 inside their assigned boundaries. LangGraph explicitly supports
 [mixing workflows and agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents).
+
+## Multi-Agent System Patterns
+
+### Agent tools
+
+Tools let an agent perform work outside the language model, such as:
+
+* querying a SQL database
+* calling a REST API
+* checking room availability
+* retrieving destination or weather information
+
+For example, an accommodation agent can combine a hotel database tool with a
+guesthouse *(B&B - Bed and Breakfast)* availability API:
+
+```text
+User: Find an available hotel in Baku
+  -> Accommodation Agent
+  -> SQL availability tool
+  -> Matching hotel rooms
+```
+
+The tool performs the external operation; the agent decides when to call it,
+which arguments to supply, and how to present its result.
+
+### Specialized agents
+
+A specialized agent has a narrow responsibility, a focused prompt, and only the
+tools needed for that responsibility. For example:
+
+```text
+Travel Information Agent
+  |-- destination-search tool
+  `-- weather tool
+
+Accommodation Agent
+  |-- hotel-database tool
+  `-- guesthouse-availability API
+```
+
+Specialization creates clearer boundaries and smaller tool sets, which can make
+tool selection easier to test and improve.
+
+### Router pattern
+
+A router examines an incoming request, classifies its intent, and dispatches it
+to the relevant specialist. In a simple single-route design, one specialist
+handles the request and the workflow then ends:
+
+```text
+User request
+     |
+   Router
+   /    \
+Travel  Accommodation
+Agent   Agent
+   \    /
+     END
+```
+
+Examples:
+
+* `What are the main attractions in Sheki?` -> Travel Information Agent
+* `Which hotel rooms are available in Baku?` -> Accommodation Agent
+
+This form of routing works like a switchboard: classify, hand off, and return a
+result. More general router implementations can also select zero or multiple
+specialists, run independent requests in parallel, and synthesize their
+outputs. See the [LangChain router documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/router):
+
+**Router**
+
+In the **router** architecture, a routing step classifies input and directs it to specialized agents. This is useful when you have distinct **verticals** (separate knowledge domains that each require their own agent).
+
+![Router Pattern from LangChain Docs](router.png)
+
+
+***Key characteristics***
+- Router decomposes the query
+- Zero or more specialized agents are invoked in parallel
+- Results are synthesized into a coherent response  ​
+
+***When to use***
+- Use the router pattern when you have distinct verticals (separate knowledge domains that each require their own agent), need to query multiple sources in parallel, and want to synthesize results into a combined response.
+
+
+### Supervisor pattern
+
+A supervisor is an agent that coordinates other specialized agents. It can
+decompose a request, choose one or several specialists, decide their order,
+revisit an earlier specialist, and combine the results into a final response.
+In that sense, it acts as an **agent of agents**.
+
+```text
+User: Find an Azerbaijani mountain town with pleasant weather, then find accommodation there.
+  -> Supervisor
+  -> Travel Information Agent
+  -> Suggested destination: Quba
+  -> Supervisor
+  -> Accommodation Agent
+  -> Available stays in Quba
+  -> Supervisor's combined response
+```
+
+Supervisor-based systems commonly expose specialist agents to the supervisor as
+tools. The supervisor manages the overall context and delegates focused tasks,
+while each specialist controls its own local tool calls. See the
+[LangChain subagents documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/subagents).
+
+**Subagents**
+
+In the **subagents** architecture, a central main agent (often referred to as a **supervisor**) coordinates subagents by calling them as tools. The main agent decides which subagent to invoke, what input to provide, and how to combine results. Subagents are stateless—they don’t remember past interactions, with all conversation memory maintained by the main agent. This provides context isolation: each subagent invocation works in a clean context window, preventing context bloat in the main conversation.
+
+![Subagents](subagents.png)
+
+**Key characteristics**
+- ***Centralized control***: All routing passes through the main agent
+- ***No direct user interaction***: Subagents return results to the main agent, not the user (though you can use interrupts within a subagent to allow user interaction)
+- ***Subagents via tools***: Subagents are invoked via tools
+- ***Parallel execution***: The main agent can invoke multiple subagents in a single turn
+
+> **Supervisor vs. Router**: A supervisor agent (this pattern) is different from a router. The supervisor is a full agent that maintains conversation context and dynamically decides which subagents to call across multiple turns. A router is typically a single classification step that dispatches to agents without maintaining ongoing conversation state.  
+
+**When to use**  
+- Use the subagents pattern when you have multiple distinct domains (e.g., calendar, email, CRM, database), subagents don’t need to converse directly with users, or you want centralized workflow control. For simpler cases with just a few tools, use a single agent.
+
+> **Need user interaction within a subagent?** While subagents typically return results to the main agent rather than conversing directly with users, you can use interrupts within a subagent to pause execution and gather user input. This is useful when a subagent needs clarification or approval before proceeding. The main agent remains the orchestrator, but the subagent can collect information from the user mid-task.
+
+### Router versus supervisor
+
+| Aspect | Router | Supervisor |
+|---|---|---|
+| Main purpose | Classification and dispatch | Coordination and task decomposition |
+| Specialists per request | Usually one in a simple design; possibly several independent routes | One or several, possibly called repeatedly |
+| Can revisit a specialist? | Not normally in a one-pass route | Yes |
+| Best fit | Clear, separable request categories | Multi-step requests with dependencies |
+| Main model decision | Which route or routes match the request | Which agents to call, in what order, and whether more work is needed |
+| Mental analogy | Switchboard | Manager |
+
+A **router** is appropriate when the main challenge is choosing the right
+specialist. A **supervisor** is more suitable when completing the task requires
+planning, sequencing, follow-up calls, or combining dependent results.
+
+Also, the Supervisor can decide that ***multiple*** domains/agents are needed for one user request, call several specialist agents, and then combine the results. That is exactly the “agent of agents” idea.
+
+Example:
+
+```text
+Application has domains: N1, N2, N3, N4, N5, ...
+
+User:
+"Find a good city for a business trip, check the weather, estimate travel cost, and suggest an available hotel."
+
+                 Supervisor
+                      ↓
+        Determines required domains:
+            N1 + N2 + N5
+          /       |       \
+         ↓        ↓        ↓
+   N1 Travel   N2 Weather   N5 Hotels
+     Agent       Agent        Agent
+      ↓            ↓            ↓
+    tools         tools         tools
+      \            |            /
+       \           |           /
+            Supervisor
+                ↓
+      combines all results
+                ↓
+        synthesized answer
+```
+
+So the Supervisor acts as the **dynamic coordinator across domains**, while each domain agent handles its own tools.
+
+### Short note — multi-domain NL-to-SQL limitation
+
+In a multi-domain **natural-language-to-SQL** system, Supervisor coordination does **not** guarantee that results can be meaningfully combined.
+
+For example:
+
+```text
+Cash Loan domain → customer-level data
+Deposit domain   → aggregated branch-level mart
+HR domain        → employee-level data
+Risk domain      → portfolio-level aggregates
+```
+
+Even if separate agents successfully generate valid SQL for each domain, synthesis may be **technically difficult or impossible** when:
+
+* there is no common join key between domains,
+* entities are defined at different grains,
+* one domain is aggregated while another is customer-level,
+* customer/employee/account identifiers are inconsistent or unavailable.
+
+Example:
+
+```text
+User:
+"Show employees with cash loans and compare their deposit behavior."
+
+HR Agent   → employee-level result
+Loan Agent → customer-level result
+Deposit Agent → branch-level aggregate
+
+                    ↓
+          No reliable common key/grain
+
+                    ↓
+     Results cannot be safely joined
+```
+
+So, **agentic orchestration can decide which domains to query, but the underlying data model determines whether cross-domain synthesis is actually possible.**
+
+
+### Workflow-like versus agentic orchestration
+
+A simple router is relatively constrained and workflow-like: the application
+defines the possible destinations, and the model selects among them. A
+supervisor is more agentic because the model dynamically decides which agents
+to use and how the work should proceed.
+
+Routing can also form a hybrid architecture:
+
+```text
+Deterministic or constrained top-level flow
+                    ->
+Specialized agents with local tool-calling freedom
+```
+
+The top level keeps the system predictable, while the specialists retain
+agentic behavior within clearly defined boundaries.
+
+### Nested agent and tool hierarchy
+
+Multi-agent systems commonly contain two decision layers:
+
+```text
+Supervisor Agent
+  |-- Travel Information Agent
+  |     |-- destination-search tool
+  |     `-- weather tool
+  |
+  `-- Accommodation Agent
+        |-- hotel-database tool
+        `-- guesthouse-availability API
+```
+
+At the first layer, the supervisor decides which specialist should work. At the
+second layer, that specialist decides which of its tools to call. Wrapping
+specialists as tools keeps the supervisor interface simple and separates global
+orchestration from domain-specific execution.
+
+### Multi-agent mental model
+
+* **Tool:** an external capability an agent can invoke.
+* **Agent:** a model plus instructions and tools for completing a task.
+* **Router:** classifies work and dispatches it to the appropriate specialist or
+  specialists.
+* **Supervisor:** coordinates multiple specialists and manages their sequence.
+* **LangGraph:** defines and runs the workflow, state transitions, branches, and
+  loops around agents.
+* **LangSmith or Langfuse:** traces and helps debug model calls, tool calls,
+  agent handoffs, latency, token use, outputs, and errors.
+
+Langfuse is a free, open-source and self-hostable observability alternative to
+LangSmith. Its core features can be deployed on private infrastructure for an
+on-premises setup, although the operator remains responsible for infrastructure
+and maintenance costs. See the [Langfuse self-hosting guide](https://langfuse.com/self-hosting)
+and [self-hosted pricing details](https://langfuse.com/pricing-self-host).
