@@ -14,6 +14,11 @@
   - [8. Current LangChain/LangGraph direction](#8-current-langchainlanggraph-direction)
   - [9. Current way to control limits](#9-current-way-to-control-limits)
   - [Mental model](#mental-model)
+- [Hybrid Workflow-Agent Architecture with Custom LangGraph Workflows](#hybrid-workflow-agent-architecture-with-custom-langgraph-workflows)
+  - [Explicit orchestration without a router or supervisor](#explicit-orchestration-without-a-router-or-supervisor)
+  - [Agents as graph nodes](#agents-as-graph-nodes)
+  - [Bounded loops](#bounded-loops)
+  - [Hybrid architecture mental model](#hybrid-architecture-mental-model)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -252,3 +257,87 @@ final answer
 ```
 
 **Key takeaway:** tool selection, query rewriting, and number of tool calls are primarily **LLM decisions**; LangChain exposes the tools, while LangGraph manages the execution loop and limits.
+
+## Hybrid Workflow-Agent Architecture with Custom LangGraph Workflows
+
+LangGraph calls this design a **custom workflow**. The application defines an
+explicit graph containing sequential stages, conditional branches, loops, or
+parallel paths. A node can still contain a complete agent with its own model,
+prompt, and tools. This makes it possible to combine predictable application
+control with agentic behavior only where it is useful. See the
+[LangChain custom-workflow documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/custom-workflow).
+
+### Explicit orchestration without a router or supervisor
+
+A router or supervisor agent is optional when the required execution order is
+already known. The graph can encode the routing directly:
+
+```text
+START
+  ↓
+Agent A
+  ↓
+Agent B
+  ↓
+check_result
+  ├─ good → Agent C → END
+  └─ bad  → Agent B   (bounded loop)
+```
+
+In this design, conditional edges implement the routing policy. The workflow
+does not spend an additional model call asking a supervisor which node should
+run next.
+
+### Agents as graph nodes
+
+Each agent can be created independently with `create_agent(...)` and a
+specialized tool set. A LangGraph node invokes that agent and writes the relevant
+result back to the shared workflow state.
+
+The responsibilities remain separate:
+
+* The **outer LangGraph workflow** determines which agent or deterministic step
+  runs next.
+* Each **inner agent** decides how to use its own tools and when its local
+  model-tool loop is complete.
+* The **shared graph state** carries validated inputs, outputs, counters, and
+  other context between nodes.
+
+This composition also allows ordinary Python functions, direct model calls,
+retrievers, and complete agents to coexist in the same graph.
+
+### Bounded loops
+
+Every loop should have an explicit termination rule. A common approach stores
+an attempt counter in graph state and routes according to a condition such as
+`attempts < 3`.
+
+The graph-wide `recursion_limit` can be supplied as a second layer of protection:
+
+```python
+result = workflow.invoke(
+    initial_state,
+    config={"recursion_limit": 20},
+)
+```
+
+The state counter expresses the intended business rule, while
+`recursion_limit` limits total graph supersteps and protects against unexpected
+cycles. It should be treated as a safety backstop rather than the loop's primary
+termination condition. See the LangGraph documentation on
+[creating loops and imposing recursion limits](https://docs.langchain.com/oss/python/langgraph/use-graph-api#create-and-control-loops).
+
+### Hybrid architecture mental model
+
+```text
+Deterministic outer workflow
+        ↓
+Selected agentic nodes
+        ↓
+Local model ↔ tool loops
+```
+
+This is a **hybrid workflow-agent architecture**: orchestration remains
+deterministic at the graph level, while selected nodes retain agentic freedom
+inside their assigned boundaries. LangGraph explicitly supports
+[mixing workflows and agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents).
