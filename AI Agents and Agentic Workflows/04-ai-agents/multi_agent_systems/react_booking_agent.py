@@ -413,3 +413,53 @@ accommodation_booking_agent = create_agent( #B
 
 if __name__ == "__main__":
     chat_loop() 
+
+
+# ----------------------------------------------------------------------------
+# Before and after: combined tool access
+# ----------------------------------------------------------------------------
+#
+# BEFORE: The CLI invoked an accommodation-only agent whose tools were limited
+# to the hotel database and BnB availability. It could book accommodation but
+# refused travel-information and weather requests.
+#
+# Azerbaijan Accommodation Booking Assistant (type 'exit' to quit)
+# You: what is the weather in Barda and its main tourist destinations?
+# Assistant: I'm sorry, but I don't have access to real-time weather information
+# or a general tourism guide. I am specifically designed to help you find and
+# book accommodations in Azerbaijan.
+#
+# You: yes, please find available hotels and BnBs in Barda.
+# Assistant: I couldn't find any hotels in Barda, but I found these BnBs:
+# - Barda Heritage Guesthouse: 3 rooms, 75.0 AZN per room
+# - Karabakh Plain BnB: 2 rooms, 70.0 AZN per room
+#
+# You: do you know what is the weather in Baku?
+# Assistant: I'm sorry, but I don't have access to real-time weather information.
+# I can only assist you with booking hotels and BnBs in Azerbaijan.
+#
+# AFTER: The booking agent received the travel-search and weather tools in
+# addition to its hotel and BnB tools. The expanded system prompt tells it which
+# tool to use for each part of a mixed request, so it answers instead of refusing.
+#
+# Azerbaijan Travel and Booking Assistant (type 'exit' to quit)
+# You: what is the weather in Barda and its main tourist destinations?
+# Assistant: The current weather in Barda is sunny with a temperature of 19°C.
+# Barda's main destinations and landmarks include:
+# - Ancient Bridge
+# - Imamzadeh Mausoleum
+# - Barda Mausoleum
+# - Barda Juma Mosque
+# - State Art Gallery
+# - Sabir Garden Park
+# - Barda Sports Center
+#
+# You: do you know what is the weather in Baku?
+# Assistant: The current weather in Baku is windy with a temperature of 31°C.
+#
+# You: do you know what is the weather in Barda?
+# Assistant: The current weather in Barda is windy with a temperature of 26°C.
+#
+# Note: WeatherForecastService generates random demonstration data, so Barda's
+# condition and temperature can change between calls. Replace it with a real
+# weather API for factual real-time results.
