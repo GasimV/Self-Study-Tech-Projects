@@ -273,6 +273,30 @@ def router_agent_node(state: AgentState) -> Command[AgentType]:
 #H Return a command that sends execution to the selected agent
 #I If the last message is not a HumanMessage, go to the default travel agent
 
+# `Command` is a LangGraph instruction that tells the graph what to do next.
+#
+# - `goto=...` selects the node to execute next.
+# - `update=...` optionally changes the graph state before execution continues.
+#
+# Example:
+#
+# return Command(
+#     goto="travel_info_agent",
+#     update={"some_field": "new value"},
+# )
+#
+# This means:
+#
+# 1. Update the graph state.
+# 2. Continue execution at `travel_info_agent`.
+#
+# In this router:
+#
+# return Command(goto=agent_name)
+#
+# simply routes execution to the agent selected by the LLM without changing
+# the graph state.
+
 # -----------------------------------------------------------------------------
 # 4. Initialize the dependencies for the LangGraph graph
 # -----------------------------------------------------------------------------
