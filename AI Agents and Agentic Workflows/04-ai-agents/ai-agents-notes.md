@@ -410,6 +410,14 @@ Agent   Agent
      END
 ```
 
+Below is a graphical representation of the multi-agent travel assistant graph. The router agent dispatches user queries to either the travel information agent or the accommodation booking agent, each equipped with their own specialized tools.
+
+![Router-based multi-agent assistant](router-based-multi-agent-assistant.png)
+
+Router-based multi-agent assistant
+
+As the diagram shows, this is a **hybrid architecture**. *At the top*, the system exhibits a *deterministic, workflow-driven* routing logic. *At the lower level*, each specialist agent *uses its own set of tools* (e.g., travel data APIs or accommodation booking interfaces) and *follows a tool-based decision process*, which is inherently more *flexible and dynamic*.
+
 Examples:
 
 * `What are the main attractions in Sheki?` -> Travel Information Agent
