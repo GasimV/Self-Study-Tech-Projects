@@ -1,3 +1,6 @@
+# This is a combined single agent with access to all travel, weather, hotel,
+# and BnB tools.
+
 # -----------------------------------------------------------------------------
 # Import libraries
 # -----------------------------------------------------------------------------
