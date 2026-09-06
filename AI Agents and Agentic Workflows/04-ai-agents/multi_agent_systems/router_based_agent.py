@@ -202,6 +202,34 @@ class AgentTypeOutput(BaseModel):
 llm_router = llm_model.with_structured_output(
     AgentTypeOutput)
 
+# AgentTypeOutput is the Pydantic schema for the router's answer:
+#
+#     class AgentTypeOutput(BaseModel):
+#         agent: AgentType = Field(
+#             ...,
+#             description="Which agent should handle the query?",
+#         )
+#
+# - BaseModel makes this a structured Pydantic output model.
+# - agent: AgentType requires an "agent" field whose value is one of the
+#   AgentType enum values.
+# - Field(...) makes the field required.
+# - description tells the LLM what the field represents.
+#
+# The model's output is conceptually one of these JSON objects:
+#
+#     {"agent": "travel_info_agent"}
+#
+#     {"agent": "accommodation_booking_agent"}
+#
+# with_structured_output(AgentTypeOutput) validates that response and returns a
+# Python object such as:
+#
+#     AgentTypeOutput(agent=AgentType.travel_info_agent)
+#
+# This lets the router safely access router_response.agent instead of parsing
+# free-form model text.
+
 # -----------------------------------------------------------------------------
 # Router Agent System Prompt Constant
 # -----------------------------------------------------------------------------
