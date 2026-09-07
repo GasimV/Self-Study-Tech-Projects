@@ -497,6 +497,10 @@ In the **router** architecture, a routing step classifies input and directs it t
 ***When to use***
 - Use the router pattern when you have distinct verticals (separate knowledge domains that each require their own agent), need to query multiple sources in parallel, and want to synthesize results into a combined response.
 
+**Insights and notes:**
+> - To test router accuracy, create a labeled dataset of queries with correct agent assignments, measure classification accuracy, and adjust routing logic based on the error analysis.
+> - Router agents should include explicit criteria for edge cases such as ambiguous queries. Define a default route or request clarification when classification confidence is below a threshold.
+
 
 ### Supervisor pattern
 
@@ -727,3 +731,5 @@ LangSmith. Its core features can be deployed on private infrastructure for an
 on-premises setup, although the operator remains responsible for infrastructure
 and maintenance costs. See the [Langfuse self-hosting guide](https://langfuse.com/self-hosting)
 and [self-hosted pricing details](https://langfuse.com/pricing-self-host).
+
+> Multi-agent systems require careful prompt engineering for each agent’s role. Each agent should have a clearly defined scope, tools list, and examples of queries it should handle.
