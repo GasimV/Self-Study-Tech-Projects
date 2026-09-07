@@ -22,6 +22,7 @@
 - [Multi-Agent System Patterns](#multi-agent-system-patterns)
   - [Agent tools](#agent-tools)
   - [Specialized agents](#specialized-agents)
+  - [Skills pattern](#skills-pattern)
   - [Router pattern](#router-pattern)
   - [Supervisor pattern](#supervisor-pattern)
   - [Router versus supervisor](#router-versus-supervisor)
@@ -393,6 +394,59 @@ Accommodation Agent
 Specialization creates clearer boundaries and smaller tool sets, which can make
 tool selection easier to test and improve.
 
+### Skills pattern
+
+![Skills Pattern](skills-pattern.png)
+
+Skills are prompt-driven specializations that dynamically provide an agent with
+task-specific instructions and domain knowledge or context. In the skills architecture, specialized capabilities are packaged as invocable “skills” that augment an agent’s behavior. Skills are primarily prompt-driven specializations that an agent can invoke on-demand. They are related to tools but serve a different purpose:
+
+```text
+Tool  = what the agent can do
+Skill = how the agent should think or behave for a domain
+```
+
+For example, an `SQL expert` skill could load SQL-specific instructions and
+database-schema knowledge, while executable tools perform the actual work:
+
+```text
+Skill: SQL expert
+  -> loads SQL instructions and schema context
+
+Tools:
+  -> execute_sql()
+  -> inspect_schema()
+```
+
+A skill can also dynamically expose or register the tools relevant to its
+domain. Conceptually, however, the skill still provides specialization and
+context, while the tools provide executable capabilities.
+
+The three related designs can be distinguished as follows:
+
+```text
+Multi-tool agent  = one agent with many executable actions
+Skills pattern    = one agent with many on-demand specializations
+Subagents pattern = multiple agents with separate contexts and tool sets
+```
+
+A skills-based agent can therefore also be a multi-tool agent. Use skills when
+one agent needs many lightweight, dynamically loaded specializations and
+creating a separate full subagent for each domain would add unnecessary context
+or orchestration overhead. See the
+[LangChain skills documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/skills).
+
+> ***Clarification Note***: in the **Skills pattern**, “knowledge/context” mainly means **prompt/instructions and task-specific context loaded for that skill**. It is **not automatically RAG**.
+
+A skill may *use* RAG or retrieval tools, but that is optional.
+
+```text
+Skill = specialized instructions/context
+RAG   = retrieving external knowledge
+```
+
+They can be combined, but they are different concepts.
+
 ### Router pattern
 
 A router examines an incoming request, classifies its intent, and dispatches it
@@ -657,6 +711,8 @@ orchestration from domain-specific execution.
 ### Multi-agent mental model
 
 * **Tool:** an external capability an agent can invoke.
+* **Skill:** task-specific instructions and knowledge loaded to specialize how
+  an agent behaves for a particular domain.
 * **Agent:** a model plus instructions and tools for completing a task.
 * **Router:** classifies work and dispatches it to the appropriate specialist or
   specialists.
