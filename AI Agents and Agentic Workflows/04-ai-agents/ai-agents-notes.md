@@ -462,6 +462,12 @@ User: Find an Azerbaijani mountain town with pleasant weather, then find accommo
   -> Supervisor's combined response
 ```
 
+*Unlike a *workflow-based router*—where each user request is routed once to a single specialized agent—the *Supervisor* supports more flexible coordination. It *can call different agents* as needed and *revisit the same agent multiple times* within one request. This allows it to gather intermediate results, combine information, and reason across more complex, open-ended, or multipart queries.
+
+The diagram below illustrates a Supervisor-based architecture in which orchestration is tool-driven at both levels: the Supervisor selects specialized agents, while each agent selects its own tools. Acting as the central decision-maker, the Supervisor determines which agent—or sequence of agents—should handle each part of a complex travel request. This flexible and composable design provides a foundation for advanced multi-agent AI assistants capable of completing real-world, multi-step tasks.
+
+![supervisor-based-assistant](supervisor-based-assistant.png)
+
 Supervisor-based systems commonly expose specialist agents to the supervisor as
 tools. The supervisor manages the overall context and delegates focused tasks,
 while each specialist controls its own local tool calls. See the
