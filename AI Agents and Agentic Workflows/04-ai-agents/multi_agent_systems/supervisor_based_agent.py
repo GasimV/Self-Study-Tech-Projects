@@ -452,3 +452,29 @@ def chat_loop(): #A
 
 if __name__ == "__main__":
     chat_loop() 
+
+
+# -----------------------------------------------------------------------------
+# Example supervisor run
+# -----------------------------------------------------------------------------
+#
+# Downloading destination pages ...
+# Fetching pages: 100%|########################################| 15/15 [00:02<00:00, 5.04it/s]
+# Embedding 415 chunks in batches of 32 ...
+# Embedded 415/415 chunks
+# Vector store ready.
+#
+# Azerbaijan Supervisor-Based Travel Assistant (type 'exit' to quit)
+# You: Can you find a nice seaside Azerbaijani town with good weather right now
+# and find availability and price for one double hotel room in that town?
+
+# Assistant: Based on current conditions, **Bilgah** is a highly recommended
+# seaside town in Azerbaijan, as it is currently enjoying sunny weather with a
+# temperature of 31°C. It is well-known for its beaches and amenities like the
+# Amburan Beach Club.
+#
+# While Bilgah, Nabran, and Novkhani are excellent coastal destinations, I was
+# unfortunately unable to find specific real-time availability or pricing for a
+# double hotel room in these locations at this moment. I recommend checking back
+# soon or exploring nearby larger cities if you need immediate booking
+# confirmation.
