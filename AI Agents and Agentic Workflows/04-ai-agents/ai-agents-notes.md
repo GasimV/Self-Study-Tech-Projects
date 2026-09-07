@@ -462,7 +462,7 @@ User: Find an Azerbaijani mountain town with pleasant weather, then find accommo
   -> Supervisor's combined response
 ```
 
-*Unlike a *workflow-based router*—where each user request is routed once to a single specialized agent—the *Supervisor* supports more flexible coordination. It *can call different agents* as needed and *revisit the same agent multiple times* within one request. This allows it to gather intermediate results, combine information, and reason across more complex, open-ended, or multipart queries.
+*Unlike a workflow-based router*—where each user request is routed once to a single specialized agent—the *Supervisor* supports more flexible coordination. It *can call different agents* as needed and *revisit the same agent multiple times* within one request. This allows it to gather intermediate results, combine information, and reason across more complex, open-ended, or multipart queries.
 
 The diagram below illustrates a Supervisor-based architecture in which orchestration is tool-driven at both levels: the Supervisor selects specialized agents, while each agent selects its own tools. Acting as the central decision-maker, the Supervisor determines which agent—or sequence of agents—should handle each part of a complex travel request. This flexible and composable design provides a foundation for advanced multi-agent AI assistants capable of completing real-world, multi-step tasks.
 
@@ -472,6 +472,44 @@ Supervisor-based systems commonly expose specialist agents to the supervisor as
 tools. The supervisor manages the overall context and delegates focused tasks,
 while each specialist controls its own local tool calls. See the
 [LangChain subagents documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/subagents).
+
+#### Current implementation guidance
+
+Keep the following terms separate:
+
+* **Supervisor pattern** describes the architecture: one main agent coordinates
+  specialized agents and combines their work.
+* **Subagents pattern** is LangChain's currently recommended implementation of
+  that architecture. The main agent maintains the conversation and invokes
+  stateless specialists as tools.
+* **Agents as tools** describes the implementation mechanism: create each
+  specialist agent, wrap its invocation in a clearly described tool, and give
+  those high-level tools to the supervisor agent. The
+  [official supervisor tutorial](https://docs.langchain.com/oss/python/langchain/supervisor)
+  follows this sequence.
+* **`create_supervisor()` from `langgraph-supervisor`** is an older convenience
+  library. It remains available for maintaining existing systems, but its own
+  [project documentation](https://github.com/langchain-ai/langgraph-supervisor-py)
+  recommends the direct tool-based supervisor pattern for most new projects.
+* **Raw LangGraph**, using components such as `StateGraph`, `Command`, `Send`,
+  and conditional edges, is appropriate when the orchestration requires
+  explicit routing, bounded loops, parallel fan-out, deterministic stages, or
+  other application-specific control.
+
+The default design for a new supervisor-based project is therefore:
+
+```text
+Supervisor agent
+   |-- Subagent A exposed as a tool
+   |-- Subagent B exposed as a tool
+   `-- Subagent C exposed as a tool
+```
+
+LangChain categorizes this as the **Subagents** pattern: a main agent coordinates
+specialists through tool calls. If the orchestration rules become highly
+specific, move to a custom LangGraph workflow instead of forcing those rules
+into the supervisor prompt. See the
+[LangChain multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent).
 
 **Subagents**
 
