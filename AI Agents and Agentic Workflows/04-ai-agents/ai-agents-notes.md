@@ -29,6 +29,14 @@
   - [Workflow-like versus agentic orchestration](#workflow-like-versus-agentic-orchestration)
   - [Nested agent and tool hierarchy](#nested-agent-and-tool-hierarchy)
   - [Multi-agent mental model](#multi-agent-mental-model)
+- [Model Context Protocol (MCP)](#model-context-protocol-mcp)
+  - [MCP simple mental model](#mcp-simple-mental-model)
+  - [MCP tools versus direct tools](#mcp-tools-versus-direct-tools)
+  - [Who should build the MCP server?](#who-should-build-the-mcp-server)
+  - [When MCP is useful](#when-mcp-is-useful)
+  - [Government integration example](#government-integration-example)
+  - [Choosing MCP server boundaries](#choosing-mcp-server-boundaries)
+  - [Practical MCP decision rule](#practical-mcp-decision-rule)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -733,3 +741,263 @@ and maintenance costs. See the [Langfuse self-hosting guide](https://langfuse.co
 and [self-hosted pricing details](https://langfuse.com/pricing-self-host).
 
 > Multi-agent systems require careful prompt engineering for each agent’s role. Each agent should have a clearly defined scope, tools list, and examples of queries it should handle.
+
+
+## Model Context Protocol (MCP)
+
+### MCP simple mental model
+
+**MCP is a standard interface between AI applications and external context or
+capabilities.** It follows a host-client-server architecture:
+
+```text
+Agent or AI application (MCP host)
+                 |
+             MCP client
+                 |
+             MCP server
+                 |
+       APIs, databases, files, services
+```
+
+Instead of every AI application implementing a different wrapper for the same
+external system, an MCP server exposes its capabilities through a common
+protocol. An MCP host can discover these capabilities and make them available
+to an agent. Servers may expose tools, resources, and prompts; tools are the
+model-invokable operations used to query systems or perform actions. See the
+[official MCP architecture](https://modelcontextprotocol.io/specification/latest/architecture)
+and [MCP tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
+
+MCP does not replace the underlying APIs, databases, files, or services. It is a
+standardized AI-facing integration layer placed in front of them.
+
+**Architecture**
+
+> The Model Context Protocol (MCP) follows a **client-host-server architecture** where each host can run multiple client instances. **MCP is a stateless protocol**: every request is self-contained and carries its own protocol version and capabilities. This architecture enables users to integrate AI capabilities across applications while maintaining clear security boundaries and isolating concerns. Built on JSON-RPC, MCP provides a protocol focused on context exchange and sampling coordination between clients and servers.​
+
+![MCP](mcp.png)
+
+**Host**  
+> The host process acts as the container and coordinator:
+- Creates and manages multiple client instances
+- Controls client connection permissions and lifecycle
+- Enforces security policies and consent requirements
+- Handles user authorization decisions
+- Coordinates AI/LLM integration and sampling
+- Manages context aggregation across clients
+
+
+**Clients**  
+> Each client is created by the host and communicates with exactly one server:
+- Communicates with exactly one server
+- Attaches protocol version and capabilities to every request
+- Routes protocol messages bidirectionally
+- Manages subscriptions and notifications
+- Maintains security boundaries between servers
+- A host application creates and manages multiple clients, with each client having a 1:1 relationship with a particular server.
+
+
+**Servers**  
+> Servers provide specialized context and capabilities:
+- Expose resources, tools and prompts via MCP primitives
+- Operate independently with focused responsibilities
+- Request client input (sampling, elicitation, roots) via InputRequiredResult within a reply
+- Must respect security constraints
+- Can be local processes or remote services
+
+### MCP tools versus direct tools
+
+An MCP tool and an application-defined tool may ultimately call the same API.
+The difference is the integration boundary:
+
+```text
+Direct tool:
+Agent -> custom application wrapper -> API
+
+MCP tool:
+Agent -> MCP client -> MCP server -> API
+```
+
+With a direct LangChain tool, the wrapper and its schema belong to one
+application:
+
+```python
+@tool
+def get_weather(location: str):
+    return ministry_weather_api(location)
+```
+
+With MCP, the server publishes standardized tool metadata and handles calls
+through the protocol. The AI application discovers and invokes the published
+tool through an MCP client. In short:
+
+```text
+Direct tool = application-specific integration
+MCP tool    = capability exposed through a reusable protocol boundary
+```
+
+### Who should build the MCP server?
+
+Ideally, the owner of the API or data source provides and maintains its MCP
+server. The owner is usually best positioned to manage authentication,
+authorization, security policy, API changes, rate limits, and operational
+support.
+
+This is not a requirement. If an organization exposes only REST APIs or
+databases, the team building the AI solution can create MCP adapters around
+those existing interfaces:
+
+```text
+Organization's existing systems
+  |-- Weather REST API
+  |-- Hydrology API
+  |-- Pollution API
+  `-- Environmental database
+                 |
+          MCP adapters/servers
+                 |
+             AI agents
+```
+
+The MCP layer can be delivered as part of the end-to-end solution. For long-term
+operation, its ownership, deployment, credentials, monitoring, versioning, and
+maintenance responsibilities should be agreed explicitly and preferably
+transferred to, or jointly managed with, the organization.
+
+### When MCP is useful
+
+MCP is optional. A multi-agent system does not automatically require it.
+
+Direct tools are often sufficient when there is one application, only a few
+integrations, little expected reuse, and the wrappers are specific to individual
+agents:
+
+```text
+One application + a few local integrations -> direct tools
+```
+
+Consider MCP when the same capabilities must be reused across several agents,
+applications, modules, or teams, or when a standardized and independently
+maintained integration boundary is valuable:
+
+```text
+Many shared integrations + many consumers -> MCP
+```
+
+The operational benefit becomes clearer when an API changes. Without MCP,
+several consumers may maintain separate implementations:
+
+```text
+Weather Agent -> custom wrapper -> Weather API
+Travel Agent  -> custom wrapper -> Weather API
+Risk Agent    -> custom wrapper -> Weather API
+Mobile module -> custom wrapper -> Weather API
+```
+
+An authentication or schema change may then require four separate updates,
+tests, and security reviews. With MCP, the API-specific adapter is centralized:
+
+```text
+Weather API -> Weather MCP Server -> Weather Agent
+                                  -> Travel Agent
+                                  -> Risk Agent
+                                  -> Other AI application
+```
+
+Provided the MCP-facing contract remains stable, the server absorbs the API
+change once and all consumers continue using the same standardized tools.
+
+### Government integration example
+
+Suppose a ministry already operates these systems:
+
+```text
+Weather REST API
+River-level API
+Air-quality database
+```
+
+For a single assistant, direct tools may be the simplest design:
+
+```text
+Agent
+  |-- get_weather()     -> Weather API
+  |-- get_river_level() -> River-level API
+  `-- get_air_quality() -> Air-quality database
+```
+
+If several agents and other AI applications need the same capabilities, an MCP
+layer makes them reusable:
+
+```text
+Weather API
+River-level API
+Air-quality database
+        |
+Ecology MCP Server
+        |
+        |-- Weather Agent
+        |-- Travel Agent
+        |-- Risk Agent
+        `-- Other AI application
+```
+
+The ministry does not need to replace its existing systems. The MCP server
+adapts them into a consistent interface for AI consumers.
+
+### Choosing MCP server boundaries
+
+One MCP server per API is not mandatory. Servers can instead follow logical
+domain boundaries so that related capabilities remain cohesive:
+
+```text
+Weather MCP Server
+  |-- get_forecast
+  |-- get_temperature
+  `-- get_precipitation
+
+Hydrology MCP Server
+  |-- get_river_level
+  `-- get_flood_warning
+
+Ecology MCP Server
+  |-- get_air_quality
+  `-- get_pollution_data
+```
+
+Choose boundaries according to ownership, authentication rules, deployment
+lifecycle, security isolation, expected reuse, and how capabilities change
+together. A single domain server can wrap several related APIs, while sensitive
+or independently operated systems may deserve separate servers.
+
+### Practical MCP decision rule
+
+```text
+Existing APIs, databases, files, or services
+                     |
+          Already exposed through MCP?
+              |                 |
+             yes                no
+              |                 |
+       Consume the server       |
+                                |
+             Reused across agents, apps, or teams?
+                         |                 |
+                        yes                no
+                         |                 |
+             Build an MCP adapter     Direct tools may
+                  or server             be sufficient
+                         |
+                   Agents use it
+```
+
+The practical mental rule is:
+
+```text
+Direct tools = simplest for local or application-specific integrations
+MCP          = useful when integrations become shared infrastructure
+```
+
+**Key takeaway:** MCP standardizes how AI applications discover and invoke
+external capabilities. It is most valuable as a reusable integration boundary,
+not as a requirement for every agent or every API.
