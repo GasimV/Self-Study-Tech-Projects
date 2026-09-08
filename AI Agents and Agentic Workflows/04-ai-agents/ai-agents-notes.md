@@ -35,6 +35,7 @@
   - [Who should build the MCP server?](#who-should-build-the-mcp-server)
   - [When MCP is useful](#when-mcp-is-useful)
   - [Government integration example](#government-integration-example)
+  - [MCP in a bank organization example](#mcp-in-a-bank-organization-example)
   - [Choosing MCP server boundaries](#choosing-mcp-server-boundaries)
   - [Practical MCP decision rule](#practical-mcp-decision-rule)
 
@@ -944,6 +945,32 @@ Ecology MCP Server
 
 The ministry does not need to replace its existing systems. The MCP server
 adapts them into a consistent interface for AI consumers.
+
+### MCP in a bank organization example
+
+- **MCP (Model Context Protocol)** is useful when many AI/DS projects need to reuse the same enterprise capabilities and you want one standardized AI-facing integration layer instead of every project building its own wrappers.
+
+- Without MCP, each project may separately integrate with services such as **Greenplum, Elasticsearch, Redis, Java APIs, document systems, internal business APIs**, etc. This can duplicate authentication logic, schemas, validation, error handling, connection code, and maintenance.
+
+- With MCP, the **provider team** exposes selected reusable capabilities through an **MCP server** as well-defined tools/resources. AI applications act as **MCP clients/hosts** and consume those documented contracts.
+
+Example:
+
+```text
+AI Project A ─┐
+AI Project B ─┼── MCP Client ──> Enterprise MCP Server ──> Greenplum / APIs / Search
+AI Project C ─┘
+```
+
+The provider team should **own, version, document, secure, and maintain the MCP contracts**. If Greenplum, Elasticsearch, or an internal API changes internally, *the provider can often adapt the MCP server* while keeping the external tool contract stable. *If the public MCP contract itself changes incompatibly, consumers may still need updates.*
+
+MCP should **not automatically wrap every infrastructure service**. For example, Redis is often just internal application infrastructure, and Gemma already exposes a standard model API. For a simple endpoint/location change, stable DNS, service discovery, or an API gateway is usually enough.
+
+**Decision rule**
+
+> **Use direct integration when one application/team controls the integration. Use MCP when the same governed capabilities should be reusable by many AI applications through a common, discoverable, stable interface.**
+
+So the main organizational value of MCP is **centralized reusable AI-tool integration and contract ownership**, not merely hiding service URLs.
 
 ### Choosing MCP server boundaries
 
