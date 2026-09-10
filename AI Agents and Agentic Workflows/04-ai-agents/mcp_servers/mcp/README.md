@@ -39,6 +39,25 @@ Weather MCP test passed.
 
 `Client connected after context exit: False` is expected: it confirms that the client closed its connection cleanly after the test.
 
+### Transport and result details
+
+The client uses:
+
+```python
+client = Client(MCP_SERVER_URL)
+```
+
+FastMCP automatically detects the URL and creates the Streamable HTTP transport, so an explicit `StreamableHttpTransport` import is not required. Both approaches are valid.
+
+The call still returns the standard `CallToolResult` wrapper. The client extracts its structured dictionary from `.data` to make validation and display simpler:
+
+```python
+result = await client.call_tool(...)
+weather_data = result.data
+```
+
+Some server configurations return `307 Temporary Redirect` when a request URL omits a required trailing slash. This server handles `/weather-mcp` directly, so its normal request logs contain successful `200 OK` and `202 Accepted` responses instead.
+
 ## 3. Test another city or destination
 
 Pass a location after the script name:
