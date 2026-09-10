@@ -28,5 +28,5 @@ lark==1.2.2
 aiohttp==3.12.13
 beautifulsoup4==4.14.3
 langgraph-supervisor==0.0.30
-fastmcp==2.10.5
+fastmcp==2.14.7
 langchain-mcp-adapters==0.1.12
