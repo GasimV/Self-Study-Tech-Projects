@@ -3,7 +3,12 @@
 This directory contains:
 
 - `weather_mcp.py` — a Streamable HTTP MCP server with realistic, deterministic mock weather data.
-- `test_weather_mcp.py` — a lightweight FastMCP client that discovers and tests the weather tool.
+- `test_weather_mcp.py` — a lightweight FastMCP client that discovers the weather tool exposed by `weather_mcp.py`, calls it once, prints the result, and exits.
+- `agent_with_mcp.py` — a full LangChain `create_agent` travel assistant that uses local Ollama models, a vector-search tool for Azerbaijani travel information, and the weather tool exposed by `weather_mcp.py`. It runs an interactive chat until the user enters `exit` or `quit`.
+
+The lightweight test client makes one direct MCP weather call to verify the connection and response. The full agent instead keeps accepting questions in a chat loop and lets the LLM decide when and how to use the MCP weather tool and local travel-search tool for each request.
+
+To test the MCP server and its exposed weather tool through the MCP Inspector UI, use the guide in [`../mcp-inspector`](../mcp-inspector/README.md).
 
 No external weather API or API key is required.
 
@@ -99,3 +104,50 @@ Use quotation marks whenever a location name contains spaces.
 Return to the first terminal and press `Ctrl+C`.
 
 The returned conditions are demonstration data marked with `"data_source": "mock"`; they must not be treated as live weather observations.
+
+## Example agent run
+
+Run the server and agent in separate terminals:
+
+```powershell
+python weather_mcp.py
+```
+
+```powershell
+python agent_with_mcp.py
+```
+
+Example output:
+
+```text
+Downloading Azerbaijani destination pages ...
+Fetching pages: 100%|#################################################| 15/15 [00:02<00:00, 5.16it/s]
+Embedding 415 chunks in batches of 32 ...
+Embedded 415/415 chunks
+Vector store ready.
+
+Azerbaijan MCP Travel Assistant (type 'exit' to quit)
+You: Suggest beach Azerbaijani towns with rainy weather
+Assistant: Based on the available travel information and mock weather data,
+here are the beach destinations in Azerbaijan.
+
+Currently, Nabran is the beach destination matching your request for rainy
+weather:
+
+- Nabran: This is a coastal city close to Xachmaz and is considered
+  Azerbaijan's biggest tourist destination for international travelers. It
+  features beaches and resorts along the Caspian Sea.
+- Mock Weather: Cloudy with light rain (23°C).
+
+Other notable beach areas in Azerbaijan include:
+
+- Bilgah: Located on the northern side of the Absheron Peninsula, it is known
+  for its nicer beaches and the Amburan Beach Club.
+- Mock Weather: Sunny with a coastal breeze (26°C).
+- Novkhani: Home to the AF Beach Club, which offers multiple swimming pools,
+  water sports, and entertainment.
+- Shikhov: Features the Crescent Beach Hotel, which offers beachfront access
+  and indoor/outdoor pools.
+
+You: quit
+```
