@@ -92,6 +92,27 @@ To also remove the downloaded `redis:8` image:
 docker compose -f 04-ai-agents\ai_agents_as_products\compose.yaml down --volumes --remove-orphans --rmi all
 ```
 
+**If you are already inside the `ai_agents_as_products` directory**, use:
+
+```powershell
+docker compose -f compose.yaml down --volumes --remove-orphans
+```
+
+Or simply:
+
+```powershell
+docker compose down --volumes --remove-orphans
+```
+
+*to not to duplicate the relative directory path.*
+
+```shell
+[+] down 3/3
+ ✔ Container langgraph-redis                         Removed                                                                    0.4s
+ ✔ Volume ai_agents_as_products_langgraph_redis_data Removed                                                                    0.0s
+ ✔ Network ai_agents_as_products_default             Removed                                                                    0.3s
+``` 
+
 The scripts download and embed the destination pages at startup, so the first
 prompt appears only after the vector store is ready.
 
