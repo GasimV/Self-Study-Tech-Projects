@@ -47,6 +47,7 @@
   - [`RedisSaver` versus `RedisStore`](#redissaver-versus-redisstore)
   - [Shared memory services in containerized systems](#shared-memory-services-in-containerized-systems)
   - [Checkpoint history and retention](#checkpoint-history-and-retention)
+  - [Guardrails](#guardrails)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1228,3 +1229,38 @@ For production, I’d use this mental model:
 - **Need debugging, human-in-the-loop, rollback/time travel → keep checkpoint history**, but apply retention.
 - **Retention by age** is very natural with Redis: configure a TTL, e.g. 24 hours or 7 days; Redis automatically expires old checkpoint data. `refresh_on_read=True` can make this effectively an inactivity timeout.
 - LangGraph's base checkpoint API currently supports pruning with `keep_latest` or deleting a thread entirely.
+
+
+### Guardrails
+
+**Guardrails** are application-level controls that keep an agent within its
+intended purpose, defined scope, permissions, and policy boundaries. They validate requests,
+responses, routes, and actions so the system remains safe, relevant,
+compliant, and resource-efficient.
+
+For example, guardrails can stop a travel assistant from giving investment
+advice, prevent confidential information from appearing in a support response,
+or reject an invalid request before it reaches an expensive model.
+
+Common guardrail types include:
+
+* **Rule-based:** explicit conditions, allowlists, deny lists, schemas, or
+  regular expressions that detect prohibited or malformed contents, topics, patterns.
+* **Retrieval-based:** checks against approved sources, policies, or domain
+  knowledge to confirm that a request or answer is relevant and in-scope.
+* **Model-based:** lightweight classification, moderation, or policy ML models that evaluate
+  intent, safety, topic, or compliance.
+
+Guardrails can be applied at several points:
+
+| Point | Purpose |
+| --- | --- |
+| Pre-model check | Reject, sanitize, or clarify invalid and out-of-scope input before calling the LLM. |
+| Routing-stage check | Restrict which agent, branch, or capability a request may reach. |
+| Tool-level check | Validate arguments, authorization, and side effects before executing an action, blocking unsafe/unauthorized tool actions. |
+| Post-model check | Check the generated response for safety, grounding, confidentiality, and policy compliance. |
+
+If validation fails, the application can refuse the request, request
+clarification, redact unsafe content, choose a safer route, or require human
+approval. Guardrails should therefore be treated as layered validation around
+the agent rather than as a single prompt instruction.
