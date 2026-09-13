@@ -1264,3 +1264,29 @@ If validation fails, the application can refuse the request, request
 clarification, redact unsafe content, choose a safer route, or require human
 approval. Guardrails should therefore be treated as layered validation around
 the agent rather than as a single prompt instruction.
+
+#### Rejecting out-of-domain requests
+
+A basic production guardrail is a **domain-relevance prefilter**. It evaluates
+the user's request before normal agent reasoning begins and politely rejects or
+redirects requests outside the application's defined scope.
+
+```text
+User request
+     |
+Domain relevance check
+     |-- in scope     -> agent workflow
+     `-- out of scope -> refusal or safe redirection
+```
+
+This early check provides two main benefits:
+
+* **Improved accuracy:** agents are configured/trained for particular domains, use cases and tool
+  sets. Refusing unrelated requests reduces risks of giving inaccurate, unsupported answers and
+  hallucinations outside those capabilities.
+* **Cost and resource control:** irrelevant or abusive requests are stopped
+  before expensive model calls, retrieval, or tool execution occurs because without this filter, users might use our agent system as a free gateway to an expensive LLM we use and our hardware resources, increase our processing costs unnecessarily.
+
+The filter can use explicit rules, a lightweight classifier, or a small model.
+It should be tested with clearly irrelevant prompts and valid edge cases so it
+does not reject legitimate in-domain requests too aggressively.
