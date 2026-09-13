@@ -38,6 +38,14 @@
   - [MCP in a bank organization example](#mcp-in-a-bank-organization-example)
   - [Choosing MCP server boundaries](#choosing-mcp-server-boundaries)
   - [Practical MCP decision rule](#practical-mcp-decision-rule)
+- [AI Agents in Production Systems](#ai-agents-in-production-systems)
+  - [Agent memory and checkpoints](#agent-memory-and-checkpoints)
+  - [Checkpointer backends](#checkpointer-backends)
+  - [Redis checkpointing](#redis-checkpointing)
+  - [Checkpoint lifetime](#checkpoint-lifetime)
+  - [Short-term versus long-term memory](#short-term-versus-long-term-memory)
+  - [`RedisSaver` versus `RedisStore`](#redissaver-versus-redisstore)
+  - [Shared memory services in containerized systems](#shared-memory-services-in-containerized-systems)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1028,3 +1036,123 @@ MCP          = useful when integrations become shared infrastructure
 **Key takeaway:** MCP standardizes how AI applications discover and invoke
 external capabilities. It is most valuable as a reusable integration boundary,
 not as a requirement for every agent or every API.
+
+
+## AI Agents in Production Systems
+
+### Agent memory and checkpoints
+
+A LangGraph **checkpointer** saves an agent's graph state, including its
+conversation state, under a `thread_id`. This lets the same thread continue
+later without manually saving and restoring its messages.
+
+```python
+config = {
+    "configurable": {
+        "thread_id": "user-session-123"
+    }
+}
+
+graph.invoke(
+    {"messages": [...]},
+    config=config
+)
+```
+
+### Checkpointer backends
+
+| Backend | Checkpointer | Package |
+| --- | --- | --- |
+| RAM | `InMemorySaver` | Included with LangGraph |
+| SQLite | `SqliteSaver` | `langgraph-checkpoint-sqlite` |
+| PostgreSQL | `PostgresSaver` | `langgraph-checkpoint-postgres` |
+| Redis | `RedisSaver` | `langgraph-checkpoint-redis` |
+| Redis (async) | `AsyncRedisSaver` | `langgraph-checkpoint-redis` |
+
+### Redis checkpointing
+
+Install the separate Redis integration package:
+
+```powershell
+pip install -U langgraph-checkpoint-redis
+```
+
+Use `RedisSaver` for synchronous code:
+
+```python
+from langgraph.checkpoint.redis import RedisSaver
+
+DB_URI = "redis://localhost:6379"
+
+with RedisSaver.from_conn_string(DB_URI) as checkpointer:
+    checkpointer.setup()
+    graph = builder.compile(checkpointer=checkpointer)
+```
+
+For async applications, use:
+
+```python
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+```
+
+The Redis integration is distributed separately and maintained by Redis, while
+LangGraph documents it as a supported database-backed checkpointer.
+
+### Checkpoint lifetime
+
+Closing a chat session does not necessarily delete its checkpoints:
+
+* `InMemorySaver` data disappears when the application process stops.
+* Redis, PostgreSQL, and SQLite checkpoints normally remain until explicitly
+  deleted or removed through a configured expiration policy such as a TTL.
+
+### Short-term versus long-term memory
+
+Here, **short-term** describes the memory's scope, not how long its storage
+survives:
+
+```text
+Checkpoint / short-term memory = state for one conversation thread
+Long-term memory               = reusable knowledge across threads or sessions
+```
+
+A durable checkpoint can therefore remain in Redis or PostgreSQL while still
+being short-term memory because it belongs to one `thread_id`.
+
+### `RedisSaver` versus `RedisStore`
+
+* `RedisSaver` persists LangGraph checkpoints so the state of one thread can be
+  restored and continued.
+* `RedisStore` holds information deliberately saved or searched across threads,
+  such as user preferences or profile facts, and is better suited to long-term
+  memory.
+
+### Shared memory services in containerized systems
+
+Separating memory backends from stateless agent/backend replicas is a
+common production design:
+
+```text
+Agent/backend replicas
+        ├── Redis checkpointer → shared short-term thread state
+        └── PostgreSQL/store   → shared long-term application and user memory
+```
+
+If an application replica fails, another replica can use the same stable
+`thread_id` to resume from the latest **committed checkpoint**. This does not
+guarantee continuation from the middle of an unfinished tool call, so tools with
+side effects should be idempotent or protected against duplicate execution.
+
+* In Docker Compose development, use separate Redis and PostgreSQL services with
+  named volumes.
+* In Kubernetes production, keep agent pods stateless and use managed databases
+  or properly operated stateful workloads with persistent volumes, replication,
+  monitoring, backups, and access controls.
+* One standalone Redis container is not highly available. Configure persistence
+  such as AOF (Append-Only File)/RDB (Redis Database Snapshotting) plus replication/failover when checkpoints must survive Redis
+  process or node failure.
+* Long-term memory should be deliberately stored, scoped by user/tenant, and
+  governed by retention, privacy, and authorization rules.
+
+**Mental model:** application containers are replaceable compute; Redis,
+PostgreSQL, or another shared store provides durable continuity across replicas.
