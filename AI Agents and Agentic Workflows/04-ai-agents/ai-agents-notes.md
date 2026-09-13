@@ -46,6 +46,7 @@
   - [Short-term versus long-term memory](#short-term-versus-long-term-memory)
   - [`RedisSaver` versus `RedisStore`](#redissaver-versus-redisstore)
   - [Shared memory services in containerized systems](#shared-memory-services-in-containerized-systems)
+  - [Checkpoint history and retention](#checkpoint-history-and-retention)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1156,3 +1157,74 @@ side effects should be idempotent or protected against duplicate execution.
 
 **Mental model:** application containers are replaceable compute; Redis,
 PostgreSQL, or another shared store provides durable continuity across replicas.
+
+### Checkpoint history and retention
+
+LangGraph normally saves a checkpoint at every graph **super-step**, rather than
+keeping only one checkpoint per conversation. A persistent backend retains this
+history unless an expiration or cleanup policy removes it.
+
+* Supplying only a `thread_id` continues from the latest checkpoint.
+* Supplying both `thread_id` and `checkpoint_id` resumes from a selected older
+  checkpoint.
+* `graph.get_state_history(config)` returns the thread history, newest first.
+* `checkpointer.list(config, limit=10)` limits retrieval only; it does not delete
+  checkpoints beyond the first ten.
+* `checkpointer.delete_thread(thread_id)` safely deletes the complete thread and
+  its associated writes.
+
+```python
+# Continue from the latest checkpoint.
+latest_config = {
+    "configurable": {
+        "thread_id": "session-123"
+    }
+}
+
+# Resume from a selected checkpoint.
+historical_config = {
+    "configurable": {
+        "thread_id": "session-123",
+        "checkpoint_id": "checkpoint-id"
+    }
+}
+```
+
+There is no portable `keep_last_n=N` setting. Current checkpoint APIs define optional pruning with `keep_latest` or `delete`, but backend support varies. The project’s pinned versions do not yet expose this API. Avoid directly deleting arbitrary checkpoint rows because
+later checkpoints can depend on their ancestry, blobs, and pending writes.
+
+As of September, 2026, current versions are:
+- `langgraph`: 1.2.11
+- `langgraph-checkpoint`: 4.2.0
+
+`BaseCheckpointSaver` in `langgraph-checkpoint` 4.2 now defines the optional:
+
+```python
+checkpointer.prune(
+    thread_ids,
+    strategy="keep_latest"
+)
+```
+
+It supports `"keep_latest"` or `"delete"`, but not arbitrary `keep_last_n=N`, and individual backends must implement it safely.
+
+Redis supports automatic checkpoint expiration through its integration:
+
+```python
+checkpointer = RedisSaver.from_conn_string(
+    DB_URI,
+    ttl={
+        "default_ttl": 60,       # Minutes
+        "refresh_on_read": True
+    }
+)
+```
+
+Without a configured TTL, Redis checkpoints do not expire automatically.
+
+For production, I’d use this mental model:
+
+- **Only crash/session recovery needed → keep latest only**. With Redis, `ShallowRedisSaver` is specifically designed to store only the latest checkpoint.
+- **Need debugging, human-in-the-loop, rollback/time travel → keep checkpoint history**, but apply retention.
+- **Retention by age** is very natural with Redis: configure a TTL, e.g. 24 hours or 7 days; Redis automatically expires old checkpoint data. `refresh_on_read=True` can make this effectively an inactivity timeout.
+- LangGraph's base checkpoint API currently supports pruning with `keep_latest` or deleting a thread entirely.
