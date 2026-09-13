@@ -153,8 +153,8 @@ async def build_vectorstore(urls: Sequence[str]) -> Chroma:
     return vectorstore
 
 
-async def build_travel_assistant():
-    """Build the router workflow and compile it with in-memory checkpoints."""
+async def build_travel_assistant(checkpointer=None):
+    """Build the router workflow with the supplied checkpoint backend."""
     if not HOTEL_DB_PATH.exists():
         raise FileNotFoundError(
             f"Hotel database not found: {HOTEL_DB_PATH}. Create it from "
@@ -290,7 +290,9 @@ async def build_travel_assistant():
     # The current create_agent API manages each specialist's tool loop. The
     # outer custom graph only performs explicit routing, so RemainingSteps,
     # create_react_agent, and a custom hard-limit state are unnecessary.
-    return builder.compile(checkpointer=InMemorySaver())
+    if checkpointer is None:
+        checkpointer = InMemorySaver()
+    return builder.compile(checkpointer=checkpointer)
 
 
 async def chat_loop() -> None:
