@@ -48,6 +48,7 @@
   - [Shared memory services in containerized systems](#shared-memory-services-in-containerized-systems)
   - [Checkpoint history and retention](#checkpoint-history-and-retention)
   - [Guardrails](#guardrails)
+  - [Layered router-level and agent-level guardrails](#layered-router-level-and-agent-level-guardrails)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1290,3 +1291,61 @@ This early check provides two main benefits:
 The filter can use explicit rules, a lightweight classifier, or a small model.
 It should be tested with clearly irrelevant prompts and valid edge cases so it
 does not reject legitimate in-domain requests too aggressively.
+
+### Layered router-level and agent-level guardrails
+
+As with ordinary software components in which it is the best practice for each class or component to validate its own data rather than relying solely on validations at higher levels such as the UI, each agent should validate its own input
+contract instead of relying only on validation at the application boundary.
+*This matters when a specialist is called directly, reused in another workflow,
+or reached through a routing mistake.*
+
+```text
+User request
+     |
+Router-level guardrail       shared, broad, fail-fast policy
+     |
+Router -> selected agent
+              |
+       Agent-level guardrail specialist-specific data, tool, and permission scope
+              |
+       Agent model/tool loop
+```
+
+* **Router-level guardrail:** rejects clearly invalid, unsafe, or out-of-domain
+  requests before specialist reasoning and tool execution. It protects the
+  whole system and avoids unnecessary downstream work.
+* **Agent-level guardrail:** enforces the selected agent's narrower contract,
+  such as its supported data domain, allowed tools, user permissions, and
+  acceptable actions. It provides defense in depth if the outer check is
+  bypassed or the agent is invoked independently.
+
+Agent-level policies are often stricter than the router policy because each
+specialist knows its own capabilities and limitations. This is a
+**belt-and-suspenders** design: the outer layer provides early filtering, while
+the inner layer ensures that every agent remains safe on its own.
+
+#### Cost and latency trade-off
+
+Running multiple model-based checks can add classification calls, tokens,
+latency, and infrastructure cost before useful work begins. Duplicated or
+inconsistent classifiers can also produce false rejections or disagree about
+whether a request is allowed.
+
+Practical mitigations include:
+
+* **Apply cheap deterministic validation first**: schemas, type/range checks,
+  allowlists, deny lists, regular expressions, authentication, authorization,
+  quotas, and rate limits.
+* **Use lightweight ML classifiers or small local models for semantic checks**;
+  reserve a larger LLM guardrail for ambiguous or high-risk requests.
+* **Keep the router policy broad and shared**, while agent-level checks validate
+  only the additional restrictions specific to that specialist.
+* **Reuse a trusted routing or guardrail decision** when the policy and request
+  have not changed, but revalidate at security-sensitive tool boundaries.
+* **Cache only stable, non-sensitive decisions with careful keys and short
+  expiration**; never let caching bypass current identity or permission checks.
+* **Monitor latency, token cost, false-accept and false-reject rates**, and tune
+  thresholds using representative in-domain and adversarial test cases.
+
+**Practical rule:** use the cheapest reliable control at each layer and pay for
+model-based judgment only where deterministic logic is insufficient.
