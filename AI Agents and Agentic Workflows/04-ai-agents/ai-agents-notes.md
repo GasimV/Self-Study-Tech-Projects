@@ -1319,6 +1319,28 @@ Router -> selected agent
   acceptable actions. It provides defense in depth if the outer check is
   bypassed or the agent is invoked independently.
 
+For example, consider this request:
+
+```text
+Cancel booking #481.
+```
+
+The router-level guardrail accepts it because accommodation management is
+within the application's domain and routes it to the booking agent. However,
+booking `#481` may belong to another customer. A domain check cannot establish
+whether the current user is authorized to modify that specific record.
+
+Before calling `cancel_booking(481)`, the booking agent or tool boundary must
+independently enforce an ownership check:
+
+```python
+if booking.user_id != authenticated_user.id:
+    raise PermissionError("The user does not own this booking.")
+```
+
+Without this agent/tool-level authorization guardrail, a request can pass the
+router correctly while still causing an unauthorized action.
+
 Agent-level policies are often stricter than the router policy because each
 specialist knows its own capabilities and limitations. This is a
 **belt-and-suspenders** design: the outer layer provides early filtering, while
