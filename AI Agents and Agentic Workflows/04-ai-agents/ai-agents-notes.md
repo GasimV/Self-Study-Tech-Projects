@@ -45,10 +45,13 @@
   - [Checkpoint lifetime](#checkpoint-lifetime)
   - [Short-term versus long-term memory](#short-term-versus-long-term-memory)
   - [`RedisSaver` versus `RedisStore`](#redissaver-versus-redisstore)
+  - [Long-term user and application memory](#long-term-user-and-application-memory)
   - [Shared memory services in containerized systems](#shared-memory-services-in-containerized-systems)
   - [Checkpoint history and retention](#checkpoint-history-and-retention)
   - [Guardrails](#guardrails)
   - [Layered router-level and agent-level guardrails](#layered-router-level-and-agent-level-guardrails)
+  - [Human-in-the-loop](#human-in-the-loop)
+  - [Post-model guardrails](#post-model-guardrails)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1130,6 +1133,31 @@ being short-term memory because it belongs to one `thread_id`.
   such as user preferences or profile facts, and is better suited to long-term
   memory.
 
+### Long-term user and application memory
+
+Production agents may need durable memory beyond one conversation thread.
+Long-term memory can improve continuity and personalization, but it should be
+stored deliberately rather than treating the complete chat history as memory.
+
+Common techniques include:
+
+* user- or tenant-scoped records and vector-store namespaces;
+* extracting stable preferences and facts from interactions;
+* periodic summarization, deduplication, expiration, and pruning;
+* consent, access control, encryption, audit logs, and deletion workflows for
+  personally identifiable information (PII);
+* source timestamps and refresh processes so application knowledge does not
+  become stale.
+
+| Memory type | Scope | Typical persistence | Example | Main challenges |
+| --- | --- | --- | --- | --- |
+| Short-term/thread | One conversation thread | Thread retention policy; it may survive process restarts | Resolving “the same town” in a later weather question | Limited continuity and checkpoint growth |
+| Long-term user | One user across threads and sessions | Weeks, months, or years | Remembering preferred destinations, budgets, or accommodation types | Consent, privacy, deletion, accuracy, and user isolation |
+| Long-term application | Shared across users and sessions | Ongoing, with refresh and retention policies | Shared event schedules, service catalogues, policies, or seasonal information | Freshness, provenance, conflicting updates, and scale |
+
+> **Mental model:** checkpoints preserve where one thread is; long-term memory
+preserves selected knowledge that should be reusable beyond that thread.
+
 ### Shared memory services in containerized systems
 
 Separating memory backends from stateless agent/backend replicas is a
@@ -1371,3 +1399,72 @@ Practical mitigations include:
 
 **Practical rule:** use the cheapest reliable control at each layer and pay for
 model-based judgment only where deterministic logic is insufficient.
+
+### Human-in-the-loop
+
+Automation is not sufficient when a request is ambiguous, available evidence
+is incomplete, or an action could have significant real-world consequences.
+A **human-in-the-loop (HITL)** workflow pauses or escalates execution so an
+authorized person can review, edit, approve, or reject the proposed response or
+action.
+
+Useful escalation cases include:
+
+* plans with unusual combinations of activities whose safety, timing, or
+  feasibility is uncertain;
+* severe weather, transport disruption, cancellations, or other rapidly
+  changing conditions that require current human judgment;
+* accessibility, medical, legal, or special-service requests that must be
+  confirmed with a provider;
+* high-value, irreversible, externally visible, or permission-sensitive tool
+  actions such as purchases, cancellations, refunds, or sending messages;
+* low-confidence answers, conflicting sources, missing required data, or
+  repeated tool failures.
+
+```text
+Agent proposes response/action
+             |
+       escalation rule
+        |           |
+   low risk      review needed
+        |           |
+   continue     pause for human
+                    |
+              approve / edit / reject
+```
+
+HITL is especially valuable during early production because it limits harmful
+errors and creates labelled feedback for improving prompts, tools, retrieval,
+and guardrail policies. As reliable cases become automated, human attention can
+be reserved for exceptions and higher-risk decisions.
+
+### Post-model guardrails
+
+**Post-model guardrails** inspect the model's result after generation but
+before it is shown to a user or passed to another system. They provide a final
+validation layer for plausible-looking output that is still unsafe, stale,
+unsupported, sensitive, or structurally invalid.
+
+Typical checks include:
+
+* validating factual claims against approved and current sources;
+* detecting outdated events, schedules, prices, or unavailable services;
+* redacting PII, confidential fields, private contact details, credentials, or
+  other data the recipient is not authorized to see;
+* enforcing tone, language, length, disclaimers, and other communication rules;
+* validating JSON, schemas, required fields, ranges, identifiers, and business
+  invariants before downstream systems consume structured output;
+* sending uncertain, policy-sensitive, or high-impact results to human review.
+
+```text
+Model output
+     |
+Post-model validation
+     |-- valid   -> user or downstream service
+     `-- invalid -> redact, repair, regenerate, refuse, or escalate
+```
+
+Post-model checks are a final safety net, not a replacement for grounding,
+input validation, authorization, or tool-level controls. Validate as close as
+possible to every boundary where data is displayed or an external side effect
+can occur.
