@@ -52,6 +52,7 @@
   - [Layered router-level and agent-level guardrails](#layered-router-level-and-agent-level-guardrails)
   - [Human-in-the-loop](#human-in-the-loop)
   - [Post-model guardrails](#post-model-guardrails)
+  - [Evaluation of AI agents and applications](#evaluation-of-ai-agents-and-applications)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1468,3 +1469,56 @@ Post-model checks are a final safety net, not a replacement for grounding,
 input validation, authorization, or tool-level controls. Validate as close as
 possible to every boundary where data is displayed or an external side effect
 can occur.
+
+### Evaluation of AI agents and applications
+
+Systematic evaluation is essential before deployment and throughout an agent's
+production lifetime. Unlike a deterministic function, an agent can vary its
+reasoning, routing, tool selection, and generated response, so testing must
+cover both the final answer and the execution path used to produce it.
+
+Core evaluation areas include:
+
+* **Functional evaluation:** verify that representative requests receive
+  correct, relevant, grounded, and complete answers; the right agent and tools
+  are selected; tool arguments are valid; and structured outputs satisfy their
+  schemas.
+* **Behavioral evaluation:** confirm that the agent follows scope, safety,
+  privacy, authorization, tone, refusal, and escalation policies across normal,
+  ambiguous, adversarial, and multi-turn conversations.
+* **Performance evaluation:** measure end-to-end and per-step latency,
+  throughput, token/model cost, tool cost, error rate, retry rate, and resource
+  consumption under realistic and peak loads.
+* **Regression evaluation:** rerun a versioned dataset of inputs and expected
+  outcomes whenever prompts, models, tools, retrieval data, routing logic, or
+  guardrails change. Compare the new version with the current production
+  baseline before release.
+
+```text
+Representative test cases + expected outcomes
+                    |
+        candidate agent configuration
+                    |
+      answers + routes + tool traces + metrics
+                    |
+          automated checks and human review
+                    |
+             release / revise / reject
+```
+
+Evaluation sets should include straightforward tasks, edge cases, invalid and
+out-of-scope requests, tool failures, context-dependent follow-ups, security
+tests, and previously observed production failures. Ground truth can combine
+exact assertions, schema and policy checks, deterministic code-based metrics,
+expert labels, and carefully calibrated model-based judges.
+
+Evaluation is not only a preproduction gate. Continuous production evaluation
+and monitoring help detect data drift, stale knowledge, provider or model
+changes, rising latency/cost, and new failure patterns. Difficult or failed
+production cases should be reviewed, anonymized where necessary, and promoted
+into the regression suite.
+
+> **Production-readiness mental model:** memory and guardrails are important
+foundations, but trustworthy agents also require security, privacy, compliance,
+reliability engineering, observability, load testing, incident response, and
+continuous evaluation.
