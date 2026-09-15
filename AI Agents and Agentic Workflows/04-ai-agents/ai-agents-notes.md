@@ -53,6 +53,7 @@
   - [Human-in-the-loop](#human-in-the-loop)
   - [Post-model guardrails](#post-model-guardrails)
   - [Evaluation of AI agents and applications](#evaluation-of-ai-agents-and-applications)
+  - [Production deployment and monitoring checklist](#production-deployment-and-monitoring-checklist)
 
 ## Multi-Tool AI Agents: Building Block (or Foundation) for Multi-Agent Systems
 
@@ -1439,6 +1440,24 @@ errors and creates labelled feedback for improving prompts, tools, retrieval,
 and guardrail policies. As reliable cases become automated, human attention can
 be reserved for exceptions and higher-risk decisions.
 
+A practical approval-queue workflow is:
+
+```text
+1. Detect a high-value, sensitive, or low-confidence action.
+2. Pause the workflow at the decision point.
+3. Persist its state with a checkpointer.
+4. Place the request in an approval queue and notify a reviewer.
+5. Record the reviewer's identity, decision, reason, and timestamp.
+6. Resume the same workflow with an approve, edit, or reject decision.
+```
+
+All review outcomes should be auditable. After privacy and quality review,
+approved and rejected cases can become labelled evaluation data and may inform
+classifier training or threshold calibration. Track why cases were escalated
+and whether reviewers agreed; this helps reduce unnecessary escalations without
+weakening safety controls. Human decisions should not enter training data
+automatically because reviews can be incorrect or contain sensitive data.
+
 ### Post-model guardrails
 
 **Post-model guardrails** inspect the model's result after generation but
@@ -1512,6 +1531,34 @@ tests, and previously observed production failures. Ground truth can combine
 exact assertions, schema and policy checks, deterministic code-based metrics,
 expert labels, and carefully calibrated model-based judges.
 
+***For an initial evaluation set**, collect at least roughly 100 representative
+query-and-expected-outcome examples, then expand it as new failures are found.
+Label correct and incorrect behavior and include difficult boundary cases plus
+adversarial examples such as prompt injection, unauthorized tool requests, and
+out-of-scope questions. Dataset diversity and label quality matter more than
+reaching a particular count.*
+
+***For classification and routing***, track **accuracy, precision, recall, and F1
+score**, including per-class results and confusion matrices. Generative tasks
+also need task-specific measures such as correctness, groundedness,
+completeness, policy compliance, tool-selection accuracy, and human preference.
+A single aggregate score can hide important failure modes.
+
+With an evaluation platform such as LangSmith—or Langfuse as an open-source,
+self-hostable alternative—the general workflow is:
+
+```text
+Create or upload a labelled dataset
+                 |
+Run the candidate agent on every example
+                 |
+Score answers, routes, tool calls, and traces
+                 |
+Review failures and compare with the production baseline
+                 |
+Improve prompts, tools, or policies, then rerun
+```
+
 Evaluation is not only a preproduction gate. Continuous production evaluation
 and monitoring help detect data drift, stale knowledge, provider or model
 changes, rising latency/cost, and new failure patterns. Difficult or failed
@@ -1519,6 +1566,33 @@ production cases should be reviewed, anonymized where necessary, and promoted
 into the regression suite.
 
 > **Production-readiness mental model:** memory and guardrails are important
-foundations, but trustworthy agents also require security, privacy, compliance,
-reliability engineering, observability, load testing, incident response, and
-continuous evaluation.
+> foundations, but trustworthy agents also require security, privacy,
+> compliance, reliability engineering, observability, load testing, incident
+> response, and continuous evaluation.
+
+### Production deployment and monitoring checklist
+
+Production deployment commonly requires:
+
+* **Persistent state:** use a shared checkpointer for recoverable conversation
+  state and a governed store for long-term user/application memory.
+* **Real-time observability:** trace model and tool activity and monitor error
+  rate, P95 latency, tokens and cost per query, tool success/failure rate,
+  retries, guardrail rejection rate, and human-escalation rate.
+* **Alerts:** establish normal baselines and notify operators about meaningful
+  anomalies instead of alerting on every isolated failure.
+* **Staged rollout:** evaluate prompt, model, tool, retrieval, and policy
+  changes offline, then expose them to a small canary traffic segment before
+  gradually increasing traffic.
+* **Rollback and versioning:** version prompts, models, tools, schemas,
+  evaluation datasets, and policies so a problematic release can be identified
+  and reverted quickly.
+
+```text
+Offline evaluation -> shadow test -> small canary -> gradual rollout -> full release
+                              monitoring + rollback throughout
+```
+
+Canary testing limits the impact of regressions that offline evaluation misses.
+Compare candidate and baseline versions on quality, safety, latency, cost, and
+tool reliability before expanding the rollout.
