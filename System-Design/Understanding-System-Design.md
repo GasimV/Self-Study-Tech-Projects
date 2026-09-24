@@ -166,10 +166,24 @@ Solution architecture defines how the entire solution works together: the storef
 
 System design defines how individual systems work internally: order processing, database schemas, APIs, caching strategies, and communication between services.
 
+> By "individual systems," here I mean the subsystems or components that make up the overall e-commerce solution, such as the storefront, order management, inventory management, and payment processing systems.
+
+The distinction depends on their scope and implementation:
+
+* **Solution architecture**: Defines how these subsystems fit together, their responsibilities, integrations, and technology choices.
+
+* **System design**: Defines how each subsystem is designed internally, including its components, APIs, data models, algorithms, and internal workflows.
+
+> **Important distinction**: If a subsystem is developed internally, its internal architecture and implementation must be designed. If it is a third-party product (e.g., an external payment gateway or CRM), the focus is typically on selecting, configuring, and integrating it rather than designing its internals.
+
+Therefore, system design can be performed at the subsystem level, while solution architecture addresses the end-to-end solution. However, both disciplines can operate at multiple levels of abstraction.
+
+
 ### Key takeaway
 
-* Solution architecture: What systems and technologies are needed, how they integrate, and why.
+* **Solution architecture**: What systems and technologies are needed, how they integrate, and why.
 
-* System design: How those systems and their components should be designed and implemented.
+* **System design**: How those systems and their components should be designed and implemented.
 
-In practice, the responsibilities often overlap. A solution architect may perform system design, and a system designer may make solution-level architectural decisions.
+> In practice, the responsibilities often overlap. A solution architect may perform system design, and a system designer may make solution-level architectural decisions.
+
