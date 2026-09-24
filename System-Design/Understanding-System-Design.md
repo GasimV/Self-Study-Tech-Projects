@@ -1,5 +1,22 @@
 # Understanding System Design
 
+## Table of Contents
+
+- [Design Process](#design-process)
+- [High-Level System Design](#high-level-system-design)
+  - [Data Flow](#data-flow)
+  - [Scalability](#scalability)
+  - [Fault Tolerance](#fault-tolerance)
+- [Low-Level System Design](#low-level-system-design)
+  - [Algorithms](#algorithms)
+  - [Data Structures](#data-structures)
+  - [API Design](#api-design)
+  - [Code Optimization](#code-optimization)
+- [Key Takeaway](#key-takeaway)
+- [System Design vs. Solution Architecture](#system-design-vs-solution-architecture)
+  - [Example: E-commerce platform](#example-e-commerce-platform)
+  - [Key takeaway](#key-takeaway-1)
+
 System design is the process of turning requirements into a practical blueprint for building and operating software. It defines the system's structure, major components, responsibilities, interfaces, data flow, and interactions.
 
 A strong design should satisfy both:
@@ -130,3 +147,29 @@ Optimization always involves trade-offs. More performance may add complexity, so
 ## Key Takeaway
 
 High-level and low-level design solve different parts of the same problem. High-level design explains how the system is organized and operates at scale, while low-level design explains how its individual components are implemented. Effective system design connects both views and makes deliberate trade-offs based on requirements, constraints, and expected change.
+
+
+## System Design vs. Solution Architecture
+
+System design and solution architecture overlap significantly, but they are not exactly the same. The main difference is their scope and level of abstraction.
+
+| Aspect | System Design | Solution Architecture |
+| --- | --- | --- |
+| Focus | How a system is designed and implemented | How multiple systems and technologies work together to solve a business problem |
+| Scope | Individual systems and their internal components | End-to-end solution across systems and services |
+| Key decisions | APIs, databases, algorithms, caching, scalability, and reliability | Technology selection, integrations, security, infrastructure, and architectural trade-offs |
+| Output | System architecture, component designs, API specifications | Solution architecture diagrams, technology choices, integration strategies |
+
+### Example: E-commerce platform
+
+Solution architecture defines how the entire solution works together: the storefront, payment gateway, inventory system, CRM, cloud infrastructure, and external integrations.
+
+System design defines how individual systems work internally: order processing, database schemas, APIs, caching strategies, and communication between services.
+
+### Key takeaway
+
+* Solution architecture: What systems and technologies are needed, how they integrate, and why.
+
+* System design: How those systems and their components should be designed and implemented.
+
+In practice, the responsibilities often overlap. A solution architect may perform system design, and a system designer may make solution-level architectural decisions.
