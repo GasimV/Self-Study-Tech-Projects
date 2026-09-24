@@ -19,6 +19,11 @@
 - [Levels of Architecture: System Design vs. Solution Architecture vs. Enterprise Architecture](#levels-of-architecture-system-design-vs-solution-architecture-vs-enterprise-architecture)
   - [1. Abstraction levels of architecture](#1-abstraction-levels-of-architecture)
   - [2. Recommended learning progression](#2-recommended-learning-progression)
+- [AI Architect Knowledge Map](#ai-architect-knowledge-map)
+  - [Complete Knowledge Map](#complete-knowledge-map)
+  - [Required Depth of Knowledge](#required-depth-of-knowledge)
+  - [Recommended Learning Order](#recommended-learning-order)
+  - [AI Architect's Defining Capability](#ai-architects-defining-capability)
 
 System design is the process of turning requirements into a practical blueprint for building and operating software. It defines the system's structure, major components, responsibilities, interfaces, data flow, and interactions.
 
@@ -228,3 +233,96 @@ This is a useful conceptual hierarchy, although real-world responsibilities ofte
 **Important**: System design is not exclusively lower-level. High-Level Design (HLD) involves architectural decisions that overlap significantly with solution architecture. Also, solution architecture is not necessarily less technical. It often requires deep expertise in distributed systems, cloud infrastructure, security, integration, and scalability.
 
 **Bottom line**: Studying system design first is a sensible path for a software engineer. Solution architecture builds on those technical foundations while expanding the scope to business requirements and end-to-end solutions. Enterprise architecture extends that scope to the organization as a whole.
+
+## AI Architect Knowledge Map
+
+An **AI Architect** needs deep system design and solution architecture skills, combined with AI expertise and working knowledge of the engineering disciplines that support production AI systems.
+
+> The objective is not to become an expert in every discipline. It is to understand how the disciplines fit together, identify the important trade-offs, and make sound architectural decisions.
+
+### Complete Knowledge Map
+
+<div style="border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; margin: 1rem 0;">
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/1-core-foundation.png" alt="1. Core foundation"><br><br>
+    <strong>Software Engineering &amp; System Design</strong><br><br>
+    Algorithms, data structures, APIs, databases, networking, LLD, HLD, distributed systems, scalability, reliability, security, and software design patterns.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/2-core-architecture.png" alt="2. Core architecture"><br><br>
+    <strong>Solution Architecture</strong><br><br>
+    Requirements analysis, architectural patterns, technology selection, system integration, cloud architecture, cost optimization, and architectural trade-offs.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/3-ai-expertise.png" alt="3. AI expertise"><br><br>
+    <strong>AI &amp; Machine Learning</strong><br><br>
+    Machine learning, deep learning, model architectures and internals, transformers, LLMs, training, fine-tuning, RAG, agentic AI, multimodal AI, and model evaluation.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/4-data-foundation.png" alt="4. Data foundation"><br><br>
+    <strong>Data Architecture &amp; Data Engineering</strong><br><br>
+    Data modeling, data pipelines, ETL/ELT, data warehouses, data lakes, lakehouses, streaming, vector databases, data quality, governance, and data lifecycle management.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/5-infrastructure-and-operations.png" alt="5. Infrastructure and operations"><br><br>
+    <strong>Cloud, DevOps, MLOps &amp; LLMOps</strong><br><br>
+    Cloud infrastructure, containers, Kubernetes, CI/CD, infrastructure as code, model deployment, model registries, monitoring, observability, experiment tracking, and automated evaluation.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/6-ai-production-systems.png" alt="6. AI production systems"><br><br>
+    <strong>Inference Engineering</strong><br><br>
+    Model serving, inference optimization, batching, quantization, caching, GPU resource management, throughput, latency, and inference cost optimization.
+  </div>
+  <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
+    <img src="assets/ai-architect-knowledge-map/7-cross-cutting-responsibilities.png" alt="7. Cross-cutting responsibilities"><br><br>
+    <strong>Security, Governance &amp; Responsible AI</strong><br><br>
+    Data privacy, access control, threat modeling, prompt-injection defense, model and data security, AI safety, regulatory requirements, and AI governance.
+  </div>
+  <div style="padding: 14px 12px;">
+    <img src="assets/ai-architect-knowledge-map/8-business-and-leadership.png" alt="8. Business and leadership"><br><br>
+    <strong>Business &amp; Architectural Decision-Making</strong><br><br>
+    Business requirements, stakeholder communication, feasibility assessment, build-versus-buy decisions, cost-benefit analysis, technical leadership, documentation, and architectural decision records.
+  </div>
+</div>
+
+### Required Depth of Knowledge
+
+Not every subject requires the same level of expertise.
+
+| Discipline | Expected proficiency |
+| --- | --- |
+| **System Design & Solution Architecture** | **Deep** |
+| **AI/ML, LLMs, RAG & Agents** | **Deep** |
+| Data Architecture & Engineering | Strong working knowledge |
+| Cloud, DevOps, MLOps & LLMOps | Strong working knowledge |
+| Inference Engineering | Strong working knowledge; deeper for model-serving roles |
+| Security, Governance & Responsible AI | Strong working knowledge |
+| **Business & Architectural Decision-Making** | **Deep** |
+
+For example:
+
+- An AI Architect should understand how to design a scalable data pipeline without necessarily implementing every data-engineering component.
+- Understanding model training and fine-tuning trade-offs is essential, but most AI Architect roles do not require building foundation models from scratch.
+
+### Recommended Learning Order
+
+For someone who already has an AI or data-science background:
+
+1. **System Design — LLD and HLD**
+   - Build foundations in software architecture, distributed systems, scalability, reliability, and security.
+2. **Data Architecture and Cloud Engineering**
+   - Understand data platforms, pipelines, cloud services, infrastructure, and system integration.
+3. **DevOps, MLOps, and LLMOps**
+   - Learn how AI systems are deployed, monitored, evaluated, and maintained in production.
+4. **Inference Engineering and AI System Architecture**
+   - Design end-to-end AI systems involving model serving, orchestration, retrieval, evaluation, and performance optimization.
+5. **Solution Architecture**
+   - Expand from individual AI systems to complete business solutions involving requirements, integrations, technology selection, cost, and architectural trade-offs.
+
+> Solution architecture can be studied alongside system design; these disciplines are complementary rather than strictly sequential.
+
+### AI Architect's Defining Capability
+
+The knowledge areas above form a comprehensive technical foundation. The additional competencies that must remain explicit are **security**, **AI governance**, **business requirements**, **architectural decision-making**, and **stakeholder communication**.
+
+> **Bottom line:** An AI Architect is defined not by knowing every technology in depth, but by the ability to translate business requirements into secure, reliable, scalable, and cost-effective AI solutions—and to justify the architectural decisions behind them.
