@@ -16,6 +16,9 @@
 - [System Design vs. Solution Architecture](#system-design-vs-solution-architecture)
   - [Example: E-commerce platform](#example-e-commerce-platform)
   - [Key takeaway](#key-takeaway-1)
+- [Levels of Architecture: System Design vs. Solution Architecture vs. Enterprise Architecture](#levels-of-architecture-system-design-vs-solution-architecture-vs-enterprise-architecture)
+  - [1. Abstraction levels of architecture](#1-abstraction-levels-of-architecture)
+  - [2. Recommended learning progression](#2-recommended-learning-progression)
 
 System design is the process of turning requirements into a practical blueprint for building and operating software. It defines the system's structure, major components, responsibilities, interfaces, data flow, and interactions.
 
@@ -187,3 +190,41 @@ Therefore, system design can be performed at the subsystem level, while solution
 
 > In practice, the responsibilities often overlap. A solution architect may perform system design, and a system designer may make solution-level architectural decisions.
 
+
+## Levels of Architecture: System Design vs. Solution Architecture vs. Enterprise Architecture
+
+There is a natural progression from system design to solution architecture and then enterprise architecture. However, these disciplines overlap, and the distinction is primarily about scope and responsibilities, not strictly technical depth.
+
+## 1. Abstraction levels of architecture
+
+**Highest abstraction - Enterprise Architecture**
+
+- Aligns business strategy, processes, applications, data, and technology across the entire organization.  
+
+**Higher abstraction - Solution Architecture**
+
+- Designs an end-to-end solution to a business problem, defining the required systems, technologies, integrations, and architectural decisions.
+
+**More detailed design - System Design**
+
+- Designs individual systems and their internal components, including APIs, databases, algorithms, data structures, and communication patterns.
+  
+This is a useful conceptual hierarchy, although real-world responsibilities often overlap.
+
+## 2. Recommended learning progression
+
+1. System Design (HLD + LLD)
+
+    - Understand how to design, implement, scale, and maintain software systems.
+
+2. Solution Architecture
+
+    - Learn how to combine systems, technologies, infrastructure, and integrations into complete business solutions.
+
+3. Enterprise Architecture
+
+    - Learn how to align the organization's overall technology landscape with its business capabilities, strategy, and long-term objectives.
+
+**Important**: System design is not exclusively lower-level. High-Level Design (HLD) involves architectural decisions that overlap significantly with solution architecture. Also, solution architecture is not necessarily less technical. It often requires deep expertise in distributed systems, cloud infrastructure, security, integration, and scalability.
+
+**Bottom line**: Studying system design first is a sensible path for a software engineer. Solution architecture builds on those technical foundations while expanding the scope to business requirements and end-to-end solutions. Enterprise architecture extends that scope to the organization as a whole.
