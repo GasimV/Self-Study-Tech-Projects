@@ -101,8 +101,8 @@ flowchart LR
 | --- | --- | --- | --- |
 | **Serial synchronous** | Write to each replica in sequence and wait for every acknowledgement | Simple completion semantics | Highest latency; one slow replica delays the request |
 | **Serial asynchronous** | Wait for one write, acknowledge the client, then update other replicas | Low client latency | Other replicas may temporarily be stale |
-| **Parallel quorum** | Write to replicas concurrently and return after `W` acknowledgements | Tunable balance of speed and consistency | Uses more concurrent resources; unfinished replicas lag |
-| **Durable message first** | Append the command to a durable log or queue; consumers update storage | High write throughput and decoupling | Adds asynchronous processing, lag, and operational complexity |
+| **Parallel asynchronous** | Write to replicas concurrently and return after `W` acknowledgements | Tunable balance of speed and consistency | Uses more concurrent resources; unfinished replicas lag |
+| **Durable message first** | Append the command to a durable log or queue such as Kafka and return an ack to the client; consumers update storage | High write throughput and decoupling; latency is the lowest | Adds asynchronous processing, lag, and operational complexity |
 
 > A queue acknowledgement is meaningful only if the message itself is durably stored and the downstream operation is retryable and **idempotent**.
 
