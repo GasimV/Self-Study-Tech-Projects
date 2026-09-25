@@ -282,7 +282,7 @@ An **AI Architect** needs deep system design and solution architecture skills, c
     <img src="assets/ai-architect-knowledge-map/8-business-and-leadership.png" alt="8. Business and leadership"><br>
     <strong>Business &amp; Architectural Decision-Making</strong><br><br>
     Business requirements, stakeholder communication, feasibility assessment, build-versus-buy decisions, cost-benefit analysis, technical leadership, documentation, and architectural decision records.
-  </div><br>
+  </div>
 </div>
 
 ### Required Depth of Knowledge
