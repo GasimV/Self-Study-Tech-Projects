@@ -83,13 +83,13 @@ flowchart LR
 
 **Write flow**
 
-1. `u1` sends `BookRoom(u1, r1)`.
+1. `u1` sends request via the client by making an API call to `BookRoom(u1, r1)`.
 2. The server writes the reservation to one or more replicas.
 3. The server acknowledges success according to its write policy.
 
 **Read flow**
 
-1. `u2` sends `RoomAvailable(r1)`.
+1. `u2` sends request via the client by making an API call to `RoomAvailable(r1)`.
 2. The server reads from one or more replicas.
 3. It reconciles the responses, if necessary, and returns the result.
 
@@ -113,6 +113,8 @@ flowchart LR
 | Read from **one** replica | Low | May return stale data | High |
 | Read from a **quorum** | Moderate | Lower when versions are reconciled correctly | Moderate to high |
 | Read from **all** replicas | Determined by the slowest replica | Lowest stale-read risk | Low if every replica is required |
+
+> Each of these read options comes with consistency trade-offs. For example, if we read from only one replica, the read may be stale in some situations, posing a *correctness problem*. On the other hand, reading from all replicas and comparing all the values to determine which one is the latest value addresses the correctness problem, but this would be *slower*. Reading from a ***quorum number*** of replicas may be a more *balanced approach*. This is the design trade-offs we should consider.
 
 Reading more replicas is not automatically sufficient: the system still needs a way to identify the newest valid version, such as version numbers, timestamps with safe clock assumptions, or logical clocks.
 
