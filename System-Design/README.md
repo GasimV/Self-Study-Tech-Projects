@@ -5,7 +5,8 @@ This repository documents my self-study journey in system design. It contains no
 ## Books
 
 - [System Design Guide for Software Professionals](https://learning.oreilly.com/library/view/system-design-guide/9781805124993/) — Dhirendra Sinha and Tejas Chopra
-- *System Design: A Guide to Building Scalable, Reliable, and High-Performance Systems* — Amardeep Vishwakarma
+- [System Design: A Guide to Building Scalable, Reliable, and High-Performance Systems](https://www.amazon.in/System-Design-building-scalable-high-performance-ebook/dp/B0GNZ92TQQ) — Amardeep Vishwakarma
+- [System Design for the LLM Era](https://www.oreilly.com/library/view/system-design-for/9781807789930/) - Sampriti Mitra
 
 ## Topics Learned
 
