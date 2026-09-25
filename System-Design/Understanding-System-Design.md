@@ -244,42 +244,42 @@ An **AI Architect** needs deep system design and solution architecture skills, c
 
 <div style="border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; margin: 1rem 0;">
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/1-core-foundation.png" alt="1. Core foundation"><br><br>
+    <img src="assets/ai-architect-knowledge-map/1-core-foundation.png" alt="1. Core foundation"><br>
     <strong>Software Engineering &amp; System Design</strong><br><br>
     Algorithms, data structures, APIs, databases, networking, LLD, HLD, distributed systems, scalability, reliability, security, and software design patterns.
-  </div>
+  </div><br>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/2-core-architecture.png" alt="2. Core architecture"><br><br>
+    <img src="assets/ai-architect-knowledge-map/2-core-architecture.png" alt="2. Core architecture"><br>
     <strong>Solution Architecture</strong><br><br>
     Requirements analysis, architectural patterns, technology selection, system integration, cloud architecture, cost optimization, and architectural trade-offs.
   </div>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/3-ai-expertise.png" alt="3. AI expertise"><br><br>
+    <img src="assets/ai-architect-knowledge-map/3-ai-expertise.png" alt="3. AI expertise"><br>
     <strong>AI &amp; Machine Learning</strong><br><br>
     Machine learning, deep learning, model architectures and internals, transformers, LLMs, training, fine-tuning, RAG, agentic AI, multimodal AI, and model evaluation.
   </div>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/4-data-foundation.png" alt="4. Data foundation"><br><br>
+    <img src="assets/ai-architect-knowledge-map/4-data-foundation.png" alt="4. Data foundation"><br>
     <strong>Data Architecture &amp; Data Engineering</strong><br><br>
     Data modeling, data pipelines, ETL/ELT, data warehouses, data lakes, lakehouses, streaming, vector databases, data quality, governance, and data lifecycle management.
   </div>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/5-infrastructure-and-operations.png" alt="5. Infrastructure and operations"><br><br>
+    <img src="assets/ai-architect-knowledge-map/5-infrastructure-and-operations.png" alt="5. Infrastructure and operations"><br>
     <strong>Cloud, DevOps, MLOps &amp; LLMOps</strong><br><br>
     Cloud infrastructure, containers, Kubernetes, CI/CD, infrastructure as code, model deployment, model registries, monitoring, observability, experiment tracking, and automated evaluation.
   </div>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/6-ai-production-systems.png" alt="6. AI production systems"><br><br>
+    <img src="assets/ai-architect-knowledge-map/6-ai-production-systems.png" alt="6. AI production systems"><br>
     <strong>Inference Engineering</strong><br><br>
     Model serving, inference optimization, batching, quantization, caching, GPU resource management, throughput, latency, and inference cost optimization.
   </div>
   <div style="padding: 14px 12px; border-bottom: 1px solid #e5e7eb;">
-    <img src="assets/ai-architect-knowledge-map/7-cross-cutting-responsibilities.png" alt="7. Cross-cutting responsibilities"><br><br>
+    <img src="assets/ai-architect-knowledge-map/7-cross-cutting-responsibilities.png" alt="7. Cross-cutting responsibilities"><br>
     <strong>Security, Governance &amp; Responsible AI</strong><br><br>
     Data privacy, access control, threat modeling, prompt-injection defense, model and data security, AI safety, regulatory requirements, and AI governance.
   </div>
   <div style="padding: 14px 12px;">
-    <img src="assets/ai-architect-knowledge-map/8-business-and-leadership.png" alt="8. Business and leadership"><br><br>
+    <img src="assets/ai-architect-knowledge-map/8-business-and-leadership.png" alt="8. Business and leadership"><br>
     <strong>Business &amp; Architectural Decision-Making</strong><br><br>
     Business requirements, stakeholder communication, feasibility assessment, build-versus-buy decisions, cost-benefit analysis, technical leadership, documentation, and architectural decision records.
   </div>
