@@ -2,6 +2,9 @@
 
 ## Table of Contents
 
+- [Overview](#overview)
+- [Core Terminology](#core-terminology)
+- [Functional and Non-Functional Requirements](#functional-and-non-functional-requirements)
 - [Design Process](#design-process)
 - [High-Level System Design](#high-level-system-design)
   - [Data Flow](#data-flow)
@@ -12,6 +15,9 @@
   - [Data Structures](#data-structures)
   - [API Design](#api-design)
   - [Code Optimization](#code-optimization)
+- [Design Challenges and Trade-Offs](#design-challenges-and-trade-offs)
+  - [Common Challenges](#common-challenges)
+  - [Evaluating Trade-Offs](#evaluating-trade-offs)
 - [Key Takeaway](#key-takeaway)
 - [System Design vs. Software Architecture](#system-design-vs-software-architecture)
 - [System Design & Deployment Infra, Ops, Networking](#system-design--deployment-infra-ops-networking)
@@ -27,27 +33,74 @@
   - [Recommended Learning Order](#recommended-learning-order)
   - [AI Architect's Defining Capability](#ai-architects-defining-capability)
 
-System design is the process of turning requirements into a practical blueprint for building and operating software. It defines the system's structure, major components, responsibilities, interfaces, data flow, and interactions.
+## Overview
 
-A strong design should satisfy both:
+**System design** turns requirements into a practical blueprint for building and operating software. It defines the system's structure, components, responsibilities, interfaces, data flow, and interactions.
 
-- **Functional requirements:** what the system must do.
-- **Non-functional requirements:** how well it must perform, including scalability, reliability, security, latency, and maintainability.
+Design connects user needs with technical decisions. For an online store, this includes how customers search, how orders are saved, what happens when payment is unavailable, and how the service handles a traffic spike.
 
-The goal is not only to make a system work today. The design should also be understandable, adaptable, and able to support future changes in traffic, data, features, and infrastructure.
+The goal is to meet today's requirements while making future changes manageable. Good design anticipates bottlenecks and failures, supports expected growth, and balances infrastructure cost with the team's ability to build and operate the system.
+
+> Start with the required behavior and operating conditions. These determine which architecture and mechanisms are useful.
+
+## Core Terminology
+
+| Term | Plain meaning | Example |
+| --- | --- | --- |
+| **Latency** | How long one operation takes | Time from submitting a search to receiving results |
+| **Throughput** | How much work completes per unit of time | Orders processed per second |
+| **Availability** | Whether users can access a usable service when needed | The proportion of checkout requests served successfully within an agreed deadline |
+| **Scalability** | Ability to handle more work while meeting performance targets | Adding instances as traffic grows |
+| **Consistency** | How and when copies of data agree, and what users can read after updates | Whether a profile read can still show the old name after an update |
+| **Reliability** | Ability to perform the intended function correctly over time | Orders are recorded correctly despite component failures |
+| **Resilience** | Ability to withstand disruption and recover | Restoring service after a region becomes unavailable |
+| **Fault tolerance** | Ability to keep providing service when components fail | Remaining instances serve requests after one crashes |
+| **Load balancing** | Distributing work across eligible backends | Sending requests to healthy application instances |
+| **Caching** | Reusing a stored result to avoid repeating expensive work | Serving a product description from memory |
+| **Sharding** | Splitting a dataset across storage nodes using a partition key | Assigning customers to shards by customer ID |
+| **Microservices** | Organizing an application into independently deployable services | Separate order, inventory, and notification services |
+
+Latency and throughput measure different things: a system can process many requests per second while individual requests still take a long time. Likewise, a reachable service can return incorrect results, so availability alone does not establish reliability.
+
+See [Distributed System Attributes](Distributed-System-Attributes.md) for deeper explanations, and [Load Balancing and Traffic Distribution](Load-Balancing-and-Traffic-Distribution.md) for routing and backend selection.
+
+## Functional and Non-Functional Requirements
+
+**Functional requirements** describe what the system must do. **Non-functional requirements (NFRs)** describe the quality and operating conditions it must satisfy.
+
+| Aspect | Functional requirements | Non-functional requirements |
+| --- | --- | --- |
+| Main question | What behavior must the system support? | Under what conditions, and how well must it work? |
+| E-commerce examples | Register users, search products, manage a cart, accept payment, track orders | Search latency, peak capacity, availability, access restrictions, recovery targets |
+| Verification | Exercise workflows and check their results | Measure behavior under specified load, failures, and security conditions |
+
+Some requirements combine both. Supporting login is a feature; specifying who can access each account's data adds a security constraint. An order workflow also needs explicit correctness rules, such as preventing duplicate charges when a request is retried.
+
+Replace vague statements such as “the system should be fast” with measurable targets. The following are **illustrative requirements**, not universal defaults:
+
+- **Performance:** At 1,000 search requests per second with an agreed dataset and request mix, 95% of responses complete within 200 ms.
+- **Availability:** At least 99.9% of valid search requests succeed within the agreed deadline over a calendar month.
+- **Security:** A customer can access only their own private order records.
+- **Recovery:** After losing an application instance, new requests are routed to healthy instances within 30 seconds.
+
+> Record the target, workload, measurement method, and acceptable failure behavior. Also record constraints such as budget, delivery date, existing integrations, and permitted data locations.
 
 ## Design Process
 
-A typical system design process includes:
+A typical design process includes:
 
-1. **Analyze requirements** — Clarify features, constraints, expected traffic, data volume, and read/write patterns.
-2. **Design the high-level system architecture** — Identify the main components, services, interfaces, and communication paths.
-3. **Design the low-level component details** — Decide how each component behaves internally and how components coordinate.
-4. **Design APIs** — Define clear contracts between clients, services, and external systems.
-5. **Design data storage** — Choose suitable data models and storage technologies based on access patterns, consistency, and scale.
-6. **Consider the user interaction** — Outline how the frontend communicates with backend services.
+1. **Clarify requirements and constraints** — Define workflows, correctness rules, quality targets, budget, and dependencies.
+2. **Estimate the workload** — Estimate normal and peak traffic, concurrent users, data growth, payload sizes, and read/write patterns. Record assumptions.
+3. **Sketch the high-level architecture** — Identify components, service boundaries, communication paths, and external integrations.
+4. **Design data storage** — Choose data models and access patterns; decide where replication, caching, or partitioning is needed.
+5. **Define APIs and user interactions** — Specify contracts, authentication, errors, retries, and how clients receive results.
+6. **Work through component details** — Choose algorithms, data structures, concurrency controls, and failure handling.
+7. **Evaluate bottlenecks and trade-offs** — Examine slow dependencies, shared resources, single points of failure, cost, and operating complexity.
+8. **Validate and revise** — Use prototypes, load tests, failure tests, and production measurements to check the assumptions and targets.
 
-The result is a set of architectural design documents consisting of architecture diagrams, API contracts, data models, and design decisions that serve as a blueprint for implementation.
+The result includes architecture diagrams, API contracts, data models, and decision records explaining the choices and alternatives considered.
+
+> Design is iterative. A failed load test or a changed requirement can send you back to an earlier decision; revisit assumptions as evidence improves.
 
 ## High-Level System Design
 
@@ -64,7 +117,7 @@ Choosing an architecture requires balancing several concerns:
 
 - **Scalability:** Can the system support more users, traffic, data, and features?
 - **Maintainability:** Can teams easily understand, test, debug, modify, improve, and operate it safely?
-- **Reliability:** Can it remain available and recover from failures (fault tolerance, resilience, etc.)?
+- **Reliability:** Does it keep performing its intended functions correctly, including during specified failures?
 - **Performance:** Can it meet latency and throughput expectations?
 - **Complexity:** Are the operational and development costs justified?
 
@@ -73,9 +126,9 @@ Choosing an architecture requires balancing several concerns:
 Data flow describes how information moves through a system:
 
 - **Ingestion:** Identify the sources of data and the mechanisms of how the data enters into the system - through APIs, events, files, streams, or batch jobs.
-- **Processing:** Deigning the processes that validate, transform, aggregate, or analyze the data.
+- **Processing:** Define how data is validated, transformed, aggregated, or analyzed.
 - **Storage:** Data is saved in a storage system suited to its structure, query performance and access patterns.
-- **Retrieval:** Clients and services access the processed data with suitable caching, latency, and routing/load balancing strategies.
+- **Retrieval:** Clients and services access data through suitable queries, indexes, caches, and routing strategies.
 
 Good data-flow design reduces bottlenecks and supports the required performance, consistency, and user experience.
 
@@ -88,6 +141,8 @@ Scalability is the ability to handle increasing demand without unacceptable perf
 
 > Horizontal scaling usually offers greater long-term capacity and fault isolation, but it also introduces distributed-system complexity. Load balancing, stateless services, caching, replication, and data partitioning are common scaling techniques.
 
+Measure which resource limits capacity before adding instances. A shared database, hot shard, or external API can remain the bottleneck. See [Scalability](Distributed-System-Attributes.md#scalability) and [Autoscaling with Load Balancing](Load-Balancing-and-Traffic-Distribution.md#autoscaling-with-load-balancing).
+
 ### Fault Tolerance
 
 Fault tolerance allows a system to continue providing useful service when components fail. Common techniques include:
@@ -99,6 +154,8 @@ Fault tolerance allows a system to continue providing useful service when compon
 - Isolation of failing components
 
 Failures are normal in production systems, so recovery behavior should be part of the design rather than an afterthought.
+
+Specify what happens to in-flight work, whether retries are safe, and how recovery is tested. See [Fault Tolerance](Distributed-System-Attributes.md#fault-tolerance) for the detection, containment, and recovery process.
 
 ## Low-Level System Design
 
@@ -139,24 +196,57 @@ APIs define how components communicate and help keep modularity by separating re
 - **Secure:** Authentication, authorization, and input validation are built in.
 - **Efficient:** Requests use resources carefully and meet performance needs (e.g., optimized for low latency).
 
-Stable API contracts make systems easier to integrate, maintain, and evolve by enabling building the backward-compatible systems.
+Stable API contracts make systems easier to integrate and evolve while preserving backward compatibility. Define how clients handle timeouts and retries, especially for operations that change data.
 
 ### Code Optimization
 
 Optimization should target measured bottlenecks while preserving correctness and readability. Useful techniques include:
 
 - **Refactoring** unclear or inefficient code by restructuring it to improve its readability and maintainability without changing its functionality
-- **Memorizing** expensive repeated computations by storing the results of previous calls
+- **Memoization:** Reuse stored results of repeated computations when their inputs and relevant state have not changed
 - **Parallelizing** independent work where appropriate by breaking down tasks into smaller, independent subtasks that can be executed concurrently, reducing overall processing time
 - **Loop unrolling** by replacing repetitive loop structures with a series of statements, reducing loop overhead and improving performance
 - Reducing unnecessary allocations, queries, and network calls
 - Selecting better algorithms and data structures
 
-Optimization always involves trade-offs. More performance may add complexity, so changes should be guided by profiling and real system requirements. This is the *broad topic* which has dedicated books to it.
+Optimization can add complexity or memory use, so changes should be guided by profiling and real system requirements.
+
+## Design Challenges and Trade-Offs
+
+### Common Challenges
+
+- **Partial failures:** One service may fail while others remain healthy. A timeout does not tell the caller whether a remote write completed.
+- **Data synchronization:** Replicas can lag and concurrent writes can conflict. Define which operations require fresh data and which can tolerate stale reads.
+- **Bottlenecks:** Slow queries, overloaded queues, hot keys, and network calls can limit the whole request path.
+- **Security and data handling:** Enforce identity, authorization, encryption, retention, and applicable data-location requirements across services.
+- **Operating cost and complexity:** Extra services, replicas, and regions require money, monitoring, deployment work, and recovery procedures.
+
+Use the consistency model that matches each operation. With **strong consistency**, a read started after a successful write sees that write or a newer one. With **eventual consistency**, replicas may temporarily differ and converge when updates stop and replication completes.
+
+**Partition tolerance** concerns behavior when groups of nodes cannot communicate; it is not another consistency model. See [Partition Tolerance](Distributed-System-Attributes.md#partition-tolerance) for the consistency and availability choices during a partition.
+
+### Evaluating Trade-Offs
+
+| Decision | Benefit | Cost or risk | Example |
+| --- | --- | --- | --- |
+| Serve reads from a cache | Lower latency and less database work | Stale data and invalidation complexity | Cache product descriptions; recheck price and stock at checkout |
+| Wait for replica acknowledgements before confirming a write | More copies have the update when success is returned | More coordination and write latency; unreachable replicas may block progress | Confirm a reservation only after the required persistence and coordination steps |
+| Add redundant instances or regions | Survive more component failures | Infrastructure cost, replication, and operational work | Keep spare capacity to absorb an instance failure |
+| Shard a growing dataset | Distribute storage and processing | Rebalancing, hot shards, and cross-shard operations | Partition customer records by a suitable key |
+| Move work to a queue | Absorb bursts and shorten the initial response | Delayed completion and retry/deduplication logic | Send confirmation emails after an order commits |
+| Run close to full capacity | Reduce idle-resource cost | Less room for bursts or failures | Choose a utilization target with recovery headroom |
+
+These outcomes depend on the implementation and workload. Replication or caching can sometimes improve both speed and resilience; scalability does not automatically require weaker consistency.
+
+> For each major decision, record the requirement it satisfies, the alternatives considered, the cost it introduces, and the evidence that would justify revisiting it.
 
 ## Key Takeaway
 
-High-level and low-level design solve different parts of the same problem. High-level design explains how the system is organized and operates at scale, while low-level design explains how its individual components are implemented. Effective system design connects both views and makes deliberate trade-offs based on requirements, constraints, and expected change.
+- **Requirements define success:** Specify features, correctness rules, and measurable operating targets.
+- **HLD organizes the system:** Choose components, data flow, communication, and deployment boundaries.
+- **LLD makes components concrete:** Define APIs, schemas, algorithms, and behavior under concurrency and failure.
+- **Trade-offs need a reason:** Relate each choice to the workload, cost, risk, and team constraints.
+- **Validation closes the loop:** Measure the design against its targets and revise it when assumptions change.
 
 ## System Design vs. Software Architecture
 
@@ -190,6 +280,7 @@ So, **software architecture is largely the high-level part of system design**, n
 DevOps/network engineers usually handle the **deeper implementation and operation**.
 
 So:
+
 - **System designer/architect:** decides what infrastructure/networking is needed and why.
 - **DevOps/network engineer:** implements, configures, automates, and operates it.
 
@@ -236,7 +327,7 @@ Therefore, system design can be performed at the subsystem level, while solution
 
 There is a natural progression from system design to solution architecture and then enterprise architecture. However, these disciplines overlap, and the distinction is primarily about scope and responsibilities, not strictly technical depth.
 
-## 1. Abstraction levels of architecture
+### 1. Abstraction levels of architecture
 
 **Highest abstraction - Enterprise Architecture**
 
@@ -252,7 +343,7 @@ There is a natural progression from system design to solution architecture and t
   
 This is a useful conceptual hierarchy, although real-world responsibilities often overlap.
 
-## 2. Recommended learning progression
+### 2. Recommended learning progression
 
 1. System Design (HLD + LLD)
 
