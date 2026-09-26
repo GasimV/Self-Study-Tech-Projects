@@ -120,9 +120,14 @@ Reading more replicas is not automatically sufficient: the system still needs a 
 
 ## Consistency
 
-**Consistency** defines what values a read is allowed to return when data is replicated or concurrently updated.
+**Consistency** describes how and when different copies of the same data agree, and what a user may see while an update spreads between replicas.
 
-> <u>Consistency is a contract about observations</u>: it describes how completed and concurrent operations appear to clients.
+For example, after you change your profile name, one replica might show the new name while another still shows the old one. The **consistency model** determines when a later read must show the new name:
+
+- **Strong consistency:** Once the update succeeds, any read started afterward sees the new name (or a newer update).
+- **Eventual consistency:** Some reads may briefly show the old name, but the replicas converge if no further updates occur.
+
+> Strong consistency does not require every replica to update at the same instant. The system can delay or route reads so users do not observe a stale value after a successful write.
 
 ### Strong Consistency
 
