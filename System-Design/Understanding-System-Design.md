@@ -13,6 +13,8 @@
   - [API Design](#api-design)
   - [Code Optimization](#code-optimization)
 - [Key Takeaway](#key-takeaway)
+- [System Design vs. Software Architecture](#system-design-vs-software-architecture)
+- [System Design & Deployment Infra, Ops, Networking](#system-design--deployment-infra-ops-networking)
 - [System Design vs. Solution Architecture](#system-design-vs-solution-architecture)
   - [Example: E-commerce platform](#example-e-commerce-platform)
   - [Key takeaway](#key-takeaway-1)
@@ -156,6 +158,40 @@ Optimization always involves trade-offs. More performance may add complexity, so
 
 High-level and low-level design solve different parts of the same problem. High-level design explains how the system is organized and operates at scale, while low-level design explains how its individual components are implemented. Effective system design connects both views and makes deliberate trade-offs based on requirements, constraints, and expected change.
 
+## System Design vs. Software Architecture
+
+They overlap heavily, but **system design is broader**.
+
+- **Software architecture** = the system’s **high-level structure and major technical decisions**.
+- **System design** = the **full design process**, including architecture plus lower-level details such as APIs, databases, caching, queues, algorithms, failure handling, etc.
+
+**Example — e-commerce system:**
+
+Architecture might decide:
+
+> Web app → API Gateway → Order Service / Payment Service / Inventory Service → databases
+
+System design goes further:
+
+> How does `Order Service` work? What API does it expose? Which DB schema? How are transactions handled? What happens if payment succeeds but inventory fails? How is caching implemented?
+
+A useful mental model:
+
+**System Design**  
+→ **High-Level Design / Software Architecture**  
+→ **Low-Level Design / Implementation details**
+
+So, **software architecture is largely the high-level part of system design**, not a completely separate discipline.
+
+## System Design & Deployment Infra, Ops, Networking
+
+**System design includes deployment infrastructure, networking, reliability, observability, and operational concerns** at the architectural level.
+
+DevOps/network engineers usually handle the **deeper implementation and operation**.
+
+So:
+- **System designer/architect:** decides what infrastructure/networking is needed and why.
+- **DevOps/network engineer:** implements, configures, automates, and operates it.
 
 ## System Design vs. Solution Architecture
 
