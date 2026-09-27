@@ -56,9 +56,10 @@ The goal is to meet today's requirements while making future changes manageable.
 | **Resilience** | Ability to withstand disruption and recover | Restoring service after a region becomes unavailable |
 | **Fault tolerance** | Ability to keep providing service when components fail | Remaining instances serve requests after one crashes |
 | **Reverse proxy** | Receives client requests and forwards them to a backend service, often using routing rules | Sending `/api` requests to the API service |
-| **Load balancing** | Distributes requests among eligible instances of a backend service | Choosing a healthy API instance for each request |
+| **Load balancing** | Distributes requests among eligible instances of a backend service | Sending requests to healthy application instances |
 | **Caching** | Reusing a stored result to avoid repeating expensive work | Serving a product description from memory |
-| **Sharding** | Splitting a dataset across storage nodes using a partition key | Assigning customers to shards by customer ID |
+| **Partitioning** | Splitting a table into smaller parts, commonly within one database | Separating orders into monthly partitions |
+| **Sharding** | Splitting a dataset into row-based partitions (shards), typically distributed across storage nodes (database instances or machines) using a partition key | Assigning customer records to shards by customer ID |
 | **Microservices** | Organizing an application into independently deployable services | Separate order, inventory, and notification services |
 
 Latency and throughput measure different things: a system can process many requests per second while individual requests still take a long time. Likewise, a reachable service can return incorrect results, so availability alone does not establish reliability.
