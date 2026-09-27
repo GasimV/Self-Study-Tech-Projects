@@ -130,17 +130,42 @@ This diagram shows *logical decisions*, not required separate devices. One NGINX
 
 | Term | What it is | Role in this example |
 | --- | --- | --- |
-| **NGINX** | Web server and proxy software that can also load-balance | Implements routing and backend selection, whether installed directly or used in Kubernetes |
+| **NGINX** | Open-source, high-performance HTTP server, reverse proxy, and load balancer | Routes requests and selects backends; can run on a VM, bare-metal server, or in a container |
 | **Ingress** | Kubernetes API resource containing HTTP(S) host and path rules | Declares that `/api` goes to the API Service and `/images` goes to the Image Service |
-| **Ingress controller** | Software that watches Kubernetes routing resources and implements their rules | Configures a proxy or load balancer; an NGINX-based controller uses NGINX as its traffic-handling component |
+| **Ingress controller** | Software, often running in Kubernetes Pods, that watches Ingress rules and implements them | An NGINX-based controller generates and updates NGINX configuration as the rules change |
 | **Service** | Kubernetes abstraction that gives a group of Pods a stable network identity | Represents the API or image backend; a normal Service can distribute traffic among its ready Pods |
 
-```text
-Client → Ingress controller → /api rule → API Service → API Pods
-                          └→ /images rule → Image Service → Image Pods
+```mermaid
+flowchart LR
+    C[Client] --> RP
+    R[Ingress resource: path rules] -. watched by .-> CTL
+
+    subgraph NIC[NGINX-based Ingress controller in Kubernetes]
+        CTL[Controller process] -. generates NGINX config .-> RP[NGINX reverse proxy: select Service]
+        RP -->|/api: API Service| ALB[NGINX load balancing: choose one API Pod]
+        RP -->|/images: Image Service| ILB[NGINX load balancing: choose one image Pod]
+    end
+
+    subgraph API[API Service: equivalent Pod group]
+        A1[API Pod 1]
+        A2[API Pod 2]
+        A3[API Pod 3]
+    end
+    subgraph IMG[Image Service: Pod group]
+        I1[Image Pod 1]
+        I2[Image Pod 2]
+    end
+
+    ALB --> A1
+    ALB --> A2
+    ALB --> A3
+    ILB --> I1
+    ILB --> I2
 ```
 
-An Ingress resource alone does not handle traffic; it needs a controller. The Services above are the *logical destinations* named by the rules. Depending on the controller, the actual network path may go directly from the controller to Pod endpoints rather than through a Service's virtual IP. A Kubernetes `Service` of type `LoadBalancer` is another way to expose a workload through an external load balancer; it is not an Ingress resource. See the [Kubernetes Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) and [Service](https://kubernetes.io/docs/concepts/services-networking/service/) documentation.
+In a traditional standalone setup, NGINX is installed on a VM or bare-metal server and its configuration, such as `nginx.conf` and included files, maps hostnames and paths to backends. Teams can maintain that configuration directly or through automation. With an NGINX-based Ingress controller, you define Kubernetes Ingress rules; the controller watches them and automatically generates and updates the NGINX configuration. See the [NGINX configuration guide](https://nginx.org/en/docs/beginners_guide.html) and [F5 NGINX Ingress Controller design](https://docs.nginx.com/nginx-ingress-controller/overview/design/).
+
+The diagram shows **two logical functions handled by the same NGINX-based controller**: reverse-proxy routing picks the Service named by the path rule, and load balancing picks one eligible Pod for that request. The arrows to multiple Pods show possible destinations, not a broadcast. Depending on the controller, traffic may go directly to Pod endpoints rather than through a Service's virtual IP. An Ingress resource alone does not handle traffic; it needs a controller. A Kubernetes `Service` of type `LoadBalancer` is a separate way to expose a workload through an external load balancer. See the [Kubernetes Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) and [Service](https://kubernetes.io/docs/concepts/services-networking/service/) documentation.
 
 **Naming note:** The Kubernetes community project **Ingress NGINX** was [retired in March 2026](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/). It is distinct from the actively maintained [F5 NGINX Ingress Controller](https://docs.nginx.com/nginx-ingress-controller/changelog/). The general concepts of Ingress resources and controllers still apply.
 
