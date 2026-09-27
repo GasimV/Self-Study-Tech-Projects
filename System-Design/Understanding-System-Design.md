@@ -55,7 +55,8 @@ The goal is to meet today's requirements while making future changes manageable.
 | **Reliability** | Ability to perform the intended function correctly over time | Orders are recorded correctly despite component failures |
 | **Resilience** | Ability to withstand disruption and recover | Restoring service after a region becomes unavailable |
 | **Fault tolerance** | Ability to keep providing service when components fail | Remaining instances serve requests after one crashes |
-| **Load balancing** | Distributing work across eligible backends | Sending requests to healthy application instances |
+| **Reverse proxy** | Receives client requests and forwards them to a backend service, often using routing rules | Sending `/api` requests to the API service |
+| **Load balancing** | Distributes requests among eligible instances of a backend service | Choosing a healthy API instance for each request |
 | **Caching** | Reusing a stored result to avoid repeating expensive work | Serving a product description from memory |
 | **Sharding** | Splitting a dataset across storage nodes using a partition key | Assigning customers to shards by customer ID |
 | **Microservices** | Organizing an application into independently deployable services | Separate order, inventory, and notification services |
