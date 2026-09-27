@@ -8,6 +8,8 @@
   - [Local vs. Global Traffic Distribution](#local-vs-global-traffic-distribution)
 - [Backend Selection Algorithms](#backend-selection-algorithms)
 - [Reverse Proxy vs. Load Balancer](#reverse-proxy-vs-load-balancer)
+  - [Mental Model: Service Routing and Instance Selection](#mental-model-service-routing-and-instance-selection)
+  - [NGINX, Ingress, and Kubernetes Service](#nginx-ingress-and-kubernetes-service)
 - [Common Reverse Proxy Functions](#common-reverse-proxy-functions)
 - [CDNs and Origin Traffic](#cdns-and-origin-traffic)
 - [TLS Termination](#tls-termination)
@@ -105,6 +107,42 @@ A **reverse proxy** receives requests from clients and forwards them to backend 
 > **Remember:** *Reverse proxy* describes a component's position and role in the request path; *load balancing* describes what it does with traffic. A reverse proxy need not balance traffic, and a load balancer may work as a reverse proxy.
 
 Neither term requires a dedicated physical server. Implementations include software, hardware appliances, and managed cloud services.
+
+### Mental Model: Service Routing and Instance Selection
+
+For an HTTP application, two useful questions are **“Which service handles this path?”** and **“Which healthy instance of that service handles this request?”** The first is a routing decision; the second is a load-balancing decision.
+
+```mermaid
+flowchart LR
+    C[Client] --> P[Reverse proxy]
+    P -->|/api| A[API service]
+    P -->|/images| I[Image service]
+    A --> A1[API instance 1]
+    A --> A2[API instance 2]
+    A --> A3[API instance 3]
+```
+
+This diagram shows *logical decisions*, not required separate devices. One NGINX instance can route `/api` to the API service **and** balance requests among its instances. Another design may use separate components. A transport-level load balancer can distribute connections without inspecting HTTP paths.
+
+> **Memory aid:** A reverse proxy is the intermediary that receives and forwards client requests. Load balancing is the choice among available destinations. Service routing and instance selection often happen together, but neither term is a formal subtype of the other.
+
+### NGINX, Ingress, and Kubernetes Service
+
+| Term | What it is | Role in this example |
+| --- | --- | --- |
+| **NGINX** | Web server and proxy software that can also load-balance | Implements routing and backend selection, whether installed directly or used in Kubernetes |
+| **Ingress** | Kubernetes API resource containing HTTP(S) host and path rules | Declares that `/api` goes to the API Service and `/images` goes to the Image Service |
+| **Ingress controller** | Software that watches Kubernetes routing resources and implements their rules | Configures a proxy or load balancer; an NGINX-based controller uses NGINX as its traffic-handling component |
+| **Service** | Kubernetes abstraction that gives a group of Pods a stable network identity | Represents the API or image backend; a normal Service can distribute traffic among its ready Pods |
+
+```text
+Client → Ingress controller → /api rule → API Service → API Pods
+                          └→ /images rule → Image Service → Image Pods
+```
+
+An Ingress resource alone does not handle traffic; it needs a controller. The Services above are the *logical destinations* named by the rules. Depending on the controller, the actual network path may go directly from the controller to Pod endpoints rather than through a Service's virtual IP. A Kubernetes `Service` of type `LoadBalancer` is another way to expose a workload through an external load balancer; it is not an Ingress resource. See the [Kubernetes Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) and [Service](https://kubernetes.io/docs/concepts/services-networking/service/) documentation.
+
+**Naming note:** The Kubernetes community project **Ingress NGINX** was [retired in March 2026](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/). It is distinct from the actively maintained [F5 NGINX Ingress Controller](https://docs.nginx.com/nginx-ingress-controller/changelog/). The general concepts of Ingress resources and controllers still apply.
 
 ## Common Reverse Proxy Functions
 
@@ -282,12 +320,15 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - Global routing chooses a region or edge; local balancing chooses an instance. DNS-based changes are limited by caching and existing connections.
 - Algorithms, health checks, session state, and autoscaling must be designed together.
 - A reverse proxy describes an intermediary role; load balancing describes traffic distribution. A CDN edge can also be a reverse proxy.
+- In Kubernetes, an Ingress declares HTTP routing rules, an ingress controller implements them, and a Service identifies a backend group of Pods.
 - TLS termination ends the client-side encrypted connection at the intermediary; the backend hop may use HTTP or a new HTTPS connection.
 - Failover is only effective when the alternate destination has capacity, correct data, and a tested recovery path.
 
 ## Further Reading
 
 - [NGINX: Using nginx as HTTP load balancer](https://nginx.org/en/docs/http/load_balancing.html)
+- [Kubernetes: Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/)
+- [Kubernetes: Service](https://kubernetes.io/docs/concepts/services-networking/service/)
 - [F5: What is SSL termination?](https://www.f5.com/glossary/ssl-termination)
 - [AWS: HTTPS listeners for Application Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html)
 - [NGINX: HTTP health checks](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-health-check/)
