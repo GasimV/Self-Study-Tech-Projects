@@ -165,6 +165,28 @@ For the hotel example, strong consistency prevents two users from successfully b
 
 **Eventual consistency** permits replicas to temporarily disagree. If no new updates occur, all replicas are expected to converge to the same state.
 
+```mermaid
+flowchart LR
+    U1["User u1"] -->|"bookRoom(u1, r1)"| APP[Application server]
+    U2["User u2"] -->|"isRoomAvailable(r1)"| APP
+
+    subgraph REPLICAS[Replicated room data]
+        direction TB
+        DB1[(db1)]
+        DB2[(db2)]
+        DB3[(db3)]
+        DB1 -.->|asynchronous replication| DB2
+        DB1 -.->|asynchronous replication| DB3
+    end
+
+    APP -->|write: book r1| DB1
+    APP -->|read: check r1| DB2
+
+    style REPLICAS fill:#fff,stroke:#777,stroke-width:1px,stroke-dasharray:6 4
+```
+
+**Hotel-room example:** `u1`'s booking is written to `db1` and replicated asynchronously to `db2` and `db3`. If `u2` reads from `db2` before it applies the update, the API may incorrectly report that room `r1` is available (`true`); after the update, it reports `false`.
+
 Informally, for replicas $i$ and $j$:
 
 $$
