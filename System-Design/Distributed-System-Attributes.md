@@ -240,10 +240,10 @@ $$
 
 | Configuration for $N=3$ | Characteristics |
 | --- | --- |
-| $W=1, R=3$ | Fast writes, slow reads; read set overlaps the write set |
-| $W=3, R=1$ | Slow writes, fast reads; every replica receives the write first |
-| $W=2, R=2$ | Balanced read/write cost; overlapping majorities |
-| $W=1, R=1$ | Fast operations, but a read can miss the latest write |
+| $W=1, R=3$ | **Strong consistency**; Fast writes, slow reads; read set overlaps the write set |
+| $W=3, R=1$ | **Strong consistency**; Slow writes, fast reads; every replica receives the write first |
+| $W=2, R=2$ | **Strong consistency**; Balanced read/write cost; overlapping majorities |
+| $W=1, R=1$ | **Eventual consistency**; Fast operations, but a read can miss the latest write |
 
 > **Important nuance:** $R + W > N$ guarantees an overlap between read and write sets. It does **not**, by itself, guarantee strong consistency. The system must also select the latest valid version, handle concurrent writes, and enforce appropriate operation ordering.
 
