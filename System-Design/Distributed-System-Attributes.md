@@ -253,6 +253,8 @@ $$
 
 **Availability** is the system's ability to accept a request and return a non-error response within an acceptable time.
 
+> Availability in distributed system design refers to the ability of a distributed system to provide access to its services or resources to its users, even in the presence of failures. In other words, an available system is always ready to respond to requests and provide its services to users, regardless of any faults or failures that may occur in the system.
+
 A common operational measure is:
 
 $$
