@@ -305,14 +305,15 @@ Achieving high availability in distributed systems can be challenging because di
 
 ### Techniques for High Availability
 
-- **Redundancy:** Duplicate critical hardware, processes, zones, and network paths.
-- **Replication:** Maintain data or service copies across multiple failure domains.
-- **Load balancing:** Route requests only to healthy instances and distribute load.
-- **Health checks:** Detect failed or degraded components quickly.
-- **Failover:** Redirect work to a healthy standby or peer.
-- **Failback:** Safely restore traffic to the recovered component.
-- **Graceful degradation:** Preserve essential features when dependencies fail.
-- **Timeouts, retries, and circuit breakers:** Bound failures and prevent cascades.
+- **Redundancy:** Keep alternative components available so some component(s) failure(s) does not stop the service—for example, spare network links, power supplies, processes, service instances, or availability zones.
+- **Replication:** Maintain copies of *stateful data* across nodes. In **active-passive** setups, a primary serves requests while a standby can take over; in **active-active** setups, multiple nodes serve requests simultaneously. Replication lag and conflicts may affect consistency.
+- **Load balancing:** Route work across healthy instances to avoid overloading one node. Distribution may be weighted rather than equal.
+- **Fault detection and recovery:** Use heartbeats, health checks, and monitoring to detect failures; restart, replace, or repair failed components.
+- **Failover and failback:** Redirect work to a healthy alternative after failure, then safely restore traffic to the recovered component.
+- **Graceful degradation:** Preserve essential features when a dependency is unavailable.
+- **Timeouts, retries, and circuit breakers:** Limit the impact of slow or failing dependencies and prevent failures from spreading.
+
+> **Trade-off:** Redundancy and replication improve availability but add cost and operational complexity. Replicated data can also be temporarily inconsistent, so choose these techniques according to each feature’s requirements.
 
 Retries should use exponential backoff, jitter, and idempotency controls; otherwise, they can amplify an outage into a *retry storm*.
 
