@@ -247,7 +247,7 @@ $$
 
 > **Important nuance:** $R + W > N$ guarantees an overlap between read and write sets. It does **not**, by itself, guarantee strong consistency. The system must also select the latest valid version, handle concurrent writes, and enforce appropriate operation ordering.
 
-> As system designers/architects, we have the option to design strong consistency or eventual consistency. The answer may seem obvious at first glance - we want strong consistency. However, that may not be the case if we consider *availability* in the context! Higher quorums also reduce operation availability. A write can succeed only when at least $W$ replicas are reachable, and a read can succeed only when at least $R$ replicas are reachable. So, when designing the system, we should consider eventual consistency as a trade-off to have higher availability.
+> As system designers/architects, we have the option to design strong consistency **or** eventual consistency. The answer may seem obvious at first glance - we want strong consistency. However, that may not be the case if we consider **availability** in the context! Higher quorums also reduce operation availability. A write can succeed only when at least $W$ replicas are reachable, and a read can succeed only when at least $R$ replicas are reachable. So, when designing the system, we should consider eventual consistency as a **trade-off** to have higher availability.
 
 ## Availability
 
