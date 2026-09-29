@@ -12,6 +12,7 @@
   - [Eventual Consistency](#eventual-consistency)
   - [Quorum Reads and Writes](#quorum-reads-and-writes)
 - [Availability](#availability)
+  - [Measuring Availability](#measuring-availability)
   - [Techniques for High Availability](#techniques-for-high-availability)
 - [Partition Tolerance](#partition-tolerance)
   - [Network Partitions](#network-partitions)
@@ -251,20 +252,36 @@ $$
 
 ## Availability
 
-**Availability** is the system's ability to accept a request and return a non-error response within an acceptable time.
+**Availability** means users can get a usable response from a service when they need it, within an acceptable time. A component may fail without making the whole service unavailable, provided enough other components can handle the request.
 
-> Availability in distributed system design refers to the ability of a distributed system to provide access to its services or resources to its users, even in the presence of failures. In other words, an available system is always ready to respond to requests and provide its services to users, regardless of any faults or failures that may occur in the system.
+> **Hotel-room example:** Booking data is stored on `db1`, `db2`, and `db3`. Suppose each read needs **two replica responses** (`R = 2`) and each write needs **two acknowledgements** (`W = 2`). If `db3` fails, `db1` and `db2` can still serve those operations. If two replicas fail, neither operation can meet its requirement, so the booking feature must wait or return an error.
 
-A common operational measure is:
+Requiring fewer replicas can keep operations available through more failures, but may expose stale data. **Availability alone does not prevent double-booking:** if two users both see the last room as available, the final booking must *atomically* check that it is still free and mark it booked. Only one user should succeed.
+
+### Measuring Availability
+
+For a service that repeatedly runs and recovers from failures, a common estimate is: [AWS availability guide](https://docs.aws.amazon.com/whitepapers/latest/availability-and-beyond-improving-resilience/understanding-availability.html)
 
 $$
 Availability = \frac{MTBF}{MTBF + MTTR} \times 100\%
 $$
 
-where:
+- **MTBF** (*mean time between failures*) is the average time the service works before its next failure.
+- **MTTR** (*mean time to repair or recover*) is the average time needed to restore it.
 
-- **MTBF** = mean time between failures
-- **MTTR** = mean time to repair or restore service
+or simply as the concept:
+
+$$
+Availability = \frac{Uptime}{Uptime + Downtime} \times 100\%
+$$
+
+For example, if the service works for an average of **999 hours** and takes **1 hour** to recover:
+
+$$
+Availability = \frac{999}{999 + 1} \times 100\% = 99.9\%
+$$
+
+This estimates the **percentage of time the service is up**. The table translates availability targets into approximate *total downtime* in a 365-day year:
 
 | Target | Approximate maximum downtime per year |
 | --- | ---: |
@@ -273,7 +290,18 @@ where:
 | 99.99% | 52.6 minutes |
 | 99.999% | 5.26 minutes |
 
-> Availability must be defined through a user-visible **service-level indicator**: for example, “successful booking requests completed within 500 ms.” A running process is not useful if it cannot serve correct responses in time.
+For **99.9% annual availability**, the calculation is:
+
+$$
+365 \times 24 \times (1 - 0.999)
+= 8.76\text{ hours}
+$$
+
+That is **8 hours, 45 minutes, and 36 seconds (46 min / 60 min *(1 hour)* ~ 0.76) of total downtime across the year**—not an allowance for each outage.
+
+> Define availability from the **user’s perspective**: for example, the percentage of booking requests that return a *valid result* within 500 ms. “Room already booked” can be a valid result; a timeout or a successful double-booking is not. A running database alone does not prove the booking feature is available or correct.
+
+Achieving high availability in distributed systems can be challenging because distributed systems are composed of multiple components, each of which may be subject to failures such as crashes, network failures, or communication failures.
 
 ### Techniques for High Availability
 
