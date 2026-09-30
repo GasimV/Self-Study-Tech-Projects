@@ -411,32 +411,34 @@ $$
 
 ## Durability
 
-**Durability** means that once a write is acknowledged as committed, it survives even in the event of a crash or power failure. For example, a successfully placed order will not disappear even if the server restarts immediately afterward. But if `db1` confirms a booking before another durable copy exists, a permanent `db1` failure can erase that confirmed booking.
+**Durability** means that once a write is acknowledged as committed, it survives even in the event of a crash or power failure.
+
+> **Hotel-room example**: The API confirms `u1`’s booking, but `db1` fails permanently before another copy receives it. The booking disappears despite the confirmation—a durability failure. If the system waits until both `db1` and `db2` have safely stored the booking, losing `db1` alone will not erase it.
 
 Durability techniques include:
 
-- Write-ahead logs and durable storage
-- Replication across independent failure domains
-- Checksums and corruption detection
-- Point-in-time recovery and immutable backups
-- Cross-zone or cross-region copies
-- Regular restore tests
+- **Write-ahead log and durable storage**: Record a change before confirming it, so the database can recover it after a process crash.
+- **Replication**: Keep another copy on an independent node; `db2` can retain the booking if `db1` fails.
+- **Checksums and corruption detection**: Detect a damaged record so the system can seek a healthy copy; detection alone does not repair it.
+- **Versioned, immutable backups**: Restore data from an earlier point if it is deleted or corrupted.
+- **Cross-zone or cross-region copies**: Place copies beyond one failure location, so a zone or region outage does not destroy every copy.
+- **Regular restore/backup recovery tests**: Confirm that backups can actually be used to recover the booking data.
 
-| Mechanism | Protects against | Does not necessarily protect against |
+| Mechanism | Protects against/helps with | Does not necessarily protect against/help with |
 | --- | --- | --- |
-| Local disk persistence | Process restart | Disk or host loss |
-| Multi-node replication | Single-node failure | Shared-zone failure or accidental deletion |
-| Cross-region replication | Regional outage | Bad writes replicated everywhere |
-| Versioned backups | Deletion, corruption, ransomware | Data created after the latest recovery point |
+| Local durable storage | Restarting `db1` without losing its booking | Permanent loss of `db1`’s disk |
+| Multi-node replication (replication to `db2`) | Single-node failure - failure of `db1`, **if `db2` received the write** | Shared-zone failure or accidental deletion - a failure affecting both copies |
+| Cross-region replication | Loss of one region | Recent writes not yet copied; bad writes replicated everywhere |
+| Versioned backups | Recovering a deleted or corrupted booking | Writes made after the latest recoverable backup |
 
-> **Replication is not backup.** Replication can quickly copy corruption or accidental deletion; backups provide an independent recovery history.
+> **Replication is not backup.** If a booking is accidentally deleted, replicas may quickly copy the accidental deletion or corruption. A versioned backup can provide a copy from *before* the mistake - *independent recovery history*.
 
 Two useful objectives are:
 
-- **RPO (Recovery Point Objective):** maximum acceptable data loss measured in time.
-- **RTO (Recovery Time Objective):** maximum acceptable time to restore service.
+- **RPO (Recovery Point Objective):** maximum acceptable data loss measured in time - *"how much recent data loss is acceptable"*. An RPO of 5 minutes means recovery must not lose more than 5 minutes of confirmed writes.
+- **RTO (Recovery Time Objective):** maximum acceptable time to restore service - *"how long service restoration may take"*. An RTO of 30 minutes means the booking service should be usable again within 30 minutes.
 
-> **Durability Trade-off**: Waiting for other replicas to persist a write improves durability, but increases write latency and may prevent writes when too few replicas are reachable.
+> **Durability Trade-off**: Waiting for other replicas to persist a write improves durability, but increases write latency and may prevent writes when too few replicas are reachable. For example, waiting for another node to store a booking before confirming it improves protection against node loss, but increases write latency and can block writes when too few nodes are reachable.
 
 ## Reliability
 
