@@ -329,7 +329,7 @@ Possible causes include:
 - Misconfigured firewalls or routing rules
 - Cloud-zone or regional outages
 - Packet loss, extreme delay, or network congestion
-- Software defects or network attacks
+- Software bugs or network attacks
 
 During a partition, an isolated replica may continue serving stale data or accept conflicting writes.
 
@@ -345,9 +345,13 @@ flowchart LR
     DB3 -. blocked .-> DB2
 ```
 
+> **Impact**: Nodes within each partition may keep operating, but cannot coordinate with nodes in other partitions. This challenges consistency (copies may diverge or conflict), availability (requests needing cross-partition agreement may fail or wait), and fault tolerance (the system must decide what useful service it can still provide and how to recover when communication returns).
+
+> **Duration matters**: A partition may be brief and heal automatically when connectivity returns, or persist until the underlying fault is repaired. A longer partition can prolong stale reads, conflicting writes, or unavailable operations. If connectivity cannot be restored, recovery may require manual intervention.
+
 ### Behavior During a Partition
 
-**Partition tolerance** means the system has defined behavior and continues operating as far as its guarantees allow when communication is disrupted.
+**Partition tolerance** means the distributed system is able to continue to operate despite network disruptions or partitions.
 
 During a partition, a distributed system must decide which guarantee to preserve for each operation:
 
@@ -356,7 +360,7 @@ During a partition, a distributed system must decide which guarantee to preserve
 
 > This is the practical core of the **CAP theorem**: when a network partition exists, a system cannot guarantee both linearizable consistency and total availability for every request.
 
-Partition tolerance is not usually optional in a real distributed system—networks can fail. The meaningful design question is *how each feature behaves when a partition occurs*.
+Partition tolerance is not usually optional in a real distributed system—networks can fail. The meaningful design question is *how each feature behaves when a partition occurs - what ***trade-off*** we need to make between consistency and availability*.
 
 ## Latency
 
