@@ -364,13 +364,15 @@ Partition tolerance is not usually optional in a real distributed system—netwo
 
 ## Latency
 
-**Latency** is the elapsed time between initiating an operation and receiving its response. It is usually measured as a distribution, not only as an average.
+**Latency** is the time taken between initiating a request and receiving its response, typically measured in **milliseconds (ms)**. It includes network delay, processing time, and any backend dependencies. It is usually measured as a distribution (percentiles), not only as an average.
 
 Report percentiles such as:
 
-- **p50:** median experience
+- **p50:** median experienced latency - half the requests are faster than this
 - **p95:** slower 5% of requests
-- **p99:** tail latency experienced by the slowest 1%
+- **p99:** tail/worst-case latency experienced by the slowest 1% of users
+
+> **Analogy**: Think of waiting in a queue at Starbucks. While most people are served in 2 minutes (p50), occasionally, someone waits 8 minutes (p99).
 
 An approximate request-latency budget is:
 
@@ -380,7 +382,7 @@ $$
 
 ### Sources of Latency
 
-- Physical distance and network hops
+- Physical distance between nodes in a DS and network hops
 - Congestion, packet loss, and retransmission
 - Queueing under high utilization
 - Application processing and serialization
@@ -391,18 +393,21 @@ $$
 
 ### Latency-Reduction Techniques
 
-- Cache frequently read data in memory or at the edge.
-- Place services and data closer to users.
-- Reduce network hops and payload sizes.
-- Optimize indexes, queries, algorithms, and serialization.
-- Process independent work concurrently.
-- Move non-critical work to asynchronous queues.
-- Use connection pooling and persistent connections.
-- Apply deadlines and cancel work that is no longer useful.
+- **Caching**: Cache frequently read data in memory or at the edge (CDNs).
+- **Data localization**: Place services and data closer to users via data replication, edge computing, or content distribution strategies.
+- **Network optimization**: Optimizing network infrastructure, such as using high-speed connections, reduce network hops and payload sizes, minimizing network congestion.
+- **Performance tuning**: Optimize system configs, indexes, db queries, algorithms, code execution, and serialization.
+- **Asynchronous communication**: Move non-critical work to asynchronous message queues or event-driven architectures and process independent work concurrently..
+- **Connection reuse**: Use connection pools and persistent connections to avoid repeated connection setup.
+- **Deadlines and cancellation**: Set request deadlines and stop work that is no longer useful, limiting long waits and freeing capacity.
 
 > Optimize tail latency as well as the average. A request that fans out to many services is often limited by its slowest dependency.
 
-Lower latency may conflict with consistency and durability. For example, acknowledging a write before remote replicas persist it is faster but increases stale-read and data-loss risk.
+> **Latency trade-off**: Network delays cannot be eliminated, and faster responses may require weaker guarantees. For example, acknowledging a write before other replicas receive and persist it reduces latency, but another replica may briefly return stale data (consistency), and the acknowledged write may be lost if its only durable copy fails (durability). Choose the trade-off according to the operation—for a room booking, correctness matters more than saving on a single network request (round trip).
+
+**Fault Tolerance and Durability are different**. Fault tolerance is whether the system can keep providing service when a component fails. Durability is whether acknowledged data survives that failure. A system might fail over and remain usable while losing its most recent booking—fault-tolerant in service continuity, but not durable for that write.
+
+**Illustrative example:** Suppose `db1` saves a room booking and immediately tells the user **“confirmed.”** It has not yet copied the booking to `db2` or `db3`. If `db1` then suffers a permanent disk failure, the other replicas have no record of that booking. The system may still run using `db2`, but the **confirmed booking has disappeared**. That is a durability failure.
 
 ## Durability
 
