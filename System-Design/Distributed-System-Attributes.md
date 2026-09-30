@@ -411,7 +411,7 @@ $$
 
 ## Durability
 
-**Durability** means that once a write is acknowledged as committed, it survives the failures covered by the system's stated guarantee.
+**Durability** means that once a write is acknowledged as committed, it survives even in the event of a crash or power failure. For example, a successfully placed order will not disappear even if the server restarts immediately afterward. But if `db1` confirms a booking before another durable copy exists, a permanent `db1` failure can erase that confirmed booking.
 
 Durability techniques include:
 
@@ -435,6 +435,8 @@ Two useful objectives are:
 
 - **RPO (Recovery Point Objective):** maximum acceptable data loss measured in time.
 - **RTO (Recovery Time Objective):** maximum acceptable time to restore service.
+
+> **Durability Trade-off**: Waiting for other replicas to persist a write improves durability, but increases write latency and may prevent writes when too few replicas are reachable.
 
 ## Reliability
 
