@@ -227,6 +227,18 @@ Use the consistency model that matches each operation. With **strong consistency
 
 **Partition tolerance** concerns behavior when groups of nodes cannot communicate; it is not another consistency model. See [Partition Tolerance](Distributed-System-Attributes.md#partition-tolerance) for the consistency and availability choices during a partition.
 
+### Trade-offs in System Design
+
+| Trade-off pair | Illustrative example |
+| --- | --- |
+| **Scalability vs. strong consistency** | A stock trading system may require **strong consistency** so users see the latest recorded stock prices. However, enforcing this across multiple servers *introduces latency*. A design that *prioritizes scalability* may instead allow **eventual consistency** for price displays, where users might see slightly outdated prices in exchange for faster access. |
+| **Performance vs. reliability** | In a ride-hailing service, a fast system might return driver availability in milliseconds, but the information could be outdated due to network delays. Checking for more up-to-date information may take longer but reduces inaccurate availability results. The right balance depends on business priorities. |
+| **Latency vs. fault tolerance** | Video services such as Netflix and YouTube use CDNs to cache content closer to users, reducing buffering. Redundant CDN servers help handle server failures (**fault tolerance**) while nearby copies support **low latency** and smooth playback. |
+| **Latency vs. fault tolerance** | A video service uses nearby CDN servers to reduce buffering. If one server fails, another can serve the video, keeping playback possible. However, switching to a more distant server may increase loading time or buffering. |
+| **Cost vs. high availability** | A small e-commerce startup may choose a single-region cloud setup to minimize costs, accepting downtime if that region fails. A larger platform may invest in servers across multiple regions to continue serving users during such failures, but at a much higher cost. This improves availability but increases infrastructure and operating costs. |
+
+> These are possible trade-offs, not unavoidable conflicts. Some designs improve both sides—for example, caching can reduce latency while reducing backend load.
+
 ### Evaluating Trade-Offs
 
 | Decision | Benefit | Cost or risk | Example |
