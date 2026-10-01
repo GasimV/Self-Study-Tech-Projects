@@ -444,6 +444,8 @@ Two useful objectives are:
 
 **Reliability** is the probability that a system performs its intended function correctly for a specified period under stated conditions.
 
+> **Hotel-room example**: A reliable booking system records reservations correctly, prevents double-booking, and avoids creating duplicate bookings when a request is retried. Redundancy, replication, fault tolerance, load balancing, and error handling help it continue providing its intended service when failures occur.
+
 Under a simplified constant failure-rate model:
 
 $$
