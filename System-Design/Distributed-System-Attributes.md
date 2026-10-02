@@ -23,6 +23,7 @@
 - [Durability](#durability)
 - [Reliability](#reliability)
 - [Fault Tolerance](#fault-tolerance)
+- [Availability vs. Durability vs. Reliability vs. Fault Tolerance](#availability-vs-durability-vs-reliability-vs-fault-tolerance)
 - [Scalability](#scalability)
   - [Vertical Scaling](#vertical-scaling)
   - [Horizontal Scaling](#horizontal-scaling)
@@ -487,14 +488,26 @@ Common mechanisms include:
 - Dead-letter queues and poison-message handling
 - Graceful degradation
 
-| Concept | Meaning |
-| --- | --- |
-| **Availability** | The service can respond now |
-| **Reliability** | The service behaves correctly over time |
-| **Fault tolerance** | The service continues despite specific faults |
-| **Durability** | Committed data survives specified failures |
+## Availability vs. Durability vs. Reliability vs. Fault Tolerance
 
-These properties reinforce each other, but are not interchangeable.
+| Concept | Plain meaning | Example |
+| --- | --- | --- |
+| **Availability** | Is the system usable when needed? | The booking service meets a 99.99% uptime target |
+| **Durability** | Once data is confirmed as saved, will it stay saved? | A completed payment record is not lost after a crash |
+| **Reliability** | Does the system keep behaving correctly over time? | Booking requests consistently produce correct reservations |
+| **Fault tolerance** | Can the system keep working when some components fail? | One server fails, but healthy replicas continue serving traffic |
+
+> **Simple mental model:**<br>
+> - **Availability = up**<br>
+> - **Durability = data survives**<br>
+> - **Reliability = works correctly**<br>
+> - **Fault tolerance = keeps working through component failures**
+
+These properties reinforce each other, but are not interchangeable. **Reliability** is the goal of behaving correctly over time. **Fault tolerance** is a capability that supports reliability when components fail; redundancy, replication, and failover are techniques used to achieve it.
+
+**Example:** Three replicas with working failover can keep the booking service running when one replica fails. This improves fault tolerance and can improve reliability.
+
+> The trade-off is usually **more fault tolerance versus higher cost, complexity, and operational overhead**, rather than reliability versus fault tolerance.
 
 ## Scalability
 
