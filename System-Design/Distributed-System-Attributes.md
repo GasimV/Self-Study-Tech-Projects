@@ -521,14 +521,6 @@ Scalability should be measured against a workload and an objective, for example:
 - Data volume stored or scanned
 - Cost per request or per customer
 
-For arrival rate $\lambda$, average service rate $\mu$ per worker, and $m$ workers, approximate utilization is:
-
-$$
-\rho = \frac{\lambda}{m\mu}
-$$
-
-As $\rho$ approaches $1$, queues and tail latency can grow sharply. Systems therefore need headroom for bursts, failures, and uneven traffic.
-
 ### Vertical Scaling
 
 **Vertical scaling** (*scaling up*) increases the capacity of one node—for example, by adding CPU, memory, storage, or faster networking.
@@ -587,6 +579,26 @@ The two approaches are complementary. A system can use appropriately sized nodes
 - Autoscale using workload signals, with safe minimum capacity.
 - Design for rebalancing, hot keys, and uneven traffic.
 - Measure cost efficiency as well as raw throughput.
+
+**Capacity and headroom**
+
+For arrival rate $\lambda$, average service rate $\mu$ per worker, and $m$ workers, approximate utilization is:
+
+$$
+\rho = \frac{\lambda}{m\mu}
+$$
+
+As $\rho$ approaches $1$, queues and tail latency can grow sharply. Systems therefore need headroom for bursts, failures, and uneven traffic.
+
+**Example:** Suppose 10 workers can each handle 100 requests per second, while 800 requests arrive per second:
+
+$$
+\rho = \frac{800}{10 \times 100} = 0.8 = 80\%
+$$
+
+The system has some spare capacity. If two workers fail, utilization reaches $\frac{800}{8 \times 100} = 1$, or **100%**, leaving no headroom for bursts. Requests may queue and responses become slower. Adding workers can restore that headroom.
+
+This is a simple estimate that assumes workers can process requests in parallel. Actual scaling can also be limited by shared resources, such as a database.
 
 > Scaling a bottleneck only moves the bottleneck. Measure the entire request path before adding capacity.
 
