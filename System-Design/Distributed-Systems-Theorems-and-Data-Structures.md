@@ -54,6 +54,8 @@ Here, **consistency means linearizability**. CAP availability is a formal guaran
 
 ### CAP Diagram
 
+> **During a network partition, a system cannot guarantee both strong consistency and availability. CA is possible when there is no partition; if one occurs, the system must give up at least one of those guarantees.**
+
 ```mermaid
 flowchart TB
     CA["CA<br/>Consistency + Availability<br/>No partition guarantee"]
@@ -80,7 +82,7 @@ flowchart TB
     class AP ap
 ```
 
-**Diagram:** The circles represent the three properties; the connecting boxes show the familiar CA, CP, and AP combinations. During a partition, the relevant choice is **CP or AP**. CA assumes partitions are excluded; it cannot preserve both guarantees if a partition occurs.
+> **Diagram:** The circles represent the three properties; the connecting boxes show the familiar CA, CP, and AP combinations. During a partition, the relevant choice is **CP or AP**. CA assumes partitions are excluded; it cannot preserve both guarantees if a partition occurs.
 
 ### Why a Partition Forces a Choice
 
