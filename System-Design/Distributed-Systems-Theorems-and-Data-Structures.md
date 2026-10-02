@@ -56,12 +56,12 @@ Here, **consistency means linearizability**. CAP availability is a formal guaran
 
 ```mermaid
 flowchart TB
-    CA["CA<br/>Consistency + availability<br/>No partition guarantee"]
+    CA["CA<br/>Consistency + Availability<br/>No partition guarantee"]
     C(("Consistency<br/>C"))
     A(("Availability<br/>A"))
     CP["CP<br/>Preserve consistency<br/>Some requests cannot complete"]
     AP["AP<br/>Keep serving requests<br/>Data may be stale or conflicting"]
-    P(("Partition<br/>tolerance<br/>P"))
+    P(("Partition<br/>Tolerance<br/>P"))
 
     CA --- C
     CA --- A
