@@ -513,6 +513,31 @@ These properties reinforce each other, but are not interchangeable. **Reliabilit
 
 **Scalability** is the ability to handle growth in traffic, users, data, or computation while maintaining required performance and reliability.
 
+```mermaid
+flowchart LR
+    subgraph VERTICAL[Vertical scaling: make one instance more powerful]
+        direction BT
+        V1["One instance<br/>2 CPU cores<br/>4 GB memory"]
+        V2["Same instance<br/>4 CPU cores<br/>8 GB memory"]
+        V3["Same instance<br/>8 CPU cores<br/>16 GB memory"]
+        V1 -->|Add CPU and memory| V2
+        V2 -->|Upgrade the instance type| V3
+    end
+
+    subgraph HORIZONTAL[Horizontal scaling: increase the number of instances]
+        direction LR
+        H1["1 instance"] -->|Add instances| H2["3 similar instances"]
+        H2 -->|Add more instances| H3["5 similar instances"]
+    end
+
+    VERTICAL ~~~ HORIZONTAL
+
+    classDef server fill:#ddd,stroke:#555,color:#111
+    class V1,V2,V3,H1,H2,H3 server
+```
+
+**Diagram:** Vertical scaling increases the CPU and memory of one instance; horizontal scaling adds more instances. The arrows show scaling steps, not request flow.
+
 Scalability should be measured against a workload and an objective, for example:
 
 - Requests per second at p99 latency below 300 ms
