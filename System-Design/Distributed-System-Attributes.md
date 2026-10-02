@@ -553,13 +553,13 @@ Scalability should be measured against a workload and an objective, for example:
 **Advantages**
 
 - Simple architecture and operations
-- Few or no application changes
-- Often cost-effective at modest scale
+- Few or no changes to the existing system architecture or software
+- Often cost-effective for lower workloads
 
 **Limitations**
 
 - Hardware has a finite ceiling.
-- Large machines can be disproportionately expensive.
+- Eventually, a point is reached where further upgrades become impractical or very expensive.
 - A single node can remain a single point of failure.
 - Upgrades may require downtime.
 
@@ -578,7 +578,7 @@ Scalability should be measured against a workload and an objective, for example:
 
 - Coordination and synchronization
 - Data partitioning and rebalancing
-- Cross-node consistency
+- Cross-node data consistency
 - Load balancing and service discovery
 - More complex deployment, monitoring, and debugging
 
@@ -591,7 +591,7 @@ Scalability should be measured against a workload and an objective, for example:
 | Operational complexity | Lower | Higher |
 | Typical use | Databases or early-stage workloads | Large, distributed, or elastic workloads |
 
-The two approaches are complementary. A system can use appropriately sized nodes and add more of them as demand grows.
+> **The two approaches are complementary:** A system can *use appropriately sized nodes* and *add more of them* as demand grows.
 
 ### Designing for Scale
 
