@@ -10,9 +10,27 @@
   - [CP, AP, and CA](#cp-ap-and-ca)
   - [Practical Design Notes](#practical-design-notes)
 - [PACELC Theorem](#pacelc-theorem)
+  - [What PACELC Stands For](#what-pacelc-stands-for)
+  - [PACELC Diagram](#pacelc-diagram)
+  - [The Two Trade-Offs](#the-two-trade-offs)
 - [Paxos and Raft Algorithms](#paxos-and-raft-algorithms)
+  - [Consensus and Majority Quorums](#consensus-and-majority-quorums)
   - [Paxos](#paxos)
+    - [Paxos Roles](#paxos-roles)
+    - [Paxos Protocol Steps](#paxos-protocol-steps)
+    - [Paxos Protocol Diagram](#paxos-protocol-diagram)
+    - [Paxos Challenges](#paxos-challenges)
+    - [Paxos Variants and Optimizations](#paxos-variants-and-optimizations)
+    - [Paxos Applications](#paxos-applications)
   - [Raft](#raft)
+    - [Raft Roles and Terms](#raft-roles-and-terms)
+    - [Raft State Diagram](#raft-state-diagram)
+    - [Raft Protocol Steps](#raft-protocol-steps)
+    - [Raft Safety Rules](#raft-safety-rules)
+    - [Raft Challenges](#raft-challenges)
+    - [Raft Applications](#raft-applications)
+    - [Named Systems and Algorithm Boundaries](#named-systems-and-algorithm-boundaries)
+  - [Paxos vs. Raft](#paxos-vs-raft)
 - [Byzantine Generals Problem (BGP)](#byzantine-generals-problem-bgp)
 - [FLP Impossibility Theorem](#flp-impossibility-theorem)
 - [Consistent Hashing](#consistent-hashing)
@@ -119,17 +137,275 @@ flowchart TB
 
 ## PACELC Theorem
 
-> Study notes to be added.
+**PACELC** extends CAP by considering what happens both **during a network partition** and **during normal operation**. It was introduced by Daniel Abadi.
+
+> **Remember:** If there is a **P**artition, consider **A**vailability versus **C**onsistency; **E**lse, consider **L**atency versus **C**onsistency.
+
+### What PACELC Stands For
+
+| Letter | Meaning | Plain explanation |
+| --- | --- | --- |
+| **P** | Partition | Some groups of nodes cannot communicate. The design must decide which operations can continue. |
+| **A** | Availability | Requests reaching healthy nodes continue to receive results, even if strong consistency cannot be maintained. |
+| **C** | Consistency during a partition | Preserve strong consistency, even if some operations must wait or fail. |
+| **E** | Else | There is no network partition; the system is operating normally. |
+| **L** | Latency | Reduce the time between sending a request and receiving its result. |
+| **C** | Consistency during normal operation | Keep strong consistency, accepting the communication and coordination time it may require. |
+
+Both **C** letters concern consistency. They describe priorities under different network conditions, rather than two separate definitions of consistency.
+
+### PACELC Diagram
+
+```mermaid
+flowchart TB
+    P{"Is there a network<br/>partition?"}
+    P -->|Yes| DURING("Choose a priority<br/>during the partition")
+    P -->|No| NORMAL("Choose a priority<br/>during normal operation")
+    DURING --> A("Availability")
+    DURING --> CP("Consistency")
+    NORMAL --> L("Low latency")
+    NORMAL --> CE("Consistency")
+
+    classDef decision fill:#fff,stroke:#111,stroke-width:2px,color:#111
+    classDef choice fill:#ffffcc,stroke:#111,stroke-width:2px,color:#111
+    classDef availability fill:#bdbdbd,stroke:#111,stroke-width:2px,color:#111
+    classDef latency fill:#d3c5c5,stroke:#111,stroke-width:2px,color:#111
+    class P,CP,CE decision
+    class DURING,NORMAL choice
+    class A availability
+    class L latency
+```
+
+**Diagram:** The left branch is the CAP trade-off: **availability versus consistency during a partition**. The right branch adds the PACELC trade-off: **latency versus consistency when there is no partition**.
+
+### The Two Trade-Offs
+
+- **During a partition — availability vs. consistency:** A replica can answer from its local data, which may be outdated, or refuse an operation it cannot safely coordinate.
+- **During normal operation — latency vs. consistency:** Waiting for other replicas to coordinate an update takes time. Responding before that coordination completes can reduce latency, but another replica may return an older value.
+
+**Hotel-room example:** During a partition, hotel search may return locally stored room availability, while final booking confirmation may have to wait. Even when the network works, confirming a booking through coordinated replicas takes longer than returning an uncoordinated local result.
+
+**Common notation:** `PA/EL` prioritizes availability during partitions and low latency otherwise; `PC/EC` prioritizes consistency in both situations. These labels describe a design or configuration, not an unchangeable property of every operation in a product.
+
+> CAP explains the partition-time limit. PACELC also asks what consistency costs in response time during normal operation. Choose according to the application's requirements, replica locations, and acceptable data staleness. [Abadi's original explanation](https://dbmsmusings.blogspot.com/2010/04/problems-with-cap-and-yahoos-little.html), [PACELC paper](https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf)
 
 ## Paxos and Raft Algorithms
 
+**Consensus** means that participating nodes agree on a decision. Replicated services use consensus repeatedly to agree on an **ordered sequence of commands**, so replicas can apply the same commands and reach the same state.
+
+**Example:** A booking service must agree on which request reserves the final room. Agreeing on command order lets every replica perform the same availability check and reach the same booking result.
+
+### Consensus and Majority Quorums
+
+Standard Paxos and Raft handle **crashes, unavailable nodes, and delayed or lost messages**. They assume participants follow the protocol; they do not provide Byzantine fault tolerance against dishonest or arbitrarily incorrect participants.
+
+For $N$ voting nodes, a majority quorum is:
+
+$$
+Q = \left\lfloor \frac{N}{2} \right\rfloor + 1
+$$
+
+| Voting nodes | Majority needed | Unavailable nodes tolerated while retaining a majority |
+| ---: | ---: | ---: |
+| 3 | 2 | 1 |
+| 5 | 3 | 2 |
+| 7 | 4 | 3 |
+
+To tolerate $f$ unavailable voting nodes, a typical majority-based deployment needs at least $2f + 1$ voters. The remaining majority must be able to communicate.
+
+> **Safety vs. progress:** Safety prevents conflicting decisions. Progress means new decisions can be made. A partition can stop progress without allowing the protocol to make conflicting decisions. Progress requires a reachable quorum and sufficiently stable communication and leadership.
+
 ### Paxos
 
-> Study notes to be added.
+**Paxos**, developed by **Leslie Lamport**, allows nodes to agree on **one value for one decision**, even when some nodes fail or messages are delayed. A value can be a command, a proposed update, or another decision the replicas must share.
+
+**Basic Paxos** chooses a single value; **Multi-Paxos** repeats agreement for positions in an ordered log. These decisions are building blocks for databases, storage systems, and replicated state machines.
+
+#### Paxos Roles
+
+| Role | Responsibility |
+| --- | --- |
+| **Proposer** | Suggests a value and coordinates the prepare and accept phases. |
+| **Acceptor** | Records promises and accepted proposals; a quorum of acceptors determines which value is chosen. |
+| **Learner** | Finds out which value was chosen and passes it to the application. |
+
+These are **logical roles**: one server can perform more than one role.
+
+A proposal contains a **unique, ordered proposal number** $n$ and a **value** $v$. Proposal numbers let acceptors distinguish newer attempts from older ones; they can be constructed from a counter and proposer ID.
+
+#### Paxos Protocol Steps
+
+1. **Prepare:** The proposer selects a proposal number $n$ and sends `Prepare(n)` to acceptors, seeking a majority of responses.
+2. **Promise:** An acceptor that has not promised a higher or equal number promises not to accept proposals numbered below $n$. It returns its **highest-numbered previously accepted proposal**, if any. Older attempts may be rejected or ignored.
+3. **Select the value:** After a majority of promises, the proposer must use the value from the **highest-numbered accepted proposal in those replies**. If none of the responding acceptors has accepted a value, it may use its own proposed value.
+4. **Accept:** The proposer sends `Accept(n, v)`. An acceptor accepts unless it has since promised a higher proposal number, and records the accepted proposal before acknowledging it.
+5. **Learn:** Once a majority accepts the same proposal, its value is **chosen**. Learners obtain evidence of that decision and inform the application.
+
+> **Critical rule:** A new proposer cannot simply overwrite an earlier accepted value with its preferred value. Carrying forward the highest-numbered accepted value from the promise quorum preserves earlier decisions. **Accepted by one node** is different from **chosen by a majority**. [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+
+#### Paxos Protocol Diagram
+
+```mermaid
+sequenceDiagram
+    participant P as Proposer
+    participant A as Acceptor
+
+    Note over P,A: Phase 1 - Prepare and promise
+    P->>A: Prepare(n)
+    alt n is greater than the promised number
+        A-->>P: Promise(n, highest accepted proposal if any)
+    else A has already promised an equal or higher number
+        A-->>P: Ignore or reject the older attempt
+    end
+
+    Note over P: Gather a majority of promises<br/>Select v using the highest accepted proposal<br/>or use a new value if none was accepted
+
+    Note over P,A: Phase 2 - Accept
+    P->>A: Accept(n, v)
+    alt A has not promised a number greater than n
+        A-->>P: Accepted(n, v)
+    else A has since promised a higher number
+        A-->>P: Ignore or reject the accept request
+    end
+
+    Note over P,A: v is chosen only after a majority accepts<br/>Learners are then informed
+```
+
+**Diagram:** One proposer/acceptor exchange is shown, as in the protocol illustration. In a real group, the proposer exchanges these messages with multiple acceptors and needs a **majority**, not just one reply. Promise responses carry the highest accepted proposal for this decision, rather than a complete list of all proposals.
+
+**Example:** If `db1` and `db2` accept proposal `(7, "book r1 for u1")` in a three-acceptor group, that value is chosen. A later proposer seeking a majority must preserve that decision, even if it originally wanted to propose another value.
+
+#### Paxos Challenges
+
+- **Fault tolerance:** The protocol can make progress despite some failures while a majority remains reachable. Losing a majority blocks new decisions.
+- **Competing proposers:** Proposers can repeatedly interrupt each other with higher proposal numbers. A stable distinguished proposer or leader helps progress.
+- **Scalability:** More participants and distant replicas increase communication and coordination costs. Adding acceptors does not automatically increase write throughput.
+- **Complexity:** Retries, reordered messages, crash recovery, and competing proposals must obey the safety rules.
+- **Persistent state:** Acceptors must preserve promises and accepted proposals across restarts; forgetting them can break safety.
+
+#### Paxos Variants and Optimizations
+
+| Name | Main idea | Important qualification |
+| --- | --- | --- |
+| **Multi-Paxos** | Agree on a sequence of values using a stable leader. | The leader can perform prepare for many log positions together and then use accept for subsequent commands. It avoids repeating prepare while that leadership remains valid; it does **not** eliminate the accept phase. |
+| **Fast Paxos** | Let clients propose directly to acceptors in an established fast round, reducing a message delay when proposals do not conflict. | Fast rounds generally require larger quorums. Conflicting proposals require recovery, so the fast path is not unconditional. |
+| **Paxos Made Simple** | A clearer explanation of the original Paxos algorithm. | It is not a separate one-round protocol called "Simple Paxos" that merges prepare and accept. |
+
+[Multi-Paxos explanation](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf), [Fast Paxos](https://www.microsoft.com/en-us/research/publication/fast-paxos/), [Fast Paxos quorum details](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-2005-112.pdf)
+
+#### Paxos Applications
+
+- **Distributed databases:** Agree on ordered updates within a replica group. The published Spanner design uses Paxos replication; transactions across groups need additional coordination.
+- **Filesystem metadata and coordination:** Agree on leadership or shared metadata. Google's Chubby uses Paxos, and GFS uses Chubby to appoint its master and store some shared metadata.
+- **Replicated state machines:** Agree on commands for key-value stores or other deterministic services; each replica applies the chosen commands in order.
+
+[Spanner design](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf), [Chubby design and GFS integration](https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf)
+
+> Paxos is a consensus building block. Correct storage, application rules, and retry handling are still needed to turn agreement into a reliable service.
 
 ### Raft
 
-> Study notes to be added.
+**Raft**, developed by **Diego Ongaro and John Ousterhout** and published in 2014, is a consensus algorithm designed to be easier to understand and implement. It organizes the problem into **leader election**, **log replication**, and **safety**.
+
+Raft maintains an **ordered, replicated log**. Replicas apply committed commands in order to their state machines. Their logs can temporarily differ, but they must not apply conflicting commands at the same log position.
+
+#### Raft Roles and Terms
+
+| Role | Responsibility |
+| --- | --- |
+| **Follower** | Receives log entries and heartbeats, responds to requests, and votes in elections. |
+| **Candidate** | Starts an election and asks other servers for votes. |
+| **Leader** | Coordinates new log entries, replication, and commitment. |
+
+A **term** is a numbered election period. Servers use term numbers to recognize outdated leaders and messages. Each server grants at most one vote per term; a server discovering a higher term updates its term and becomes a follower.
+
+> A timeout suggests that a leader may be unavailable; it does not prove that the leader has crashed. A delayed network can also trigger an election.
+
+#### Raft State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> Follower
+    Follower --> Candidate: Election timeout / start election
+    Candidate --> Candidate: Timeout / start a new election
+    Candidate --> Leader: Receive votes from a majority
+    Candidate --> Follower: Discover a valid leader or higher term
+    Leader --> Follower: Discover a higher term
+
+    classDef role fill:#bdbdbd,stroke:#111,stroke-width:2px,color:#111
+    class Follower role
+    class Candidate role
+    class Leader role
+```
+
+**Diagram:** Servers start as followers. A timeout starts an election; a majority of votes makes a candidate the leader. A candidate can retry an unsuccessful election or return to follower when it recognizes a valid leader. A leader steps down when it discovers a higher term.
+
+#### Raft Protocol Steps
+
+1. **Leader election:** A follower whose election timer expires becomes a candidate, increments its term, votes for itself, and sends `RequestVote` messages. A majority of votes elects the leader. Randomized timeouts reduce repeated split votes.
+2. **Receive a command:** The leader receives a client request and appends a log entry containing the command, its term, and its position in the log.
+3. **Replicate the log:** The leader sends `AppendEntries` messages to followers. Followers check the preceding log entry and store matching updates; the leader retries or repairs inconsistent log suffixes. Heartbeats are `AppendEntries` messages without new entries.
+4. **Commit:** An entry from the leader's current term can be committed once stored on a majority, including the leader. Committing it also commits preceding entries. An older-term entry is not committed merely by counting copies; commitment must follow Raft's current-term rule.
+5. **Apply and respond:** The leader applies committed commands in order and returns the result. Followers learn the commit position and apply committed entries in the same order. Receiving an entry alone does **not** make it safe to apply.
+
+**Hotel-room example:** The leader records `BookRoom(u1, r1)` and replicates it. After commitment, replicas apply the command's atomic availability check and booking update. A later command for the same room sees it as booked. The application still needs request IDs or deduplication so client retries do not create duplicate operations.
+
+#### Raft Safety Rules
+
+| Rule | What it prevents |
+| --- | --- |
+| **Election safety** | Two leaders being elected in the same term. |
+| **Voting restriction** | Electing a candidate whose log is not sufficiently up to date. Log freshness is compared by the last entry's term, then its index. |
+| **Log matching** | Two logs with the same entry index and term having different preceding histories. `AppendEntries` checks and repairs the matching prefix. |
+| **Leader completeness** | A future leader omitting an entry that was already committed. |
+| **State-machine safety** | Different replicas applying different commands at the same log position. |
+
+Servers persist the current term, their vote, and log entries before the relevant acknowledgements. Together with the election and commit rules, this lets safety survive crashes and restarts. [Raft paper](https://raft.github.io/raft.pdf)
+
+#### Raft Challenges
+
+- **Leader availability:** New writes need a functioning leader and a communicating majority. An election temporarily delays progress.
+- **Scalability:** The leader coordinates replication and can become a bottleneck. Additional voting replicas add communication and storage work; large datasets may need multiple consensus groups.
+- **Network delays:** Poorly chosen timeouts or unstable networks can trigger unnecessary elections.
+- **Fault tolerance:** A majority can keep making progress while some servers fail. A minority partition cannot safely commit new entries on its own.
+- **Implementation:** Durable state, log repair, snapshots, membership changes, and client retries still need careful handling, despite Raft's clearer structure.
+- **Failure model:** Standard Raft handles crashes, not malicious nodes that invent votes or send dishonest log entries.
+
+#### Raft Applications
+
+- **Distributed databases and key-value stores:** Replicate commands and maintain an agreed history; etcd is a documented Raft-based example.
+- **Filesystem metadata services:** A Raft-based metadata service can agree on namespace updates or leadership; the specific filesystem's implementation must be checked.
+- **Cluster coordination and service discovery:** Agree on configuration, membership, service registrations, or locks. Consul uses Raft for its server state.
+- **Replicated state machines and consensus-based services:** Apply an agreed sequence of commands to maintain consistent application state.
+- **Cloud infrastructure management:** Coordinate resource allocations or control-plane decisions; this is a possible use of Raft, not proof that every infrastructure platform uses it.
+
+[etcd Raft implementation](https://go.etcd.io/etcd/raft/v3), [Consul's consensus design](https://developer.hashicorp.com/consul/docs/concept/consensus)
+
+#### Named Systems and Algorithm Boundaries
+
+Consensus is useful in all these areas, but the product's actual algorithm matters:
+
+| System | Relevant use | Algorithm or qualification |
+| --- | --- | --- |
+| **Amazon DynamoDB** | Distributed database with eventual and strongly consistent read options. | These API options do not establish that its internal protocol is Raft. Treat it as a database example rather than an unverified Raft deployment. [AWS documentation](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html) |
+| **Google File System (GFS)** | Distributed storage, metadata, and master coordination. | The original GFS predates Raft. The Chubby paper describes Paxos-based coordination used to appoint the GFS master, rather than Raft replication of GFS metadata. [Chubby paper](https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf) |
+| **Hadoop HDFS** | Replicated storage and NameNode high availability. | Documented automatic failover uses ZooKeeper coordination; this does not make HDFS a direct Paxos or Raft implementation. [HDFS HA documentation](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html) |
+| **Apache ZooKeeper** | Shared metadata, leader election, configuration, and coordination. | Uses **Zab**, its atomic-broadcast protocol, rather than Raft. [ZooKeeper documentation](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html) |
+| **Google Spanner** | Consistent replication and distributed transactions. | The published design uses **Paxos** within replication groups. [Spanner paper](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf) |
+| **Netflix ChAP** | Automated chaos experiments that test service resilience. | Its documented purpose is failure testing; it is not a verified example of Raft-based resource management. [Netflix's ChAP description](https://netflixtechblog.com/chap-chaos-automation-platform-53e6d528371f) |
+| **etcd and Consul** | Consistent metadata storage and cluster coordination. | Both have documented **Raft** implementations. [etcd](https://go.etcd.io/etcd/raft/v3), [Consul](https://developer.hashicorp.com/consul/docs/concept/consensus) |
+
+### Paxos vs. Raft
+
+| Aspect | Paxos | Raft |
+| --- | --- | --- |
+| Basic unit | One chosen value; Multi-Paxos builds an ordered log. | An ordered, replicated log. |
+| Roles | Proposer, acceptor, learner; roles may share a server. | Follower, candidate, leader; a server changes state. |
+| Leadership | Basic Paxos can have competing proposers; Multi-Paxos usually uses a stable leader. | Leader election and leader-driven log replication are explicit parts of the protocol. |
+| Main emphasis | Safe agreement through proposal numbers, promises, and intersecting quorums. | Understandable consensus through election, log replication, and safety rules. |
+| Standard fault model | Crashes and communication failures, not Byzantine behavior. | Crashes and communication failures, not Byzantine behavior. |
+
+> Both protocols can support reliable replicated services. Neither guarantees progress without the required quorum, and neither removes the need for correct application logic. Byzantine failures require a different fault model and suitable protocols; see the [Byzantine Generals Problem](#byzantine-generals-problem-bgp).
 
 ## Byzantine Generals Problem (BGP)
 
@@ -159,3 +435,15 @@ flowchart TB
 
 - [Seth Gilbert and Nancy Lynch — Perspectives on the CAP Theorem](https://groups.csail.mit.edu/tds/papers/Gilbert/Brewer2.pdf)
 - [Eric Brewer — CAP Twelve Years Later: How the "Rules" Have Changed](https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/)
+- [Daniel Abadi — PACELC: Original Explanation](https://dbmsmusings.blogspot.com/2010/04/problems-with-cap-and-yahoos-little.html)
+- [Daniel Abadi — Consistency Tradeoffs in Modern Distributed Database System Design](https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf)
+- [Leslie Lamport — Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+- [Leslie Lamport — Fast Paxos](https://www.microsoft.com/en-us/research/publication/fast-paxos/)
+- [Diego Ongaro and John Ousterhout — In Search of an Understandable Consensus Algorithm](https://raft.github.io/raft.pdf)
+- [Google — The Chubby Lock Service](https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf)
+- [Google — Spanner's Published Design](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf)
+- [Apache ZooKeeper — Administration and Zab](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html)
+- [Apache Hadoop — HDFS High Availability](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html)
+- [etcd — Raft Implementation](https://go.etcd.io/etcd/raft/v3)
+- [HashiCorp — Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
+- [Netflix — ChAP: Chaos Automation Platform](https://netflixtechblog.com/chap-chaos-automation-platform-53e6d528371f)
