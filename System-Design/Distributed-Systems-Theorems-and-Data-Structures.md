@@ -183,7 +183,7 @@ flowchart TB
 - **During a partition — availability vs. consistency:** A replica can answer from its local data, which may be outdated, or refuse an operation it cannot safely coordinate.
 - **During normal operation — latency vs. consistency:** Waiting for other replicas to coordinate an update takes time. Responding before that coordination completes can reduce latency, but another replica may return an older value.
 
-**Hotel-room example:** During a partition, hotel search may return locally stored room availability, while final booking confirmation may have to wait. Even when the network works, confirming a booking through coordinated replicas takes longer than returning an uncoordinated local result.
+**Hotel-room example:** *During a partition*, hotel search may return locally stored room availability, while final booking confirmation may have to wait. *Even when the network works*, confirming a booking through coordinated replicas takes longer than returning an uncoordinated local result.
 
 **Common notation:** `PA/EL` prioritizes availability during partitions and low latency otherwise; `PC/EC` prioritizes consistency in both situations. These labels describe a design or configuration, not an unchangeable property of every operation in a product.
 
