@@ -111,7 +111,11 @@ flowchart TB
 - **AP does not automatically mean eventual consistency:** Convergence also requires replication and conflict-resolution rules.
 - **Choose per operation:** Search can tolerate stale room availability, while final booking confirmation needs stronger coordination and an atomic check-and-write.
 
-> CAP describes a limit during partitions, rather than a rule to permanently abandon one property. Define which operations can continue, which must wait, and how conflicting updates will be handled when communication returns. [Eric Brewer's clarification](https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/)
+> **CAP describes a limit during partitions, rather than a rule to permanently abandon one property.** Define which operations can continue, which must wait, and how conflicting updates will be handled when communication returns. *CAP prohibits only a tiny part of the design space: ***perfect availability and consistency*** in the presence of partitions, which are ***rare***.* [Eric Brewer's clarification](https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/)
+
+> **CAP does not mean sacrificing consistency or availability in every situation.** When communication works normally, a system can provide both. During a partition, designers must decide which guarantee to prioritize for the affected operations.
+> - ***For financial transactions***, where strict consistency is essential, a CP approach may be preferred: some requests must wait or fail rather than use inconsistent data. ***For web features*** such as feeds, an AP approach may be preferred: users continue receiving responses, even if some information is temporarily outdated.
+> - ***The design choice*** depends on the specific/unique system requirements and priorities of an application, user needs, and expected network conditions. Different operations within the same system can make different choices. CAP helps system architects make ***conscious*** decisions about which operations can continue during a partition and how to recover afterward.
 
 ## PACELC Theorem
 
