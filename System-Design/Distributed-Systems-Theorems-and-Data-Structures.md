@@ -219,6 +219,10 @@ To tolerate $f$ unavailable voting nodes, a typical majority-based deployment ne
 
 **Paxos**, developed by **Leslie Lamport**, allows nodes to agree on **one value for one decision**, even when some nodes fail or messages are delayed. A value can be a command, a proposed update, or another decision the replicas must share.
 
+> **Financial example:** Two nodes propose different values for the **same account-balance update**: Node 1 proposes **$20**, while Node 2 proposes **$5**. Paxos ensures that only one value is chosen for that decision. If **$20** is chosen, a later proposal cannot choose **$5** for the same decision.
+
+> Paxos ensures agreement—not that the amount is financially correct. If $20 and $5 represent **two separate deposits**, both must be processed through separate decisions, rather than choosing one and discarding the other.
+
 **Basic Paxos** chooses a single value; **Multi-Paxos** repeats agreement for positions in an ordered log. These decisions are building blocks for databases, storage systems, and replicated state machines.
 
 **Hands-on example:** [C++17 Basic Paxos simulation](examples/paxos/README.md) — step-by-step input/output, competing proposals, unavailable acceptors, and self-tests. [Implementation](examples/paxos/paxos.cpp).
