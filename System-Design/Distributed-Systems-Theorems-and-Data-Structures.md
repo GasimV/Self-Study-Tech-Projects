@@ -221,6 +221,8 @@ To tolerate $f$ unavailable voting nodes, a typical majority-based deployment ne
 
 **Basic Paxos** chooses a single value; **Multi-Paxos** repeats agreement for positions in an ordered log. These decisions are building blocks for databases, storage systems, and replicated state machines.
 
+**Hands-on example:** [C++17 Basic Paxos simulation](examples/paxos/README.md) — step-by-step input/output, competing proposals, unavailable acceptors, and self-tests. [Implementation](examples/paxos/paxos.cpp).
+
 #### Paxos Roles
 
 | Role | Responsibility |
