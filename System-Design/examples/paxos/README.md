@@ -6,6 +6,12 @@ Agree on **one value**, step by step, even when an acceptor is unavailable or an
 
 ## Table of Contents
 
+- [DSA-Style Paxos Core](#dsa-style-paxos-core)
+  - [Core State and Roles](#core-state-and-roles)
+  - [Language-Neutral Pseudocode](#language-neutral-pseudocode)
+  - [Compact C++ Example](#compact-c-example)
+  - [Complexity Breakdown](#complexity-breakdown)
+  - [Core Assumptions](#core-assumptions)
 - [Build and Run](#build-and-run)
 - [How the Code Maps to Paxos](#how-the-code-maps-to-paxos)
 - [Illustrated Input and Output](#illustrated-input-and-output)
@@ -18,6 +24,164 @@ Agree on **one value**, step by step, even when an acceptor is unavailable or an
 - [Self-Tests](#self-tests)
 - [Limits and Important Distinctions](#limits-and-important-distinctions)
 - [References](#references)
+
+## DSA-Style Paxos Core
+
+Start with [paxos_dsa.cpp](paxos_dsa.cpp) for the short algorithm. Then use [paxos.cpp](paxos.cpp) for the detailed walkthrough, message interleavings, and self-tests. Both implement **Basic Paxos for one decision**.
+
+### Core State and Roles
+
+Each acceptor remembers:
+
+| State | Meaning |
+| --- | --- |
+| `promised` | Highest proposal number it has promised; initially `NONE`. |
+| `accepted` | Accepted `(number, value)` pair, if any; initially `NONE`. |
+| `available` | Whether the simulation can obtain a reply from this acceptor. |
+
+Roles and procedures are different: a **role** says *who does the work*; a **procedure** says *what work is performed*.
+
+| Role | Procedure in the compact version |
+| --- | --- |
+| **Proposer** | `Propose` collects promises, selects a value, and requests acceptance. |
+| **Acceptor** | `Prepare` and `Accept` handle requests and update the acceptor's state. |
+| **Learner** | The final majority check inside `Propose` identifies the chosen value from acknowledgments. |
+
+For $N$ **configured** acceptors, the required majority is:
+
+$$
+Q = \left\lfloor \frac{N}{2} \right\rfloor + 1
+$$
+
+Unavailable acceptors still count toward $N$. A failure does **not** reduce the required quorum.
+
+### Language-Neutral Pseudocode
+
+`NONE` means no stored proposal or no decision established by this attempt. Proposal numbers are globally unique for new attempts; the same number must never identify different proposals. Each loop visits distinct acceptors once.
+
+```text
+PREPARE(node, number):
+    if not node.available:
+        return (false, NONE)
+    if node.promised != NONE and number < node.promised:
+        return (false, NONE)
+
+    node.promised = number
+    return (true, node.accepted)
+
+ACCEPT(node, number, value):
+    if not node.available:
+        return false
+    if node.promised != NONE and number < node.promised:
+        return false
+    if node.accepted != NONE and node.accepted.number == number
+       and node.accepted.value != value:
+        return false
+
+    node.promised = number
+    node.accepted = (number, value)
+    return true
+
+PROPOSE(nodes, number, requestedValue):
+    quorum = floor(length(nodes) / 2) + 1
+    promises = 0
+    highestAccepted = NONE
+
+    for each node in nodes:
+        (ok, previous) = PREPARE(node, number)
+        if not ok:
+            continue
+        promises = promises + 1
+        if previous != NONE and
+           (highestAccepted == NONE or previous.number > highestAccepted.number):
+            highestAccepted = previous
+
+    if promises < quorum:
+        return NONE
+
+    value = requestedValue
+    if highestAccepted != NONE:
+        value = highestAccepted.value
+
+    acknowledgments = 0
+    for each node in nodes:
+        if ACCEPT(node, number, value):
+            acknowledgments = acknowledgments + 1
+
+    if acknowledgments < quorum:
+        return NONE
+    return value
+```
+
+**Why these steps matter:**
+
+- **Promise:** lower-numbered attempts cannot override a newer promise.
+- **Select:** preserve the highest accepted value reported by the promise quorum, even if it was not yet chosen.
+- **Accept:** a promise quorum alone does not choose a value; a majority must actually accept the same proposal.
+
+The C++ version returns `std::optional<int>`: a present value means majority acceptance was established, while `std::nullopt` corresponds to `NONE`. An integer such as `0` is a valid value, not a failure marker.
+
+### Compact C++ Example
+
+From the **repository root**:
+
+```powershell
+.\examples\paxos\build.cmd dsa
+.\examples\paxos\paxos_dsa.exe
+```
+
+The build script creates `examples/paxos/paxos_dsa.exe`. Its no-argument behavior still builds the full walkthrough as `paxos.exe`.
+
+Direct compilation is also possible:
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -Wpedantic examples/paxos/paxos_dsa.cpp -o examples/paxos/paxos_dsa.exe
+```
+
+Linux/macOS:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Wpedantic examples/paxos/paxos_dsa.cpp -o examples/paxos/paxos_dsa
+./examples/paxos/paxos_dsa
+```
+
+**Output:**
+
+```text
+Proposal 1 requests 20 -> chosen 20
+Proposal 2 requests 5 -> chosen 20
+```
+
+**Financial interpretation:** Two proposals compete for the **same account-balance decision**: the first requests $20 and the second requests $5. After $20 is chosen, the second proposal discovers the earlier acceptance and must carry $20 forward. A larger proposal number is not permission to replace the decision.
+
+> These are not two deposits. Separate deposits must both be processed through separate decisions. Paxos ensures agreement; application rules determine whether the amount is correct.
+
+### Complexity Breakdown
+
+Let $N$ be the number of configured acceptors. Assume proposal numbers and values have constant size.
+
+| Measure | Complexity | Reason |
+| --- | --- | --- |
+| `Prepare` or `Accept` handler | O(1) time and state | A few comparisons and fixed-size state updates. |
+| One `Propose` attempt | O(N) local work | At most two scans over the acceptors. |
+| Proposer auxiliary space | O(1) | Counters and one highest accepted proposal; no reply collection. |
+| Total acceptor state | O(N) | Constant-size state for each acceptor. |
+| Equivalent broadcast message count | O(N) per attempt | Up to $N$ requests and $N$ replies in each of two phases: up to $4N$ messages, excluding separate learner notifications. |
+
+An uncontended successful network implementation can use **two request/reply phases**: prepare/promise, then accept/acknowledge. Requests within a phase can be sent concurrently; a majority of successful replies is enough.
+
+> **O(N) work is not a wall-clock latency guarantee.** This C++ version uses synchronous local calls, not network messages. Real message delays can be arbitrarily long, and competing proposers or failures can force retries. With $R$ attempts, local work and message count are O(RN); there is no fixed worst-case bound on $R$ or completion time in that setting.
+
+### Core Assumptions
+
+- **One decision, fixed membership:** the vector contains distinct acceptors; every new proposal concerns the same decision.
+- **Unique proposal numbers:** callers supply a fresh globally unique number for each new attempt. The example uses `1` and `2`; it does not generate numbers for multiple independent processes.
+- **Correct participants:** no Byzantine behavior or forged responses. An acceptor's reuse check does not replace the global uniqueness requirement.
+- **Memory-only state:** no crash recovery. Real acceptors must persist promises and accepted proposals before replying.
+- **Synchronous delivery:** no threads, real network transport, duplicate-message delivery, scheduling, or automatic retries. Each acceptor is called once per phase, so acknowledgments cannot be counted twice.
+- **Learning is folded in:** successful `Accept` calls immediately supply acknowledgments. The compact version does not model a lost reply after an acceptance or a separately running learner.
+
+> Returning `NONE` / `std::nullopt` means this attempt did not establish a decision. It does not prove that no earlier value was chosen. A failed attempt may also leave promises or individual acceptances behind; they must not be erased merely because a quorum was missing.
 
 ## Build and Run
 
