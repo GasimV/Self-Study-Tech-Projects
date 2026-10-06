@@ -290,6 +290,8 @@ Think of Paxos as solving this exact question for **one decision / log slot**:
 
 Assume three acceptors, **A, B, and C**, initially with no accepted proposal. A majority is **2 out of 3**. P1 and P2 are proposers; they may run on the same servers as the acceptors, but their roles are different.
 
+> **Higher/lower and newer/older refer to the proposal number, not the money amount.** In this example, proposal **#2 is newer and higher-numbered**, even if its requested value is **$5**. Proposal **#1 is older and lower-numbered**, even if its value is **$20**. The **proposal number** and the **proposed value** are separate things.
+
 **1. P1 gets $20 chosen**
 
 P1 wants $20 and starts proposal **#1**. It sends `Prepare(1)` to A and B. Both reply:
