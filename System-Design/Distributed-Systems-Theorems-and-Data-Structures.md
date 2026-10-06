@@ -19,6 +19,7 @@
     - [Paxos Roles](#paxos-roles)
     - [Paxos Protocol Steps](#paxos-protocol-steps)
     - [Paxos Protocol Diagram](#paxos-protocol-diagram)
+    - [Paxos Walkthrough: Two Competing Values](#paxos-walkthrough-two-competing-values)
     - [Paxos Challenges](#paxos-challenges)
     - [Paxos Variants and Optimizations](#paxos-variants-and-optimizations)
     - [Paxos Applications](#paxos-applications)
@@ -280,6 +281,103 @@ sequenceDiagram
 **Diagram:** One proposer/acceptor exchange is shown, as in the protocol illustration. In a real group, the proposer exchanges these messages with multiple acceptors and needs a **majority**, not just one reply. Promise responses carry the highest accepted proposal for this decision, rather than a complete list of all proposals.
 
 **Example:** If `db1` and `db2` accept proposal `(7, "book r1 for u1")` in a three-acceptor group, that value is chosen. A later proposer seeking a majority must preserve that decision, even if it originally wanted to propose another value.
+
+#### Paxos Walkthrough: Two Competing Values
+
+Think of Paxos as solving this exact question for **one decision / log slot**:
+
+> **Three database nodes must agree: should this record contain $20 or $5?**
+
+Assume three acceptors, **A, B, and C**, initially with no accepted proposal. A majority is **2 out of 3**. P1 and P2 are proposers; they may run on the same servers as the acceptors, but their roles are different.
+
+**1. P1 gets $20 chosen**
+
+P1 wants $20 and starts proposal **#1**. It sends `Prepare(1)` to A and B. Both reply:
+
+```text
+A: I promise not to accept proposals below #1. No earlier value accepted.
+B: I promise not to accept proposals below #1. No earlier value accepted.
+```
+
+Because neither reply reports an earlier acceptance, P1 can use its requested value. It sends `Accept(1, $20)` to A and B, which record:
+
+| Acceptor | Accepted proposal |
+| --- | --- |
+| A | `(#1, $20)` |
+| B | `(#1, $20)` |
+| C | None |
+
+**Two of three acceptors accepted the same proposal, so $20 is now chosen.** C does not need to participate for that decision to be made.
+
+**2. P2 wants $5, but must preserve $20**
+
+P2 starts a newer proposal, **#2**, initially wanting $5. It sends `Prepare(2)` to B and C. Their replies contain both a promise and their accepted history:
+
+```text
+B: I promise not to accept proposals below #2. I already accepted (#1, $20).
+C: I promise not to accept proposals below #2. No earlier value accepted.
+```
+
+The crucial rule is:
+
+> P2 must reuse the value from the **highest-numbered accepted proposal in its promise quorum**. It cannot continue with $5 for this decision.
+
+Here that proposal is `(#1, $20)`, so P2 must send:
+
+```text
+Accept(2, $20)    correct
+Accept(2, $5)     not allowed by the proposer rule
+```
+
+Assuming no higher proposal interrupts the attempt, B and C accept `(#2, $20)`:
+
+| Acceptor | Accepted proposal |
+| --- | --- |
+| A | `(#1, $20)` |
+| B | `(#2, $20)` |
+| C | `(#2, $20)` |
+
+The proposal numbers differ, but **all three accepted values are $20** in this example. A new proposal number did not create a new decision or permission to overwrite the chosen value.
+
+**3. Why does this work? Any two majorities overlap**
+
+```text
+First majority:   A + B
+Second majority:  B + C
+Shared acceptor:  B
+```
+
+B carries the earlier accepted value into P2's promise quorum. If B had since accepted a higher-numbered proposal, it would report that one instead; the protocol rules ensure it still preserves the chosen value. Quorum overlap works together with **remembered acceptor state** and the **highest-accepted-value selection rule**. [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+
+```text
+1. PREPARE -> Ask a majority about earlier accepted proposals.
+2. PROMISE -> Acceptors promise not to accept lower proposal numbers.
+3. SELECT  -> Preserve the highest accepted value, or use a new value if none exists.
+4. ACCEPT  -> Request acceptance of that selected value.
+5. MAJORITY ACCEPTS -> The value is CHOSEN; learners can learn it from the replies.
+```
+
+> **Before writing your value, first ask a majority whether an earlier value must be preserved.** A value being chosen does not mean every replica has already accepted, learned, or applied it; unavailable or delayed nodes can lag behind.
+
+**4. Is $20 permanent? For this slot, yes**
+
+Once $20 is chosen, **that slot's decision cannot change**. A different decision belongs to a **new slot**, not merely a higher proposal number in the same slot:
+
+```text
+Slot 1 -> $20
+Slot 2 -> $5
+Slot 3 -> $30
+```
+
+Multi-Paxos / replicated logs build an ordered sequence of such decisions. Each slot has its own consensus instance. The application can change a record through later commands without rewriting earlier chosen log entries.
+
+**5. How does Paxos know $20 is correct? It does not**
+
+Paxos guarantees that **conflicting values cannot both be chosen for the same slot**. It does not decide whether $20 or $5 is valid according to financial rules; that is the application's responsibility.
+
+In a financial application, log entries can instead be commands such as `credit $20` and `credit $5`. If these are two legitimate deposits, they belong to separate decisions so both can be processed, rather than discarding one.
+
+> **Paxos = agreement mechanism; a replicated log adds ordering. Business correctness comes from application logic.**
 
 #### Paxos Challenges
 
