@@ -250,6 +250,56 @@ A proposal contains a **unique, ordered proposal number** $n$ and a **value** $v
 
 > **Critical rule:** A new proposer cannot simply overwrite an earlier accepted value with its preferred value. Carrying forward the highest-numbered accepted value from the promise quorum preserves earlier decisions. **Accepted by one node** is different from **chosen by a majority**. [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
 
+**Proposal number vs. proposed value**
+
+- **Higher/lower** means a larger/smaller **proposal number**, not a larger/smaller money amount.
+- In this example, **#2 is newer and higher-numbered** than #1, even if #2 initially requests **$5** and #1 requests **$20**.
+- The **proposal number** identifies the attempt. The **value** is what that attempt proposes for the decision.
+
+**What does a promise actually say?**
+
+Suppose an acceptor previously accepted `(#1, $20)`. When it receives `Prepare(2)`, it replies with **two separate pieces of information**:
+
+> **Promise:** "From now on, I will not accept proposals numbered below #2."
+>
+> **History:** "I previously accepted (#1, $20)."
+
+The promise does **not** erase the earlier $20. The history lets the proposer check whether an earlier value must be preserved. If this is the highest-numbered accepted proposal in its promise quorum, the proposer must use $20.
+
+"Highest-numbered previously accepted proposal" means **the accepted proposal with the largest proposal number**, not the largest money amount. For example, if a `Prepare(4)` quorum reports acceptances numbered #1 and #3, the proposer uses the value attached to **#3**.
+
+**Proposal #2 does not become proposal #1**
+
+Reporting `(#1, $20)` is **sharing history**, not renaming #2. The new attempt is still #2, and it may carry the same $20 value:
+
+```text
+Accept #1: $20  -> accepted earlier
+Prepare #2     -> promise to refuse lower numbers; report earlier (#1, $20)
+Accept #2: $20  -> allowed if no higher promise has intervened
+Accept #1: $20  -> rejected if it arrives again after that promise to #2
+```
+
+It is the **late request carrying #1** that is rejected, not the new request carrying #2. Even the same $20 value does not make an old proposal number acceptable again.
+
+**How can an older proposal physically arrive later?**
+
+Different proposers send messages independently, and **network messages can be delayed**:
+
+1. **P1 sends `Accept(1, $20)` to A, B, and C.** A and B receive and accept it, so $20 is chosen. The message to C is delayed in the network.
+2. **P2 sends `Prepare(2)` to B and C.** These messages arrive quickly. B reports its earlier `(#1, $20)` acceptance, so P2 must carry $20 forward.
+3. **P2 sends `Accept(2, $20)` to B and C.** Both accept it.
+4. **P1's delayed `Accept(1, $20)` finally reaches C.** C replies: "Too late—I already promised #2. I reject #1."
+
+Nothing changed #2 back into #1. **An old message simply arrived after a newer message.** A proposer can also retry the same request when a reply is delayed or lost, creating another late copy.
+
+> **Proposal numbers describe proposal order—not network arrival order.** A higher-numbered request may arrive before a lower-numbered request.
+
+**What if the acceptor has already promised another number?**
+
+- Already promised **#3**, then receives `Prepare(2)`: **reject or ignore it**, because #2 is lower.
+- Already promised **#2**, then receives `Prepare(2)` again: this is a **duplicate**, not a new proposal. An implementation may repeat its reply or ignore the duplicate; the C++ examples repeat the reply.
+- Already promised **#2**, then receives `Prepare(3)`: it can make a **higher promise**. Promising #2 does not permanently forbid later attempts.
+
 #### Paxos Protocol Diagram
 
 ```mermaid
