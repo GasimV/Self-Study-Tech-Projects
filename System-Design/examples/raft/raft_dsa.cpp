@@ -158,7 +158,7 @@ bool Submit(std::vector<Node>& nodes, Index leaderId, int credit) {
 int main() {
     std::vector<raft_dsa::Node> nodes(3);
     if (!raft_dsa::StartElection(nodes, 0)) return 1;
-    std::cout << "A elected leader in term " << nodes[0].term << '\n';
+    std::cout << "An elected leader in term " << nodes[0].term << '\n';
     for (int credit : {20, 5}) {
         const bool committed = raft_dsa::Submit(nodes, 0, credit);
         std::cout << "Entry " << nodes[0].log.size() - 1 << ": credit " << credit << " -> "
