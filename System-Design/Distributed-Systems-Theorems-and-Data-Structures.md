@@ -33,6 +33,13 @@
     - [Named Systems and Algorithm Boundaries](#named-systems-and-algorithm-boundaries)
   - [Paxos vs. Raft](#paxos-vs-raft)
 - [Byzantine Generals Problem (BGP)](#byzantine-generals-problem-bgp)
+  - [The Generals Example](#the-generals-example)
+  - [Requirements for Byzantine Agreement](#requirements-for-byzantine-agreement)
+  - [Byzantine Faults vs. Crash Faults](#byzantine-faults-vs-crash-faults)
+  - [Byzantine Fault Tolerance and Quorums](#byzantine-fault-tolerance-and-quorums)
+  - [Common BFT Techniques](#common-bft-techniques)
+  - [Classical Solutions and PBFT](#classical-solutions-and-pbft)
+  - [BFT Applications and Trade-Offs](#bft-applications-and-trade-offs)
 - [FLP Impossibility Theorem](#flp-impossibility-theorem)
 - [Consistent Hashing](#consistent-hashing)
 - [Bloom Filters](#bloom-filters)
@@ -567,7 +574,136 @@ Consensus is useful in all these areas, but the product's actual algorithm matte
 
 ## Byzantine Generals Problem (BGP)
 
-> Study notes to be added.
+The **Byzantine Generals Problem** asks: **How can correct nodes agree when some participants can lie, send conflicting messages, or stop responding?**
+
+> **Remember:** A failed node may do more than go silent; it may give different answers to different nodes. Agreement must remain safe despite those answers.
+
+Here, **BGP** means *Byzantine Generals Problem*, not the networking protocol *Border Gateway Protocol*.
+
+### The Generals Example
+
+Generals surround a city and communicate through messengers. They must agree to **attack** or **retreat**, but some may be traitors. Loyal generals cannot reliably identify traitors, and traitors may cooperate to confuse them.
+
+**Example:** A traitorous commander tells one loyal general to attack and another to retreat:
+
+```mermaid
+flowchart TB
+    T["Traitorous commander"]
+    A["Loyal general A<br/>Received: Attack"]
+    B["Loyal general B<br/>Received: Retreat"]
+    T -->|Attack| A
+    T -->|Retreat| B
+    A <-->|Compare received orders| B
+
+    classDef loyal fill:#d7efdf,stroke:#111,stroke-width:2px,color:#111
+    classDef faulty fill:#f8d7da,stroke:#111,stroke-width:2px,color:#111
+    class A,B loyal
+    class T faulty
+```
+
+**Diagram:** A and B received contradictory orders. Without verifiable evidence, each cannot tell whether the commander or the other general is lying. Simply exchanging messages once does not solve the problem. [Original Byzantine Generals paper](https://lamport.azurewebsites.net/pubs/byz.pdf)
+
+### Requirements for Byzantine Agreement
+
+| Requirement | Simple meaning | Generals example |
+| --- | --- | --- |
+| **Agreement — safety** | Correct participants must not decide conflicting values. | Loyal generals must not split into attack and retreat decisions. |
+| **Validity** | The decision must satisfy the protocol's validity rule. In the commander version, a correct commander's order must be followed. | A loyal commander's attack order cannot be replaced by retreat. |
+| **Termination — liveness** | Correct participants eventually decide under the protocol's fault and communication assumptions. | Loyal generals eventually settle on a plan rather than wait forever. |
+
+> Agreement does not automatically make a decision financially or operationally correct. Applications still validate commands and enforce business rules.
+
+### Byzantine Faults vs. Crash Faults
+
+A **Byzantine fault** is arbitrary incorrect behavior. It may result from a software bug, hardware corruption, or a malicious attack; intentional dishonesty is not required. Faulty nodes may also collude. [PBFT fault model](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
+
+| Fault | Behavior | Example |
+| --- | --- | --- |
+| **Crash fault** | A node stops executing or responding. | A database server shuts down. |
+| **Byzantine fault** | A node can invent, alter, contradict, or withhold information. | A replica reports a payment as approved to A but rejected to B. |
+
+**Sending conflicting messages about the same decision is called _equivocation_.** An ordinary network delay alone does not prove Byzantine behavior: an honest node may simply be unreachable.
+
+> Standard **Paxos and Raft handle crash faults, not arbitrary dishonest participants**. Adding replicas to either algorithm does not, by itself, make it Byzantine fault tolerant.
+
+### Byzantine Fault Tolerance and Quorums
+
+**Byzantine fault tolerance (BFT)** means preserving the specified correct behavior despite up to a defined number of Byzantine participants. It is a property; **PBFT** is one protocol that provides it under stated assumptions.
+
+For the classical *oral-message* model and PBFT-style replication, the familiar bound is:
+
+$$
+N \geq 3f + 1
+$$
+
+where **$N$** is the number of participants and **$f$** is the maximum number that may be Byzantine. A simple honest majority is not enough in these models. [Classical fault bound](https://lamport.azurewebsites.net/pubs/byz.pdf), [PBFT replica bound](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+For a group sized **$N = 3f + 1$**, a typical agreement quorum contains **$2f + 1$ distinct replicas**:
+
+| Byzantine faults tolerated ($f$) | Group size ($3f + 1$) | Quorum size ($2f + 1$) |
+| ---: | ---: | ---: |
+| 1 | 4 | 3 |
+| 2 | 7 | 5 |
+| 3 | 10 | 7 |
+
+**Why this helps — four-node example:** With A, B, C, and D, any two three-node quorums share at least two nodes. If at most one node is Byzantine, at least one shared node is correct. The protocol uses that honest overlap and remembered votes to prevent conflicting decisions.
+
+The overlap follows directly from:
+
+$$
+|Q_1 \cap Q_2| \geq 2(2f + 1) - (3f + 1) = f + 1
+$$
+
+**Progress:** If D refuses to respond, A, B, and C can still form a quorum. If only two nodes are reachable, they cannot form this quorum; new decisions must wait rather than become unsafe.
+
+> **These numbers depend on the fault model and protocol.** They are not universal rules for every BFT system. For larger groups, quorum sizes must be recalculated to preserve honest overlap; do not blindly keep $2f + 1$.
+
+PBFT preserves safety despite arbitrary delays within its fault bound. Progress requires communication to become timely enough for its timeout and leader-change mechanisms to succeed; it does not promise a fixed completion time during an indefinite partition. [PBFT safety and liveness assumptions](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+### Common BFT Techniques
+
+These are **building blocks used together**, not five interchangeable, complete consensus algorithms:
+
+| Technique | How it helps | Important limitation |
+| --- | --- | --- |
+| **Multi-round voting** | Nodes exchange proposals and evidence before deciding. | One local majority vote is insufficient; different nodes may receive different messages. |
+| **Authentication and signatures** | Verify who sent a message and whether it was altered; signed contradictions can provide evidence of misbehavior. | A signature proves the sender, not the truth. Failure to sign does not prove that a node is a traitor. |
+| **Intersecting quorums** | Decision groups share enough correct participants to carry earlier evidence forward. | Honest majorities inside separate groups are not enough; their intersections and voting rules must also be safe. |
+| **Timeouts and leader changes** | Suspect a stalled leader and attempt progress with another. | Silence may mean delay or disconnection, not malice. Removing members requires a safe reconfiguration protocol. |
+| **Randomization** | Random choices or a shared random coin help some protocols escape repeated disagreement. | A random nonce does not identify honest nodes. Randomized protocols still require precise fault and delivery assumptions. |
+
+[Signed-message reasoning](https://lamport.azurewebsites.net/pubs/byz.pdf), [PBFT voting and view changes](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node4.html), [Randomized Byzantine agreement](https://eprint.iacr.org/2000/034)
+
+### Classical Solutions and PBFT
+
+**Lamport, Shostak, and Pease** described two classical approaches:
+
+- **Oral messages:** Relay received orders through multiple rounds and combine them using a defined decision rule. Assume known senders, correct delivery between loyal nodes, and detectable missing messages. This is not merely one all-to-all majority vote.
+- **Signed messages:** Forward verifiable signed orders. The classical synchronous signed-message solution can tolerate more traitors than the oral-message bound; this does not remove PBFT's separate replica requirement.
+
+[Original algorithms and assumptions](https://lamport.azurewebsites.net/pubs/byz.pdf)
+
+**Practical Byzantine Fault Tolerance (PBFT)**, introduced by **Miguel Castro and Barbara Liskov**, makes Byzantine-tolerant replicated services practical through authenticated messages, voting phases, and leader changes. [PBFT paper](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html)
+
+Its normal request path is:
+
+1. **Pre-prepare:** The primary proposes a request and its log position.
+2. **Prepare:** Replicas exchange matching evidence about that proposal.
+3. **Commit:** A prepared replica collects $2f + 1$ matching commit messages, including its own if applicable, before executing the request in log order.
+4. **Reply:** The client accepts the result after receiving $f + 1$ matching authenticated replies from distinct replicas. If the primary stalls, replicas use a **view change** to select another while preserving prior evidence.
+
+> **Different thresholds serve different purposes:** $2f + 1$ commit messages establish replication evidence; $f + 1$ matching client replies include at least one correct replica. PBFT does not use the same threshold at every step.
+
+[PBFT protocol steps](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node4.html)
+
+### BFT Applications and Trade-Offs
+
+- **Replicated services:** Protect agreement and command order when some replicas may be compromised or incorrect. PBFT's original implementation demonstrated a replicated filesystem service.
+- **Blockchains:** Participants must agree despite adversarial behavior, but their algorithms differ. **Bitcoin uses proof of work**, not PBFT; **Ethereum uses proof of stake with Casper-FFG finality**, where voting weight depends on stake rather than a simple node count. [Bitcoin design](https://bitcoin.org/bitcoin.pdf), [Ethereum consensus and finality](https://ethereum.org/en/developers/docs/consensus-mechanisms/pos/)
+- **Costs:** Extra replicas, authentication, evidence storage, and multiple communication rounds increase cost and complexity. PBFT's normal all-to-all voting has **$O(N^2)$ message exchanges**; it is not automatically suitable for an arbitrarily large network. This follows from its prepare and commit broadcasts. [PBFT message pattern](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node4.html)
+- **Failure independence:** Replicas sharing one exploitable bug or compromised administrator may fail together and exceed the assumed fault budget. Diversity and operational isolation matter. [PBFT system assumptions](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
+
+> **BFT = agreement despite some dishonest or arbitrarily faulty participants, within a defined fault budget.** It does not require identifying every faulty node, guarantee uninterrupted progress under all network conditions, or replace application validation and security controls.
 
 ## FLP Impossibility Theorem
 
@@ -605,3 +741,8 @@ Consensus is useful in all these areas, but the product's actual algorithm matte
 - [etcd — Raft Implementation](https://go.etcd.io/etcd/raft/v3)
 - [HashiCorp — Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
 - [Netflix — ChAP: Chaos Automation Platform](https://netflixtechblog.com/chap-chaos-automation-platform-53e6d528371f)
+- [Leslie Lamport, Robert Shostak, and Marshall Pease — The Byzantine Generals Problem](https://lamport.azurewebsites.net/pubs/byz.pdf)
+- [Miguel Castro and Barbara Liskov — Practical Byzantine Fault Tolerance](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html)
+- [Christian Cachin, Klaus Kursawe, and Victor Shoup — Randomized Asynchronous Byzantine Agreement](https://eprint.iacr.org/2000/034)
+- [Satoshi Nakamoto — Bitcoin: A Peer-to-Peer Electronic Cash System](https://bitcoin.org/bitcoin.pdf)
+- [Ethereum — Proof-of-Stake Consensus and Finality](https://ethereum.org/en/developers/docs/consensus-mechanisms/pos/)
