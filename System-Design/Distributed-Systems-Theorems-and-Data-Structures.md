@@ -13,7 +13,7 @@
   - [What PACELC Stands For](#what-pacelc-stands-for)
   - [PACELC Diagram](#pacelc-diagram)
   - [The Two Trade-Offs](#the-two-trade-offs)
-- [Paxos and Raft Algorithms](#paxos-and-raft-algorithms)
+- [Consensus and Replication Protocols](#consensus-and-replication-protocols)
   - [Consensus and Majority Quorums](#consensus-and-majority-quorums)
   - [Paxos](#paxos)
     - [Paxos Roles](#paxos-roles)
@@ -31,7 +31,9 @@
     - [Raft Challenges](#raft-challenges)
     - [Raft Applications](#raft-applications)
     - [Named Systems and Algorithm Boundaries](#named-systems-and-algorithm-boundaries)
-  - [Paxos vs. Raft](#paxos-vs-raft)
+  - [Zab and ZooKeeper](#zab-and-zookeeper)
+  - [Other Protocols to Study Later](#other-protocols-to-study-later)
+  - [Paxos vs. Raft vs. Zab](#paxos-vs-raft-vs-zab)
 - [Byzantine Generals Problem (BGP)](#byzantine-generals-problem-bgp)
   - [The Generals Example](#the-generals-example)
   - [Requirements for Byzantine Agreement](#requirements-for-byzantine-agreement)
@@ -56,7 +58,7 @@ These topics explain what distributed systems can guarantee and how to build wit
 | Category | Topics | Main question |
 | --- | --- | --- |
 | Theorems and trade-off models | CAP, PACELC, FLP | Which guarantees are possible under the stated conditions? |
-| Consensus algorithms | Paxos, Raft | How can nodes agree on decisions or an ordered sequence of updates? |
+| Consensus and replication protocols | Paxos, Raft, Zab | How can nodes agree on decisions or an ordered sequence of updates? |
 | Fault models and agreement problems | Byzantine generals problem | How can nodes agree when some participants behave incorrectly? |
 | Data distribution and compact summaries | Consistent hashing, Bloom filters, Count-Min Sketch, HyperLogLog | How can we distribute data or answer questions with limited memory? |
 
@@ -197,7 +199,7 @@ flowchart TB
 
 > CAP explains the partition-time limit. PACELC also asks what consistency costs in response time during normal operation. Choose according to the application's requirements, replica locations, and acceptable data staleness. [Abadi's original explanation](https://dbmsmusings.blogspot.com/2010/04/problems-with-cap-and-yahoos-little.html), [PACELC paper](https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf)
 
-## Paxos and Raft Algorithms
+## Consensus and Replication Protocols
 
 **Consensus** means that participating nodes agree on a decision. Replicated services use consensus repeatedly to agree on an **ordered sequence of commands**, so replicas can apply the same commands and reach the same state.
 
@@ -560,17 +562,46 @@ Consensus is useful in all these areas, but the product's actual algorithm matte
 | **Netflix ChAP** | Automated chaos experiments that test service resilience. | Its documented purpose is failure testing; it is not a verified example of Raft-based resource management. [Netflix's ChAP description](https://netflixtechblog.com/chap-chaos-automation-platform-53e6d528371f) |
 | **etcd and Consul** | Consistent metadata storage and cluster coordination. | Both have documented **Raft** implementations. [etcd](https://go.etcd.io/etcd/raft/v3), [Consul](https://developer.hashicorp.com/consul/docs/concept/consensus) |
 
-### Paxos vs. Raft
+### Zab and ZooKeeper
 
-| Aspect | Paxos | Raft |
-| --- | --- | --- |
-| Basic unit | One chosen value; Multi-Paxos builds an ordered log. | An ordered, replicated log. |
-| Roles | Proposer, acceptor, learner; roles may share a server. | Follower, candidate, leader; a server changes state. |
-| Leadership | Basic Paxos can have competing proposers; Multi-Paxos usually uses a stable leader. | Leader election and leader-driven log replication are explicit parts of the protocol. |
-| Main emphasis | Safe agreement through proposal numbers, promises, and intersecting quorums. | Understandable consensus through election, log replication, and safety rules. |
-| Standard fault model | Crashes and communication failures, not Byzantine behavior. | Crashes and communication failures, not Byzantine behavior. |
+**ZooKeeper** is a coordination service. **Zab (ZooKeeper Atomic Broadcast)** is the protocol it uses to replicate an **ordered stream of updates**.
 
-> Both protocols can support reliable replicated services. Neither guarantees progress without the required quorum, and neither removes the need for correct application logic. Byzantine failures require a different fault model and suitable protocols; see the [Byzantine Generals Problem](#byzantine-generals-problem-bgp).
+> **ZooKeeper = the service; Zab = its replication protocol.** *Atomic broadcast* means correct replicas deliver the same committed updates in the same order, not necessarily at the same instant.
+
+The simplified workflow is:
+
+1. **Establish leadership:** Select a leader and synchronize its history with a quorum before accepting new updates.
+2. **Propose:** The leader gives each update a transaction ID, **`zxid`**, containing a leadership epoch and a counter, and sends updates in order.
+3. **Acknowledge and commit:** Voting replicas record proposals and acknowledge them. With a quorum, the leader announces commitment; replicas apply committed updates in order.
+4. **Recover:** After a leader failure, synchronize the replacement leader and followers while preserving committed history.
+
+**Example:** Three ZooKeeper servers store a shared configuration. The leader proposes `timeout = 30`; two voting servers record it, forming a majority. The update commits. If the leader later fails, recovery preserves that committed update.
+
+> **Ordered writes do not guarantee fresh local reads.** An ordinary ZooKeeper read can return an older value from a lagging replica. Zab is crash-tolerant, not Byzantine-tolerant. [ZooKeeper replication and consistency guarantees](https://zookeeper.apache.org/doc/current/zookeeperInternals.html)
+
+### Other Protocols to Study Later
+
+**Core study set:** Paxos/Multi-Paxos, Raft, Zab, and **PBFT**. PBFT addresses Byzantine faults and is covered in [Classical Solutions and PBFT](#classical-solutions-and-pbft), rather than treated as a crash-tolerant alternative.
+
+Other useful names to recognize, without studying every detail yet:
+
+- **Viewstamped Replication (VR):** Leader-based replicated services with recovery and leadership changes after crashes. [VR paper](https://dspace.mit.edu/entities/publication/80846d94-fcd3-40e6-87fb-8d91fe99a5d1)
+- **EPaxos (Egalitarian Paxos):** A Paxos-based protocol that distributes proposal coordination across replicas rather than relying on one fixed leader. [EPaxos paper](https://www.pdl.cmu.edu/PDL-FTP/associated/epaxos-sosp2013_abs.shtml)
+- **HotStuff:** A leader-based Byzantine-tolerant replication protocol that improves communication efficiency under its stated assumptions. [HotStuff paper](https://arxiv.org/abs/1803.05069)
+
+### Paxos vs. Raft vs. Zab
+
+| Aspect | Paxos | Raft | Zab |
+| --- | --- | --- | --- |
+| Basic unit | One chosen value; Multi-Paxos builds an ordered log. | An ordered, replicated log. | An ordered stream of replicated updates. |
+| Roles | Proposer, acceptor, learner; roles may share a server. | Follower, candidate, leader; a server changes state. | Leader and followers; ZooKeeper can also use non-voting observers. |
+| Leadership | Basic Paxos can have competing proposers; Multi-Paxos usually uses a stable leader. | Leader election and leader-driven log replication are explicit parts of the protocol. | Leadership activation synchronizes histories before normal broadcasting. |
+| Main emphasis | Safe agreement through proposal numbers, promises, and intersecting quorums. | Understandable consensus through election, log replication, and safety rules. | Ordered delivery and preservation of committed history across leadership changes. |
+| Standard fault model | Crashes and communication failures, not Byzantine behavior. | Crashes and communication failures, not Byzantine behavior. | Crashes and communication failures, not Byzantine behavior. |
+
+[Paxos](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf), [Raft](https://raft.github.io/raft.pdf), [Zab](https://zookeeper.apache.org/doc/current/zookeeperInternals.html)
+
+> All three can support reliable replicated services. None guarantees progress without the required quorum, and none removes the need for correct application logic. Byzantine failures require a different fault model and suitable protocols; see the [Byzantine Generals Problem](#byzantine-generals-problem-bgp).
 
 ## Byzantine Generals Problem (BGP)
 
@@ -737,6 +768,10 @@ Its normal request path is:
 - [Google — The Chubby Lock Service](https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf)
 - [Google — Spanner's Published Design](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf)
 - [Apache ZooKeeper — Administration and Zab](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html)
+- [Apache ZooKeeper — Internals, Atomic Broadcast, and Consistency Guarantees](https://zookeeper.apache.org/doc/current/zookeeperInternals.html)
+- [Barbara Liskov and James Cowling — Viewstamped Replication Revisited](https://dspace.mit.edu/entities/publication/80846d94-fcd3-40e6-87fb-8d91fe99a5d1)
+- [Iulian Moraru, David G. Andersen, and Michael Kaminsky — Egalitarian Paxos](https://www.pdl.cmu.edu/PDL-FTP/associated/epaxos-sosp2013_abs.shtml)
+- [Maofan Yin and colleagues — HotStuff](https://arxiv.org/abs/1803.05069)
 - [Apache Hadoop — HDFS High Availability](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html)
 - [etcd — Raft Implementation](https://go.etcd.io/etcd/raft/v3)
 - [HashiCorp — Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
