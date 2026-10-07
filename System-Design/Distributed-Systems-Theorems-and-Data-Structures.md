@@ -465,6 +465,8 @@ In a financial application, log entries can instead be commands such as `credit 
 
 Raft maintains an **ordered, replicated log**. Replicas apply committed commands in order to their state machines. Their logs can temporarily differ, but they must not apply conflicting commands at the same log position.
 
+**Hands-on example:** [DSA-style C++17 Raft core](examples/raft/README.md) — short procedures, matching pseudocode, complexity, and a replicated-credit example. [Implementation](examples/raft/raft_dsa.cpp).
+
 #### Raft Roles and Terms
 
 | Role | Responsibility |
