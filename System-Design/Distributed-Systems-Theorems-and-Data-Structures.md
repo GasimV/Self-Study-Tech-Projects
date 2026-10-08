@@ -642,6 +642,8 @@ flowchart TB
 | **Validity** | The decision must satisfy the protocol's validity rule. In the commander version, a correct commander's order must be followed. | A loyal commander's attack order cannot be replaced by retreat. |
 | **Termination — liveness** | Correct participants eventually decide under the protocol's fault and communication assumptions. | Loyal generals eventually settle on a plan rather than wait forever. |
 
+> **These guarantees must hold despite up to $f$ faulty participants, within the protocol's stated assumptions.** In the classical oral-message model and Practical Byzantine Fault Tolerance (PBFT), tolerating $f$ Byzantine faults requires at least $3f + 1$ participants. Correct nodes must eventually decide when communication satisfies the protocol's progress assumptions; deciding quickly is an additional performance goal.
+
 > Agreement does not automatically make a decision financially or operationally correct. Applications still validate commands and enforce business rules.
 
 ### Byzantine Faults vs. Crash Faults
