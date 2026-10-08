@@ -42,6 +42,7 @@
   - [Common BFT Techniques](#common-bft-techniques)
   - [Classical Solutions and PBFT](#classical-solutions-and-pbft)
   - [BFT Applications and Trade-Offs](#bft-applications-and-trade-offs)
+  - [BFT and AI/LLM-Based Systems](#bft-and-aillm-based-systems)
 - [FLP Impossibility Theorem](#flp-impossibility-theorem)
 - [Consistent Hashing](#consistent-hashing)
 - [Bloom Filters](#bloom-filters)
@@ -737,6 +738,32 @@ Its normal request path is:
 - **Failure independence:** Replicas sharing one exploitable bug or compromised administrator may fail together and exceed the assumed fault budget. Diversity and operational isolation matter. [PBFT system assumptions](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
 
 > **BFT = agreement despite some dishonest or arbitrarily faulty participants, within a defined fault budget.** It does not require identifying every faulty node, guarantee uninterrupted progress under all network conditions, or replace application validation and security controls.
+
+### BFT and AI/LLM-Based Systems
+
+**BFT handles more than silent failures.** A faulty participant may lie, send contradictory messages, corrupt its state, or stop responding. The behavior need not be intentional. BFT protocols protect the specified agreement process within their fault and network assumptions. [PBFT fault model](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
+
+However, **an LLM giving different answers is not automatically a Byzantine fault**. Different answers can be normal model behavior. The important question is whether a participant violates the rules the system requires it to follow.
+
+| Problem | Appropriate approach |
+| --- | --- |
+| A replica crashes or becomes unreachable | Crash-tolerant replication, such as Paxos or Raft |
+| A replica lies, equivocates, or violates the protocol | A suitable BFT protocol, such as PBFT |
+| An LLM invents an unsupported claim | Grounding, evidence checks, evaluation, and appropriate human review |
+| AI agents reach different conclusions | Evidence-based verification and an explicit decision or escalation policy—not merely majority voting |
+
+**Example: Four robots assess a bridge.**
+
+- A, B, and C report **“safe.”**
+- D reports **“unsafe.”**
+
+BFT could protect the agreement process against a faulty participant—for example, one sending conflicting coordination messages. But **three “safe” reports do not prove that the bridge is safe**. They might share the same mistaken assumption or unreliable evidence. Disagreement alone also does not prove that D is faulty.
+
+> **BFT protects agreement despite faulty participants. AI validation checks whether the agreed information or proposed action is actually justified.**
+
+PBFT can tolerate one Byzantine replica among four under its assumptions; simply taking three matching AI answers is not PBFT. Its original replicated-service design assumes deterministic operations, so independently generated LLM answers are not interchangeable with deterministic replica execution. [PBFT service properties](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+For the AI-side controls, see [Distributed Agreement vs. AI Answer Correctness](AI-Systems-Design.md#distributed-agreement-vs-ai-answer-correctness).
 
 ## FLP Impossibility Theorem
 

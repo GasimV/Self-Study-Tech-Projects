@@ -11,6 +11,7 @@
 - [Reliability and Resilience](#reliability-and-resilience)
   - [LLM Gateway](#llm-gateway)
   - [Timeouts, Circuit Breakers, and Fallbacks](#timeouts-circuit-breakers-and-fallbacks)
+  - [Distributed Agreement vs. AI Answer Correctness](#distributed-agreement-vs-ai-answer-correctness)
 - [Latency and Throughput](#latency-and-throughput)
   - [Synchronous, Asynchronous, and Streaming Work](#synchronous-asynchronous-and-streaming-work)
   - [Caching and Request Coalescing](#caching-and-request-coalescing)
@@ -140,6 +141,28 @@ Centralization also creates a critical dependency: scale the gateway, isolate fa
 > A fallback model must be tested against the task and data policy. A faster model that produces an incorrect reservation, leaks data, or violates a required format is not a useful fallback.
 
 For interactive requests, fail or degrade within the user's deadline. Background jobs can retry for longer, provided duplicate execution is handled through idempotency.
+
+### Distributed Agreement vs. AI Answer Correctness
+
+**Agreement and correctness are different questions:**
+
+- **Distributed agreement:** Do participants consistently record the same decision?
+- **AI answer correctness:** Is the answer supported by evidence and suitable for the task?
+
+For example, three AI agents may all invent the same nonexistent refund policy. Recording their answer consistently does not make that policy real.
+
+**Choose controls for the actual failure:**
+
+- **Unsupported answers:** Retrieve authoritative evidence and verify important claims.
+- **Agent disagreement:** Compare evidence, apply explicit decision rules, or escalate unresolved cases.
+- **Consequential actions:** Validate permissions, arguments, and application constraints outside the model.
+- **Compromised coordination replicas:** Consider BFT when the threat model requires it.
+
+Multiple agents, voting, and debate may improve results, but they are not guarantees of truth or substitutes for a BFT protocol. [Multiagent debate research](https://arxiv.org/abs/2305.14325)
+
+> **More agents agreeing is not necessarily more independent evidence.** Agents using the same model, context, or sources can repeat the same mistake.
+
+For the protocol guarantees and the four-robot example, see [BFT and AI/LLM-Based Systems](Distributed-Systems-Theorems-and-Data-Structures.md#bft-and-aillm-based-systems).
 
 ## Latency and Throughput
 
