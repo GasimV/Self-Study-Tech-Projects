@@ -41,6 +41,7 @@
   - [Byzantine Fault Tolerance and Quorums](#byzantine-fault-tolerance-and-quorums)
   - [Common BFT Techniques](#common-bft-techniques)
   - [Classical Solutions and PBFT](#classical-solutions-and-pbft)
+  - [When Is BFT Needed?](#when-is-bft-needed)
   - [BFT Applications and Trade-Offs](#bft-applications-and-trade-offs)
   - [BFT and AI/LLM-Based Systems](#bft-and-aillm-based-systems)
 - [FLP Impossibility Theorem](#flp-impossibility-theorem)
@@ -729,6 +730,33 @@ Its normal request path is:
 > **Different thresholds serve different purposes:** $2f + 1$ commit messages establish replication evidence; $f + 1$ matching client replies include at least one correct replica. PBFT does not use the same threshold at every step.
 
 [PBFT protocol steps](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node4.html)
+
+### When Is BFT Needed?
+
+**Choose fault tolerance based on the failures the system must withstand—not merely whether the network is “trusted.”**
+
+| Assumed failures | Suitable approach |
+| --- | --- |
+| Nodes crash, disconnect, or experience delayed messages, but otherwise follow the protocol | **Crash-fault tolerance**, such as Paxos or Raft |
+| Some participants may lie, send contradictory messages, or behave arbitrarily, while correct participants must still agree | **Byzantine fault tolerance**, using a suitable protocol |
+
+**CFT is often sufficient** for internally managed replicated services when arbitrary participant behavior is outside the accepted fault model.
+
+**BFT is useful when agreement must survive participants behaving dishonestly or incorrectly. Examples include:**
+
+- **Compromised nodes:** A hacked server tells one replica “payment approved” and another “payment rejected.” BFT can preserve consistent agreement despite a limited number of such faulty participants. [PBFT fault model](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
+
+- **Blockchains:** Participants must agree on transactions even when some validators cheat. Ethereum uses proof-of-stake consensus with Casper-FFG finality. Hyperledger Fabric supports both **crash-tolerant Raft** and **Byzantine-tolerant ordering**, depending on the deployment. [Ethereum consensus](https://ethereum.org/developers/docs/consensus-mechanisms/pos/), [Fabric ordering services](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html)
+
+- **Shared systems between organizations:** Several banks maintain a shared settlement ledger. If the design must withstand one bank’s server sending conflicting transaction records, BFT can help the correct participants maintain a consistent ledger. **This does not prove that every submitted transaction is legitimate**; authorization and business validation remain necessary. [PBFT guarantees and limitations](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+> **The deciding factor is the required failure protection—not simply “blockchain,” “financial,” or “high-stakes.”** Use CFT when participants are assumed to follow the protocol; consider BFT when agreement must remain correct even when some participants violate it.
+
+> **Trusted does not mean incapable of Byzantine failure.** Software bugs, corruption, or compromised machines can cause arbitrary behavior even within one organization. [PBFT fault model](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node2.html)
+
+Avoid saying that **all decentralized, financial, aviation, or high-stakes systems require BFT**. Their requirements and architectures differ. Likewise, BFT preserves specified protocol guarantees; it does not automatically prevent fraud, validate external facts, or guarantee physical safety. [PBFT guarantees and limitations](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+**Recall:** CFT assumes participants follow the protocol until they fail; BFT allows some participants to violate it.
 
 ### BFT Applications and Trade-Offs
 
