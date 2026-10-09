@@ -671,7 +671,7 @@ $$
 N \geq 3f + 1
 $$
 
-where **$N$** is the number of participants and **$f$** is the maximum number that may be Byzantine. A simple honest majority is not enough in these models. [Classical fault bound](https://lamport.azurewebsites.net/pubs/byz.pdf), [PBFT replica bound](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+where **$N$** is the number of participants and **$f$** is the maximum number that may be Byzantine (faulty or malicious nodes). A simple honest majority is not enough in these models. [Classical fault bound](https://lamport.azurewebsites.net/pubs/byz.pdf), [PBFT replica bound](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
 
 For a group sized **$N = 3f + 1$**, a typical agreement quorum contains **$2f + 1$ distinct replicas**:
 
