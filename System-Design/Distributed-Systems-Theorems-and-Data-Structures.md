@@ -673,6 +673,19 @@ $$
 
 where **$N$** is the number of participants and **$f$** is the maximum number that may be Byzantine (faulty or malicious nodes). A simple honest majority is not enough in these models. [Classical fault bound](https://lamport.azurewebsites.net/pubs/byz.pdf), [PBFT replica bound](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
 
+**The “one-third rule”:** In the classical oral-message model and PBFT, Byzantine participants must constitute **strictly less than one-third** of the group:
+
+$$
+f < \frac{N}{3}
+$$
+
+For **4 nodes**:
+
+- **1 faulty node:** $1/4 = 25\%$ — within the tolerated limit.
+- **2 faulty nodes:** $2/4 = 50\%$ — beyond the limit; correct agreement is **no longer guaranteed**. [PBFT fault bound](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/node3.html)
+
+> **Remember: less than one-third—not “up to 33%.”** Exceeding the limit means losing the guarantee, not that agreement becomes impossible in every execution.
+
 For a group sized **$N = 3f + 1$**, a typical agreement quorum contains **$2f + 1$ distinct replicas**:
 
 | Byzantine faults tolerated ($f$) | Group size ($3f + 1$) | Quorum size ($2f + 1$) |
