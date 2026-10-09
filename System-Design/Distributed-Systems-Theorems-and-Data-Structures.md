@@ -731,6 +731,8 @@ These are **building blocks used together**, not five interchangeable, complete 
 
 [Original algorithms and assumptions](https://lamport.azurewebsites.net/pubs/byz.pdf)
 
+**Hands-on example:** [DSA-style C++17 classical oral-message agreement](examples/bft/README.md) — recursive OM(m), matching pseudocode, complexity, conflicting messages, and an outside-fault-bound counterexample. [Implementation](examples/bft/bft_dsa.cpp). This is the classical generals algorithm, not PBFT.
+
 **Practical Byzantine Fault Tolerance (PBFT)**, introduced by **Miguel Castro and Barbara Liskov**, makes Byzantine-tolerant replicated services practical through authenticated messages, voting phases, and leader changes. [PBFT paper](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html)
 
 Its normal request path is:
