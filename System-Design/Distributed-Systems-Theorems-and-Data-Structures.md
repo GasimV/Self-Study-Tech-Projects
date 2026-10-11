@@ -51,6 +51,7 @@
   - [Why a Slow Node Looks Like a Failed Node](#why-a-slow-node-looks-like-a-failed-node)
   - [What FLP Does and Does Not Say](#what-flp-does-and-does-not-say)
   - [How Practical Systems Make Progress](#how-practical-systems-make-progress)
+  - [Kafka Example: FLP and KRaft](#kafka-example-flp-and-kraft)
   - [FLP vs. CAP](#flp-vs-cap)
 - [Consistent Hashing](#consistent-hashing)
 - [Bloom Filters](#bloom-filters)
@@ -908,6 +909,20 @@ Systems do not disprove FLP; they change the assumptions or the termination guar
 **A leader alone is not an escape:** it may crash or remain unreachable. **Clock synchronization alone is not an escape:** matching timestamps does not impose a bound on message delivery or provide the missing failure information. Timeouts and leader election are useful mechanisms when combined with the required progress assumptions.
 
 **Connection to the BFT example:** The [classical OM(m) simulation](examples/bft/README.md) assumes synchronous rounds and detectable missing messages. It therefore does not operate under FLP's fully asynchronous assumptions; its successful agreement is not a contradiction.
+
+### Kafka Example: FLP and KRaft
+
+**FLP applies to Kafka's KRaft controller quorum**, which uses Raft-based consensus to agree on **cluster metadata**. This example concerns metadata coordination, not a claim that every Kafka topic's data is replicated using Raft.
+
+Imagine **three controllers: A, B, and C**. A majority is **two**:
+
+- **C crashes:** A and B can normally continue making metadata decisions if they can communicate and establish stable leadership.
+- **The leader becomes unreachable:** The remaining two can elect a replacement when communication is timely enough.
+- **Communication remains arbitrarily delayed:** Elections or new metadata decisions may keep retrying without completing. Having two running controllers is not enough if they cannot exchange the necessary messages.
+
+**Timeouts trigger election attempts; they do not prove that a controller has crashed.** Kafka therefore does not contradict FLP: it preserves consensus safety, while progress requires a communicating quorum and suitable timing conditions. [Kafka KRaft documentation](https://kafka.apache.org/43/operations/kraft/)
+
+> **Recall:** Kafka can tolerate a controller failure, but it cannot guarantee that metadata consensus finishes under every possible pattern of network delays.
 
 ### FLP vs. CAP
 
