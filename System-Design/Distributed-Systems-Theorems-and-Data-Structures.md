@@ -45,6 +45,13 @@
   - [BFT Applications and Trade-Offs](#bft-applications-and-trade-offs)
   - [BFT and AI/LLM-Based Systems](#bft-and-aillm-based-systems)
 - [FLP Impossibility Theorem](#flp-impossibility-theorem)
+  - [Consensus Requirements](#consensus-requirements)
+  - [FLP Assumptions](#flp-assumptions)
+  - [FLP Impossibility Triangle](#flp-impossibility-triangle)
+  - [Why a Slow Node Looks Like a Failed Node](#why-a-slow-node-looks-like-a-failed-node)
+  - [What FLP Does and Does Not Say](#what-flp-does-and-does-not-say)
+  - [How Practical Systems Make Progress](#how-practical-systems-make-progress)
+  - [FLP vs. CAP](#flp-vs-cap)
 - [Consistent Hashing](#consistent-hashing)
 - [Bloom Filters](#bloom-filters)
 - [Count-Min Sketch](#count-min-sketch)
@@ -810,7 +817,106 @@ For the AI-side controls, see [Distributed Agreement vs. AI Answer Correctness](
 
 ## FLP Impossibility Theorem
 
-> Study notes to be added.
+The **FLP impossibility theorem**, named after **Michael J. Fischer, Nancy A. Lynch, and Michael S. Paterson**, was published in its journal form in **1985**.
+
+**No deterministic consensus algorithm can guarantee that a valid, consistent decision will eventually be reached in every execution of a fully asynchronous message-passing system when even one process may crash.** [Original FLP paper](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
+
+> **Remember:** Nodes can preserve agreement, yet be unable to guarantee that they will ever finish deciding. FLP limits the guarantee of progress—not the possibility of reaching consensus in ordinary runs.
+
+### Consensus Requirements
+
+Consensus turns participants' proposals into one shared decision. For example, replicas may need to agree on which transaction occupies the next log position.
+
+| Requirement | Simple meaning | Example |
+| --- | --- | --- |
+| **Agreement** | Correct processes do not decide different values for the same decision. | Replicas do not commit different transactions into the same log position. |
+| **Validity** | The decision satisfies the consensus problem's input rules, rather than being an unrelated fixed answer. | In a common formulation, the selected value must have been proposed; if everyone proposes the same value, it must be selected. |
+| **Termination** | Every correct process eventually decides. | Replicas do not remain undecided forever. |
+
+Agreement and validity are **safety** requirements: do not make an invalid or conflicting decision. Termination is **liveness**: eventually finish. Validity here does not mean a transaction is financially legitimate; application validation is separate.
+
+### FLP Assumptions
+
+| Assumption | What it means |
+| --- | --- |
+| **Fully asynchronous communication and processing** | There is no known upper bound on message delay or the time between a process's steps. Silence cannot establish that a process crashed. |
+| **Deterministic algorithm** | The same local state and received input produce the same next action; no random choices are used. |
+| **Possible crash failure** | Even one process may permanently stop. It need not lie or behave maliciously. |
+| **Reliable eventual delivery and fair execution** | Messages to correct processes eventually arrive, and correct processes keep taking steps—but neither has a bounded waiting time. |
+
+The impossibility does **not** require lost messages, Byzantine behavior, or a permanent network partition. The theorem's model has discrete local steps; it does not assume that an entire execution contains only finitely many steps. A nonterminating run can continue indefinitely. [FLP model and result](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
+
+### FLP Impossibility Triangle
+
+The textbook-style triangle is a **memory aid**, conditional on deterministic, fully asynchronous operation and a nontrivial validity requirement:
+
+```mermaid
+flowchart TB
+    subgraph FLP["FLP Impossibility Triangle<br/>Deterministic + fully asynchronous"]
+        F["Fault tolerance<br/>Even one possible crash"]
+        T["Termination<br/>Every correct process eventually decides"]
+        A["Agreement<br/>No conflicting decisions"]
+        F --- T
+        F --- A
+        T --- A
+    end
+
+    classDef property fill:#fff,stroke:#111,stroke-width:2px,color:#111
+    class F,T,A property
+    style FLP fill:transparent,stroke:#999,stroke-width:1px
+```
+
+**Diagram:** Under those assumptions, valid agreement, guaranteed termination, and tolerance of even one possible crash cannot all be provided by a deterministic protocol.
+
+> **This is not a universal “choose any two” design menu.** Fault tolerance is a requirement about the failures to withstand. Practical protocols usually preserve safety and guarantee progress only under additional conditions.
+
+### Why a Slow Node Looks Like a Failed Node
+
+Imagine three database replicas, **A, B, and C**, trying to agree on the next transaction. C's expected message has not arrived:
+
+- **Possibility 1:** C crashed and will never reply.
+- **Possibility 2:** C is healthy, but its message is taking much longer than expected.
+
+Without a delivery-time bound or additional failure information, A and B cannot tell which happened. **Waiting indefinitely** can block completion after a crash. **Deciding without sufficient protocol evidence** can risk conflicting decisions. A timeout signals suspicion, not proof of a crash.
+
+Quorum protocols can often proceed without C, but a majority alone does not remove FLP: carefully timed delays can repeatedly disrupt progress while the protocol keeps agreement safe.
+
+**Proof intuition:** Some starting states still permit either decision. The proof constructs a fair message/step schedule that keeps the system undecided indefinitely; correct processes continue working and their messages eventually arrive. This is a worst-case possibility, not a prediction that typical deployments will always stall. [FLP proof](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
+
+### What FLP Does and Does Not Say
+
+- **It says:** A deterministic protocol cannot guarantee valid agreement and termination in every allowed fully asynchronous execution when a process may crash.
+- **It does not say:** Every run fails, a crash must actually occur, or Paxos and Raft are incorrect.
+- **It does not say:** Adding more replicas or choosing a leader automatically restores guaranteed progress.
+- **It does not say:** Consensus must finish within a deadline. Even eventual termination cannot be guaranteed under the original assumptions.
+
+For **Paxos and Raft**, distinguish **safe decisions** from **progress**. A usable quorum and sufficiently stable communication and leadership support completion; arbitrary continued delays or competing leadership attempts can prevent it. [Paxos safety and progress](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf), [Raft elections and timing](https://raft.github.io/raft.pdf)
+
+### How Practical Systems Make Progress
+
+Systems do not disprove FLP; they change the assumptions or the termination guarantee:
+
+| Approach | What changes | Important qualification |
+| --- | --- | --- |
+| **Synchronous timing assumptions** | Known bounds on communication and processing make time-based reasoning possible. | The protocol's progress guarantee depends on those bounds holding and its fault limit not being exceeded. |
+| **Partial synchrony** | Communication and processing eventually become timely enough, even if the stabilization time is unknown. | This supports progress after stabilization, not a guaranteed deadline throughout arbitrary disruption. |
+| **Randomized consensus** | The protocol uses random choices instead of being fully deterministic. | Suitable protocols can terminate with probability 1 under their stated fault and scheduling assumptions; this is not a fixed-time guarantee. |
+| **Failure detectors with specified guarantees** | Additional information eventually supplies enough useful failure or leadership information. | A detector may initially make mistakes. Its required accuracy/completeness guarantees—not merely having heartbeats—enable progress. |
+
+[Partial synchrony](https://groups.csail.mit.edu/tds/papers/Lynch/jacm88.pdf), [Randomized consensus](https://arxiv.org/html/cs/0209014), [Failure detectors](https://www.cs.cornell.edu/courses/cs734/2000FA/cached%20papers/ct96.pdf)
+
+**A leader alone is not an escape:** it may crash or remain unreachable. **Clock synchronization alone is not an escape:** matching timestamps does not impose a bound on message delivery or provide the missing failure information. Timeouts and leader election are useful mechanisms when combined with the required progress assumptions.
+
+**Connection to the BFT example:** The [classical OM(m) simulation](examples/bft/README.md) assumes synchronous rounds and detectable missing messages. It therefore does not operate under FLP's fully asynchronous assumptions; its successful agreement is not a contradiction.
+
+### FLP vs. CAP
+
+| Result | Main limitation |
+| --- | --- |
+| **FLP** | Deterministic consensus cannot guarantee termination in every fully asynchronous execution with even one possible crash while preserving valid agreement. |
+| **CAP** | During a network partition, a distributed read/write service cannot guarantee both linearizable consistency and availability. |
+
+> **Recall:** FLP explains why guaranteed completion needs more than pure asynchrony. CAP explains why partitions force a consistency/availability choice. They are related limits, but not the same theorem.
 
 ## Consistent Hashing
 
@@ -830,6 +936,10 @@ For the AI-side controls, see [Distributed Agreement vs. AI Answer Correctness](
 
 ## References
 
+- [Michael J. Fischer, Nancy A. Lynch, and Michael S. Paterson — Impossibility of Distributed Consensus with One Faulty Process](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
+- [Cynthia Dwork, Nancy Lynch, and Larry Stockmeyer — Consensus in the Presence of Partial Synchrony](https://groups.csail.mit.edu/tds/papers/Lynch/jacm88.pdf)
+- [James Aspnes — Randomized Protocols for Asynchronous Consensus](https://arxiv.org/html/cs/0209014)
+- [Tushar Deepak Chandra and Sam Toueg — Unreliable Failure Detectors for Reliable Distributed Systems](https://www.cs.cornell.edu/courses/cs734/2000FA/cached%20papers/ct96.pdf)
 - [Seth Gilbert and Nancy Lynch — Perspectives on the CAP Theorem](https://groups.csail.mit.edu/tds/papers/Gilbert/Brewer2.pdf)
 - [Eric Brewer — CAP Twelve Years Later: How the "Rules" Have Changed](https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/)
 - [Daniel Abadi — PACELC: Original Explanation](https://dbmsmusings.blogspot.com/2010/04/problems-with-cap-and-yahoos-little.html)
