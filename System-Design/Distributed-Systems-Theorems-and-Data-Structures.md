@@ -852,19 +852,28 @@ The impossibility does **not** require lost messages, Byzantine behavior, or a p
 The textbook-style triangle is a **memory aid**, conditional on deterministic, fully asynchronous operation and a nontrivial validity requirement:
 
 ```mermaid
-flowchart TB
-    subgraph FLP["FLP Impossibility Triangle<br/>Deterministic + fully asynchronous"]
-        F["Fault tolerance<br/>Even one possible crash"]
-        T["Termination<br/>Every correct process eventually decides"]
-        A["Agreement<br/>No conflicting decisions"]
-        F --- T
-        F --- A
-        T --- A
-    end
+block-beta
+    columns 3
+
+    H["FLP Impossibility Triangle<br/>Deterministic + fully asynchronous"]:3
+
+    space
+    F["<b>Fault tolerance</b><br/>Even one possible crash"]
+    space
+
+    space:3
+
+    T["<b>Termination</b><br/>Every correct process<br/>eventually decides"]
+    space
+    A["<b>Agreement</b><br/>No conflicting decisions"]
+
+    F --- T
+    F --- A
+    T --- A
 
     classDef property fill:#fff,stroke:#111,stroke-width:2px,color:#111
     class F,T,A property
-    style FLP fill:transparent,stroke:#999,stroke-width:1px
+    style H fill:transparent,stroke:transparent,color:#111
 ```
 
 **Diagram:** Under those assumptions, valid agreement, guaranteed termination, and tolerance of even one possible crash cannot all be provided by a deterministic protocol.
