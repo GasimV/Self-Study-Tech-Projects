@@ -855,7 +855,7 @@ The textbook-style triangle is a **memory aid**, conditional on deterministic, f
 block-beta
     columns 3
 
-    H["FLP Impossibility Triangle<br/>Deterministic + fully asynchronous"]:3
+    H["<b>FLP Impossibility Triangle</b><br/>Deterministic + fully asynchronous"]:3
 
     space
     F["<b>Fault tolerance</b><br/>Even one possible crash"]
