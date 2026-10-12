@@ -1171,6 +1171,10 @@ Practical designs must also handle:
 
 > **Recall:** Consistent hashing limits **key movement**. Virtual nodes improve **range distribution**. Replication protects **data copies**. None of these alone guarantees availability, strong consistency, or perfectly balanced traffic.
 
+**Industry C++ implementations:** [Envoy's ring-hash load balancer](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/ring_hash/ring_hash_lb.cc) builds a virtual-node ring and uses binary search to select hosts. [Apache bRPC's consistent-hashing load balancer](https://github.com/apache/brpc/blob/master/src/brpc/policy/consistent_hashing_load_balancer.cpp) implements virtual nodes, membership updates, and hashing policies including Ketama. These are established framework components, not small standalone DSA procedures.
+
+**Hands-on DSA core:** [consistent_hashing_dsa.cpp](examples/consistent_hashing/consistent_hashing_dsa.cpp) implements **AddServer**, **RemoveServer**, and **GetServer** with virtual nodes and clockwise lookup. See its [README: pseudocode, complexity, build commands, and illustrated output](examples/consistent_hashing/README.md). It is an independently written C++17 teaching example—not production-ready code or a routing-compatible replacement for Envoy/bRPC.
+
 ## Bloom Filters
 
 > Study notes to be added.
@@ -1187,6 +1191,8 @@ Practical designs must also handle:
 
 - [David Karger and colleagues — Consistent Hashing and Random Trees](https://people.csail.mit.edu/karger/Papers/web.pdf)
 - [Apache Cassandra — Consistent Hashing, Virtual Nodes, and Replication](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
+- [Envoy — Ring-Hash C++ Implementation](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/ring_hash/ring_hash_lb.cc)
+- [Apache bRPC — Consistent-Hashing C++ Implementation](https://github.com/apache/brpc/blob/master/src/brpc/policy/consistent_hashing_load_balancer.cpp)
 - [Michael J. Fischer, Nancy A. Lynch, and Michael S. Paterson — Impossibility of Distributed Consensus with One Faulty Process](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
 - [Cynthia Dwork, Nancy Lynch, and Larry Stockmeyer — Consensus in the Presence of Partial Synchrony](https://groups.csail.mit.edu/tds/papers/Lynch/jacm88.pdf)
 - [James Aspnes — Randomized Protocols for Asynchronous Consensus](https://arxiv.org/html/cs/0209014)
