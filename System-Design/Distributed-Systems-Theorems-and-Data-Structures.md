@@ -54,6 +54,14 @@
   - [Kafka Example: FLP and KRaft](#kafka-example-flp-and-kraft)
   - [FLP vs. CAP](#flp-vs-cap)
 - [Consistent Hashing](#consistent-hashing)
+  - [Why Modulo Hashing Causes Reorganization](#why-modulo-hashing-causes-reorganization)
+  - [How the Hash Ring Works](#how-the-hash-ring-works)
+  - [Simple Ring Example](#simple-ring-example)
+  - [Adding or Removing a Server](#adding-or-removing-a-server)
+  - [Problems with One Token per Server](#problems-with-one-token-per-server)
+  - [Virtual Nodes: Multiple Tokens per Server](#virtual-nodes-multiple-tokens-per-server)
+  - [Enhanced Ring Diagram](#enhanced-ring-diagram)
+  - [Applications and Practical Limits](#applications-and-practical-limits)
 - [Bloom Filters](#bloom-filters)
 - [Count-Min Sketch](#count-min-sketch)
 - [HyperLogLog](#hyperloglog)
@@ -944,7 +952,224 @@ Imagine **three controllers: A, B, and C**. A majority is **two**:
 
 ## Consistent Hashing
 
-> Study notes to be added.
+**Consistent hashing** assigns keys to servers so that adding or removing a server changes **only part of the assignment**, rather than redistributing most keys. It is useful when a distributed cache, storage cluster, or request-routing layer grows or loses nodes. [Original consistent hashing paper](https://people.csail.mit.edu/karger/Papers/web.pdf)
+
+> **Mental model:** Put servers and keys on a ring. A key belongs to the first server clockwise. Changing a server changes nearby ownership—not the entire ring.
+
+Here, *consistent* means **stable key placement when membership changes**. It does **not** mean strong consistency between database replicas.
+
+### Why Modulo Hashing Causes Reorganization
+
+A simple way to select one of $N$ servers is:
+
+$$
+\text{server index} = h(\text{key}) \bmod N
+$$
+
+**Example:** Suppose a key's hash is `14`:
+
+- With **4 servers**, `14 % 4 = 2`: send it to server2.
+- With **5 servers**, `14 % 5 = 4`: send it to server4.
+
+Changing $N$ changes the destination of many keys. Stored data may need migration; cached data may need to be fetched again, increasing backend load.
+
+| Approach | How a server is selected | When membership changes |
+| --- | --- | --- |
+| **Modulo hashing** | Compute `h(key) % N` | Many keys map to different servers because the divisor changes. |
+| **Consistent hashing** | Find the key's clockwise successor on a hash ring | Only keys whose successor changes need a new owner. |
+
+> The **hash function itself does not need to change** in modulo hashing. The changed divisor is what changes the mapping.
+
+### How the Hash Ring Works
+
+1. **Choose a fixed hash space:** For example, positions `0–99` for illustration. Real systems use a much larger range.
+2. **Hash server identifiers:** Each server gets a position called a **token**.
+3. **Hash a key:** A cache key, partition key, or routing key gets a position in the same space.
+4. **Find its owner:** Select the first token at or after the key's position, moving **clockwise**.
+5. **Wrap around:** If the key is beyond the last token, continue from the smallest token.
+
+A token owns the interval **after the previous token, up to and including itself**:
+
+$$
+\text{owned range} = (\text{previous token},\ \text{current token}]
+$$
+
+The interval wraps across the end of the hash space when necessary. For unchanged membership, everyone using the same hash function and token map computes the same owner.
+
+**Request-routing example:** Hashing a stable key such as `customer_id` sends that customer's requests to the same server. Hashing unrelated request IDs also assigns requests, but does not preserve customer or session affinity.
+
+### Simple Ring Example
+
+Assume these illustrative hash results:
+
+| Server | Token | Owned positions |
+| --- | ---: | --- |
+| server0 | `s0 = 10` | `(85, 10]`, wrapping through `99 → 0` |
+| server1 | `s1 = 35` | `(10, 35]` |
+| server2 | `s2 = 60` | `(35, 60]` |
+| server3 | `s3 = 85` | `(60, 85]` |
+
+```mermaid
+block-beta
+    columns 3
+    space S0(("s0 = 10<br/>server0")) space
+    S3(("s3 = 85<br/>server3")) R["Hash ring<br/>0–99<br/>Clockwise ownership"] S1(("s1 = 35<br/>server1"))
+    space S2(("s2 = 60<br/>server2")) space
+
+    S0 --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S0
+
+    classDef server0 fill:#b00000,stroke:#fff,color:#fff
+    classDef server1 fill:#b86600,stroke:#fff,color:#fff
+    classDef server2 fill:#55aa00,stroke:#fff,color:#fff
+    classDef server3 fill:#073db5,stroke:#fff,color:#fff
+    class S0 server0
+    class S1 server1
+    class S2 server2
+    class S3 server3
+    style R fill:transparent,stroke:transparent,color:#111
+```
+
+**Diagram:** Arrows show clockwise order in hash space, **not network connections between servers**. Keys are assigned as follows:
+
+| Key/request | Hash position | First token clockwise | Owner |
+| --- | ---: | --- | --- |
+| `r1` | `20` | `s1 = 35` | server1 |
+| `r2` | `40` | `s2 = 60` | server2 |
+| `r3` | `70` | `s3 = 85` | server3 |
+| `r4` | `95` | `s0 = 10`, after wrapping | server0 |
+
+For example, `r1` lands between `s0` and `s1`. Moving clockwise reaches `s1` first, so **server1 handles `r1`**.
+
+### Adding or Removing a Server
+
+Consider each change **independently, starting from the original ring above**:
+
+| Change | Affected range | Example | What stays unchanged? |
+| --- | --- | --- | --- |
+| **Add server4 at position 50** | `(35, 50]` changes from server2 to server4. | `r2 = 40` moves to server4; a key at `55` stays on server2. | `r1`, `r3`, and `r4` keep their owners. |
+| **Remove server1 at position 35** | `(10, 35]` changes from server1 to server2, its next surviving clockwise neighbor. | `r1 = 20` moves to server2. | `r2`, `r3`, and `r4` keep their owners. |
+
+**Why this helps:** Other servers keep their existing tokens. Only the affected ranges need reassignment. In a storage system, a separate migration process must actually transfer the data.
+
+> **Reassignment is not recovery.** If a failed server held the only copy, choosing a new owner cannot recreate the lost data. Replicas or backups are still needed.
+
+### Problems with One Token per Server
+
+- **Uneven ranges:** Hashes do not necessarily place servers equally far apart. A server owning a large interval may receive more keys than others.
+- **Concentrated failover load:** If one server is removed, its entire range goes to one successor. That server may overload and fail too, potentially causing a **cascading failure**.
+
+**Example:** If server1 was serving 1,000 requests/second and is removed, server2 may inherit those requests on top of its own traffic. Without spare capacity, server2 can become overloaded.
+
+Even equal-sized ranges do not guarantee equal workload: one popular key may receive far more requests than thousands of other keys.
+
+### Virtual Nodes: Multiple Tokens per Server
+
+**Virtual nodes (vnodes)** give each physical server **several positions on the ring**. Each token owns a small range, but requests still go to its corresponding physical server.
+
+Instead of one position plus three extra *dummy points*, think of **four tokens representing the same machine**:
+
+| Physical server | Its four ring tokens | Actual servers represented |
+| --- | --- | ---: |
+| server0 | `s0`, `s01`, `s02`, `s03` | 1 |
+| server1 | `s1`, `s11`, `s12`, `s13` | 1 |
+| server2 | `s2`, `s21`, `s22`, `s23` | 1 |
+| server3 | `s3`, `s31`, `s32`, `s33` | 1 |
+
+You can generate these positions with **one hash function** and different token identifiers:
+
+```text
+token(server0, 0) = h("server0#0") → s0
+token(server0, 1) = h("server0#1") → s01
+token(server0, 2) = h("server0#2") → s02
+token(server0, 3) = h("server0#3") → s03
+```
+
+Separate hash functions `h`, `h1`, `h2`, and `h3` are **an option, not a requirement**. The important point is to obtain multiple well-distributed, distinct token positions.
+
+**Benefits:** Multiple tokens can improve balance and spread a joining or departing server's ranges across several neighbors. Cassandra uses multiple tokens per physical node for this purpose. [Cassandra's token-ring and vnode explanation](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html#multiple-tokens-per-physical-node-vnodes)
+
+### Enhanced Ring Diagram
+
+```mermaid
+block-beta
+    columns 7
+    space:2 S0(("s0")) S1(("s1")) S2(("s2")) space:2
+    space S23(("s23")) space:3 S3(("s3")) space
+    S33(("s33")) space:5 S01(("s01"))
+    S13(("s13")) space:2 R["Hash ring<br/>4 servers<br/>16 tokens"] space:2 S21(("s21"))
+    S03(("s03")) space:5 S11(("s11"))
+    space S12(("s12")) space:3 S31(("s31")) space
+    space:2 S22(("s22")) S32(("s32")) S02(("s02")) space:2
+
+    S0 --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S01
+    S01 --> S21
+    S21 --> S11
+    S11 --> S31
+    S31 --> S02
+    S02 --> S32
+    S32 --> S22
+    S22 --> S12
+    S12 --> S03
+    S03 --> S13
+    S13 --> S33
+    S33 --> S23
+    S23 --> S0
+
+    classDef server0 fill:#b00000,stroke:#fff,color:#fff
+    classDef server1 fill:#b86600,stroke:#fff,color:#fff
+    classDef server2 fill:#55aa00,stroke:#fff,color:#fff
+    classDef server3 fill:#073db5,stroke:#fff,color:#fff
+    class S0,S01,S02,S03 server0
+    class S1,S11,S12,S13 server1
+    class S2,S21,S22,S23 server2
+    class S3,S31,S32,S33 server3
+    style R fill:transparent,stroke:transparent,color:#111
+```
+
+**Diagram:** Same-colored tokens belong to the **same physical server**, matching the color grouping in the supplied figure. All four tokens per server are shown with distinct labels. This is a schematic ring: the spacing does not represent actual hash distances, and token names are identifiers—not their numeric order. Keys lie between tokens and still go to the first clockwise token.
+
+**Routing examples:**
+
+| Key position on this ring | Next clockwise token | Physical destination |
+| --- | --- | --- |
+| Between `s3` and `s01` | `s01` | server0 |
+| Between `s01` and `s21` | `s21` | server2 |
+| Between `s31` and `s02` | `s02` | server0 |
+| Between `s33` and `s23` | `s23` | server2 |
+
+**If server0 is removed, all its red tokens disappear:**
+
+- The range previously owned by `s0` goes to `s1` → **server1**.
+- The range previously owned by `s01` goes to `s21` → **server2**.
+- The range previously owned by `s02` goes to `s32` → **server3**.
+- The range previously owned by `s03` goes to `s13` → **server1**.
+
+Its load is therefore spread across **three surviving physical servers**, rather than pushed entirely onto one. This improves the distribution in this example; it does not guarantee perfectly equal load or prevent overload without enough spare capacity.
+
+### Applications and Practical Limits
+
+| Application | What consistent hashing helps decide |
+| --- | --- |
+| **Distributed cache** | Which cache server should hold a key, while limiting cache misses when membership changes. |
+| **Distributed database** | Which node owns a partition-key range; replication and consistency rules are separate concerns. |
+| **Key-based request routing** | Which backend handles a customer, session, or object key, with fewer routing changes as servers change. |
+| **Content-cache layer** | Which cache holds an object in a CDN or distributed content-serving system that uses this placement scheme. |
+
+Practical designs must also handle:
+
+- **Membership updates:** Routers need an appropriate, coordinated view of the token map. A temporary outage need not trigger permanent removal and data migration.
+- **Data movement:** Transfer ranges safely when nodes join or leave; reassignment alone does not move stored bytes.
+- **Replication:** Store copies on distinct physical nodes, preferably across independent failure domains. Several vnodes on one machine are **not independent replicas**. [Cassandra's replication explanation](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html#multi-master-replication-versioned-data-and-tunable-consistency)
+- **Capacity and hot keys:** More tokens can improve key distribution, but do not add CPU or memory. Higher-capacity servers can be assigned more tokens; a single hot key may still need caching or replication.
+- **Overhead:** More tokens mean a larger token map and more ranges to manage during migration or repair.
+
+> **Recall:** Consistent hashing limits **key movement**. Virtual nodes improve **range distribution**. Replication protects **data copies**. None of these alone guarantees availability, strong consistency, or perfectly balanced traffic.
 
 ## Bloom Filters
 
@@ -960,6 +1185,8 @@ Imagine **three controllers: A, B, and C**. A majority is **two**:
 
 ## References
 
+- [David Karger and colleagues — Consistent Hashing and Random Trees](https://people.csail.mit.edu/karger/Papers/web.pdf)
+- [Apache Cassandra — Consistent Hashing, Virtual Nodes, and Replication](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
 - [Michael J. Fischer, Nancy A. Lynch, and Michael S. Paterson — Impossibility of Distributed Consensus with One Faulty Process](https://cs.nyu.edu/~apanda/classes/sp25/papers/fischer85impossibility.pdf)
 - [Cynthia Dwork, Nancy Lynch, and Larry Stockmeyer — Consensus in the Presence of Partial Synchrony](https://groups.csail.mit.edu/tds/papers/Lynch/jacm88.pdf)
 - [James Aspnes — Randomized Protocols for Asynchronous Consensus](https://arxiv.org/html/cs/0209014)
