@@ -72,6 +72,15 @@
   - [Limitations and Safe Use](#limitations-and-safe-use)
   - [DSA-Style Bloom Filter Implementation](#dsa-style-bloom-filter-implementation)
 - [Count-Min Sketch](#count-min-sketch)
+  - [Count-Min Structure and Operations](#count-min-structure-and-operations)
+  - [Hash-Mapping Example](#hash-mapping-example)
+  - [Counter-Update Walkthrough](#counter-update-walkthrough)
+  - [Corrected Counter-Matrix Diagram](#corrected-counter-matrix-diagram)
+  - [Querying with the Minimum](#querying-with-the-minimum)
+  - [Count-Min Error Guarantee and Sizing](#count-min-error-guarantee-and-sizing)
+  - [Applications and Distributed Aggregation](#applications-and-distributed-aggregation)
+  - [Count-Min Limitations and Bloom Filter Comparison](#count-min-limitations-and-bloom-filter-comparison)
+  - [DSA-Style Count-Min Sketch Implementation](#dsa-style-count-min-sketch-implementation)
 - [HyperLogLog](#hyperloglog)
 - [References](#references)
 
@@ -1344,7 +1353,197 @@ Insertion and worst-case lookup take **O(k)** work under constant-time hashing a
 
 ## Count-Min Sketch
 
-> Study notes to be added.
+**Count-Min Sketch (CMS)** is a space-efficient, probabilistic data structure that estimates **how often an element appears in a stream**. It keeps a fixed matrix of counters instead of storing an exact count for every distinct key.
+
+> **Mental model:** Count a key in several hash rows, then trust the **smallest count**. Collisions add noise; the minimum chooses the least inflated row.
+
+### Count-Min Structure and Operations
+
+| Component | Meaning |
+| --- | --- |
+| **Width w** | Number of counter columns per row. |
+| **Depth d** | Number of rows and hash functions—one hash function per row. |
+| **Counter matrix C** | d × w counters, initially all zero. |
+| **Row hash hi(x)** | Selects a column from 0 to w − 1 for key x in row i. |
+
+**Update:** When x appears, increment `C[i][hi(x)]` in **every row**. For a weighted event, add its nonnegative weight instead of 1.
+
+**Query:** Read those same d counters and take the minimum:
+
+$$
+\widehat{f}_x = \min_{1 \le i \le d} C[i][h_i(x)]
+$$
+
+Here, $f_x$ is the actual frequency and $\widehat{f}_x$ its estimate. Equal column numbers in different rows refer to **different cells**; each row must be updated.
+
+### Hash-Mapping Example
+
+Use **w = 10**, **d = 5**, and the stream:
+
+```text
+A, A, B, D, B, A, A, D, B, B, ...
+```
+
+The illustrative hash functions produce:
+
+| Hash row | A | B | C | D |
+| --- | ---: | ---: | ---: | ---: |
+| **h1** | 0 | 1 | 0 | 8 |
+| **h2** | 2 | 3 | 4 | 3 |
+| **h3** | 4 | 4 | 3 | 5 |
+| **h4** | 8 | 7 | 7 | 7 |
+| **h5** | 9 | 2 | 9 | 1 |
+
+For example, A increments cells `(h1, 0)`, `(h2, 2)`, `(h3, 4)`, `(h4, 8)`, and `(h5, 9)`.
+
+### Counter-Update Walkthrough
+
+Initially, **every row is `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`**. The first four events change the matrix as follows; each vector lists columns **0–9**:
+
+| Row | After A | After A, A |
+| --- | --- | --- |
+| h1 | `[1,0,0,0,0,0,0,0,0,0]` | `[2,0,0,0,0,0,0,0,0,0]` |
+| h2 | `[0,0,1,0,0,0,0,0,0,0]` | `[0,0,2,0,0,0,0,0,0,0]` |
+| h3 | `[0,0,0,0,1,0,0,0,0,0]` | `[0,0,0,0,2,0,0,0,0,0]` |
+| h4 | `[0,0,0,0,0,0,0,0,1,0]` | `[0,0,0,0,0,0,0,0,2,0]` |
+| h5 | `[0,0,0,0,0,0,0,0,0,1]` | `[0,0,0,0,0,0,0,0,0,2]` |
+
+| Row | After A, A, B | After A, A, B, D |
+| --- | --- | --- |
+| h1 | `[2,1,0,0,0,0,0,0,0,0]` | `[2,1,0,0,0,0,0,0,1,0]` |
+| h2 | `[0,0,2,1,0,0,0,0,0,0]` | `[0,0,2,2,0,0,0,0,0,0]` |
+| h3 | `[0,0,0,0,3,0,0,0,0,0]` | `[0,0,0,0,3,1,0,0,0,0]` |
+| h4 | `[0,0,0,0,0,0,0,1,2,0]` | `[0,0,0,0,0,0,0,2,2,0]` |
+| h5 | `[0,0,1,0,0,0,0,0,0,2]` | `[0,1,1,0,0,0,0,0,0,2]` |
+
+**Collision examples:**
+
+- **A and B share h3 column 4:** After A, A, B, that cell is **3**, even though A appeared twice and B once.
+- **B and D share h2 column 3 and h4 column 7:** After D, these cells each become **2**.
+- Other rows can still separate those keys, letting the minimum recover the exact counts in this example.
+
+> **Figure correction:** The supplied snapshots contain missing or misplaced increments. These states follow the hash table consistently: A uses **h4 column 8**, B increments **h5 column 2**, and D increments **h1 column 8** and **h5 column 1**. Each row's sum after four unit events must be **4**.
+
+### Corrected Counter-Matrix Diagram
+
+```mermaid
+block-beta
+    columns 11
+    TITLE["Counter matrix after A, A, B, D — width w = 10, depth d = 5"]:11
+    ROW["Hash row"] H0["0"] H1["1"] H2["2"] H3["3"] H4["4"] H5["5"] H6["6"] H7["7"] H8["8"] H9["9"]
+    R1["h1"] C10["2"] C11["1"] C12["0"] C13["0"] C14["0"] C15["0"] C16["0"] C17["0"] C18["1"] C19["0"]
+    R2["h2"] C20["0"] C21["0"] C22["2"] C23["2"] C24["0"] C25["0"] C26["0"] C27["0"] C28["0"] C29["0"]
+    R3["h3"] C30["0"] C31["0"] C32["0"] C33["0"] C34["<b>3</b>"] C35["1"] C36["0"] C37["0"] C38["0"] C39["0"]
+    R4["h4"] C40["0"] C41["0"] C42["0"] C43["0"] C44["0"] C45["0"] C46["0"] C47["2"] C48["2"] C49["0"]
+    R5["h5"] C50["0"] C51["1"] C52["1"] C53["0"] C54["0"] C55["0"] C56["0"] C57["0"] C58["0"] C59["2"]
+
+    classDef header fill:#fff,stroke:#111,color:#111
+    classDef counter fill:#a4ffc0,stroke:#111,color:#111
+    classDef shared fill:#a4ffc0,stroke:#111,color:#d32f2f
+    class TITLE,ROW,H0,H1,H2,H3,H4,H5,H6,H7,H8,H9,R1,R2,R3,R4,R5 header
+    class C10,C11,C12,C13,C14,C15,C16,C17,C18,C19,C20,C21,C22,C23,C24,C25,C26,C27,C28,C29,C30,C31,C32,C33,C35,C36,C37,C38,C39,C40,C41,C42,C43,C44,C45,C46,C47,C48,C49,C50,C51,C52,C53,C54,C55,C56,C57,C58,C59 counter
+    class C34 shared
+```
+
+**Diagram:** Each row is a separate hash array. The highlighted **3** combines A's two occurrences with B's one occurrence. The other counter snapshots are listed above; the green cells match the supplied figures' counter styling.
+
+### Querying with the Minimum
+
+After **A, A, B, D**:
+
+| Key | Its selected counters, h1–h5 | Minimum estimate | Actual count |
+| --- | --- | ---: | ---: |
+| **A** | `[2, 2, 3, 2, 2]` | **2** | 2 |
+| **B** | `[1, 2, 3, 2, 1]` | **1** | 1 |
+| **C** | `[2, 0, 0, 2, 2]` | **0** | 0 |
+| **D** | `[1, 2, 1, 2, 1]` | **1** | 1 |
+
+After the **ten events shown in the stream**, estimates happen to be exact: **A = 4, B = 4, C = 0, D = 2**.
+
+**Why the minimum?** Every selected counter includes the key's own count, plus any collisions. Taking the smallest selects the row with the least extra noise. It does **not** subtract all collision noise or always return an exact count.
+
+**Simple overestimation example:** With only **one column per row**, X appearing three times and Y twice makes every counter **5**. Querying X returns **5**, although its true count is **3**. Even an unseen Z returns **5** because it hashes to the same cells.
+
+> With nonnegative updates and no overflow, **CMS does not underestimate**, but it can **overestimate**, including for unseen keys. A positive estimate is not proof of membership.
+
+### Count-Min Error Guarantee and Sizing
+
+Let **F** be total update weight, **ε** the additive-error factor, and **δ** the failure probability. A standard sizing choice is:
+
+$$
+w = \left\lceil \frac{e}{\varepsilon} \right\rceil,
+\qquad
+d = \left\lceil \ln\frac{1}{\delta} \right\rceil
+$$
+
+For a fixed queried key x and suitable independently selected row hashes:
+
+$$
+f_x \le \widehat{f}_x \le f_x + \varepsilon F
+\quad\text{with probability at least }1-\delta
+$$
+
+This is a guarantee for **nonnegative frequencies** with appropriate hashing, not automatically a guarantee for every query simultaneously or for any arbitrary hash implementation. [Original Count-Min Sketch analysis](https://www.cs.ox.ac.uk/people/graham.cormode/pubs/papers/cm-full.pdf)
+
+**Example:** Choose ε = 0.01 and δ = 0.01:
+
+$$
+w = \lceil e/0.01\rceil = 272,
+\qquad
+d = \lceil\ln 100\rceil = 5
+$$
+
+That gives **1,360 counters**, or **10,880 bytes** with 64-bit counters, excluding seeds and container overhead. After **F = 100,000** unit events, the additive error allowance is:
+
+$$
+\varepsilon F = 0.01 \times 100000 = 1000
+$$
+
+The estimate for a fixed key is between its true count and **true count + 1,000** with at least 99% probability under the assumptions. This is **not 1% of that key's own frequency**; low-frequency items can have large relative error.
+
+| Design change | Effect |
+| --- | --- |
+| **Increase width w** | Less collision noise per row and a smaller additive-error allowance; more memory. |
+| **Increase depth d at fixed width** | More chances to obtain a low-noise row; reduces the probability of a large error, but increases work and memory. |
+| **Increase total stream weight at fixed dimensions** | Absolute error allowance grows with F; counters also need enough range. |
+
+Unlike adding hashes to a Bloom filter's single array, adding CMS depth creates **additional counter rows**. At a fixed total memory budget, adding rows may require reducing width, so balance both parameters.
+
+### Applications and Distributed Aggregation
+
+| Application | Example |
+| --- | --- |
+| **Frequency estimation** | Approximate word occurrences or product-view popularity. |
+| **Traffic analysis** | Count packets or bytes associated with an address or protocol. |
+| **Web analytics** | Estimate page visits, clicks, or other interactions. |
+| **Distributed monitoring** | Summarize request frequencies across many service instances. |
+| **Streaming analytics** | Maintain approximate counts without keeping the full stream. |
+
+**Distributed example:** Two service instances each maintain a sketch. If width, depth, row hashes/seeds, and key encoding match, adding corresponding counters produces the sketch for their **combined events**. Add totals too. Overlapping or replayed events count twice; merging is not deduplication.
+
+Redis exposes Count-Min Sketch initialization, increment, and query commands as an existing system implementation. Its sizing/API conventions need not match the mathematical constants or teaching code here. [Redis Count-Min Sketch documentation](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
+
+### Count-Min Limitations and Bloom Filter Comparison
+
+- **Not exact accounting:** Use exact records for billing, balances, or other decisions requiring precise counts.
+- **Not a key directory:** A basic sketch cannot enumerate its elements or identify top keys on its own. Heavy-hitter discovery needs candidate tracking or an additional algorithm.
+- **Not unique-visitor counting:** CMS estimates occurrences of a supplied key; it does not estimate the number of distinct keys. HyperLogLog addresses that different question.
+- **No automatic time window:** Standard counters accumulate. Sliding windows, resets, or decay need an explicit design.
+- **Update-model matters:** The simple implementation accepts only nonnegative increments. Signed updates require additional assumptions or a different query method; do not blindly apply the same guarantee.
+- **Hash quality and state integrity matter:** Poor hashes, uncoordinated updates, or counter overflow can invalidate useful accuracy guarantees.
+
+| Structure | Question answered | Stored summary | Typical approximation |
+| --- | --- | --- | --- |
+| **Bloom filter** | Could x be in the set? | Bits | False positives, but no false negatives under its assumptions. |
+| **Count-Min Sketch** | How often did x appear? | Counters in separate hash rows | Overestimation from collisions for nonnegative updates. |
+
+> **Recall:** Bloom filters summarize **membership**; Count-Min Sketch summarizes **frequency**. Both save memory by not storing all original keys.
+
+### DSA-Style Count-Min Sketch Implementation
+
+**Hands-on C++17 core:** [count_min_sketch_dsa.cpp](examples/count_min_sketch/count_min_sketch_dsa.cpp) implements **Update** and **Estimate** with nonnegative weighted updates and overflow protection. It reproduces the corrected A/B/C/D walkthrough and demonstrates a forced overestimate. See the [README: pseudocode, complexity, build commands, and exact output](examples/count_min_sketch/README.md).
+
+Updates and queries take **O(d)** work with constant-time hashing assumptions, or **O(d(L + 1))** with this implementation's string hashing for L-byte keys. Storage is **O(dw)** counters plus d hash seeds. This is educational code, without networking, persistence, concurrent access, or a merge API.
 
 ## HyperLogLog
 
@@ -1352,6 +1551,8 @@ Insertion and worst-case lookup take **O(k)** work under constant-time hashing a
 
 ## References
 
+- [Graham Cormode and S. Muthukrishnan — An Improved Data Stream Summary: The Count-Min Sketch and its Applications](https://www.cs.ox.ac.uk/people/graham.cormode/pubs/papers/cm-full.pdf)
+- [Redis — Count-Min Sketch Data Type](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
 - [Adam Kirsch, Michael Mitzenmacher, and George Varghese — Hash-Based Techniques for High-Speed Packet Processing](https://www.eecs.harvard.edu/~michaelm/postscripts/dimacs-chapter-08.pdf)
 - [RocksDB — Bloom Filter Design and Database Use](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter)
 - [David Karger and colleagues — Consistent Hashing and Random Trees](https://people.csail.mit.edu/karger/Papers/web.pdf)
