@@ -63,6 +63,14 @@
   - [Enhanced Ring Diagram](#enhanced-ring-diagram)
   - [Applications and Practical Limits](#applications-and-practical-limits)
 - [Bloom Filters](#bloom-filters)
+  - [How a Bloom Filter Works](#how-a-bloom-filter-works)
+  - [Membership Guarantees](#membership-guarantees)
+  - [Username Example](#username-example)
+  - [Membership Decision Diagram](#membership-decision-diagram)
+  - [Sizing and False-Positive Trade-Offs](#sizing-and-false-positive-trade-offs)
+  - [Bloom Filter Applications](#bloom-filter-applications)
+  - [Limitations and Safe Use](#limitations-and-safe-use)
+  - [DSA-Style Bloom Filter Implementation](#dsa-style-bloom-filter-implementation)
 - [Count-Min Sketch](#count-min-sketch)
 - [HyperLogLog](#hyperloglog)
 - [References](#references)
@@ -1177,7 +1185,162 @@ Practical designs must also handle:
 
 ## Bloom Filters
 
-> Study notes to be added.
+**A Bloom filter** is a space-efficient, probabilistic data structure for checking whether an element belongs to a set. It stores a **bit array**, not the elements themselves.
+
+> **Mental model:** A Bloom filter is a fast rejection gate: **“definitely not here”** or **“might be here—check the real set.”**
+
+### How a Bloom Filter Works
+
+The filter has:
+
+- **m bits**, initially all 0.
+- **k hash functions**, each selecting a position from `0` to `m − 1`.
+
+**Insert an element:** Apply all k hashes and set their selected bits to 1. Multiple elements can share the same bits.
+
+**Check an element:** Apply the **same** hashes:
+
+- If **any selected bit is 0**, the element is **definitely absent** from the represented set.
+- If **all selected bits are 1**, the element is **possibly present**. Those bits could have been set by other elements.
+
+The result is deterministic for a fixed filter and key; *probabilistic* describes the chance that an absent key's positions happen to be occupied.
+
+### Membership Guarantees
+
+| Filter answer | What it means | Possible error |
+| --- | --- | --- |
+| **Definitely absent** | At least one required bit is 0; this key was not successfully inserted. | No false negative under the filter's operating assumptions. |
+| **Possibly present** | All required bits are 1. | A **false positive**: the key may never have been inserted. |
+
+**Why no false negatives?** Inserting a key sets all of its bits. Later insertions only set more bits; they never clear the existing ones.
+
+This guarantee assumes completed insertions, unchanged hashes/configuration, intact bits, and correct synchronization. It describes **the set represented by the filter**, not a newer database whose updates have not reached it.
+
+### Username Example
+
+Suppose the existing usernames are **john, dave, and peter**, with **m = 10** bits and **k = 2** hash functions. Positions are zero-indexed.
+
+| Username | h1 position | h2 position |
+| --- | ---: | ---: |
+| `john` | 5 | 8 |
+| `dave` | 3 | 5 |
+| `peter` | 2 | 9 |
+
+| Step | Bit array: positions 0–9 |
+| --- | --- |
+| Initialize | `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]` |
+| Insert john: set 5 and 8 | `[0, 0, 0, 0, 0, 1, 0, 0, 1, 0]` |
+| Insert dave: set 3 and 5 | `[0, 0, 0, 1, 0, 1, 0, 0, 1, 0]` |
+| Insert peter: set 2 and 9 | `[0, 0, 1, 1, 0, 1, 0, 0, 1, 1]` |
+
+Now check two proposed usernames:
+
+| Query | Hash positions | Bits inspected | Filter answer | Actual membership |
+| --- | --- | --- | --- | --- |
+| **donald** | 3 and 7 | 1 and **0** | **Definitely absent** | Not in the existing set. |
+| **sarah** | 3 and 8 | 1 and 1 | **Possibly present** | Not in the existing set: a **false positive**. |
+
+**Why does sarah produce a false positive?** Dave set bit 3, and john set bit 8. Sarah's hashes select those same bits. The filter remembers only that they are set—not which usernames set them.
+
+> The filter does **not** prove that sarah is taken; check the authoritative username store. Donald is absent from the represented set, but that does **not reserve the name**. Another user could claim it concurrently, so final registration needs an **atomic database uniqueness constraint**.
+
+### Membership Decision Diagram
+
+```mermaid
+flowchart TB
+    Q["Membership query"] --> H["Hash the key to k bit positions"]
+    H --> B{"Is any selected bit 0?"}
+    B -->|Yes| N["Definitely absent<br/>Skip the represented-set lookup"]
+    B -->|No| M["Possibly present"]
+    M --> E["Check the authoritative set<br/>when exact membership is required"]
+    E --> R{"Actually present?"}
+    R -->|Yes| P["Confirmed member"]
+    R -->|No| F["False positive<br/>Not a member"]
+
+    classDef step fill:#dcecff,stroke:#326ce5,color:#111
+    classDef decision fill:#fff4cc,stroke:#b58a00,color:#111
+    classDef absent fill:#d8f0df,stroke:#26834a,color:#111
+    classDef possible fill:#ffe1d6,stroke:#b45030,color:#111
+    class Q,H,E step
+    class B,R decision
+    class N,P absent
+    class M,F possible
+```
+
+**Diagram assumption:** The filter accurately represents the set being queried. Skipping a lookup based on a stale filter can miss newer records. For username creation, neither branch replaces the database's atomic uniqueness check.
+
+### Sizing and False-Positive Trade-Offs
+
+Let **n** be the number of distinct inserted elements, **m** the bit count, **k** the hash count, and **p** the false-positive probability for an absent key.
+
+Under the usual well-distributed, approximately independent hashing assumptions:
+
+$$
+p \approx \left(1-e^{-kn/m}\right)^k
+$$
+
+For a planned n and target p, useful sizing estimates are:
+
+$$
+m \approx -\frac{n\ln p}{(\ln 2)^2},
+\qquad
+k_{\mathrm{opt}} \approx \frac{m}{n}\ln 2
+$$
+
+Choose an integer k near the optimum. These are sizing approximations, not an exact prediction for every small filter or hash implementation. [Bloom-filter analysis](https://www.eecs.harvard.edu/~michaelm/postscripts/dimacs-chapter-08.pdf)
+
+**Example:** To represent **1,000 distinct keys** with roughly **1% false positives**:
+
+$$
+m \approx -\frac{1000\ln(0.01)}{(\ln 2)^2}
+\approx 9585\text{ bits}
+$$
+
+Round to about **9,600 bits = 1,200 bytes**, then:
+
+$$
+k_{\mathrm{opt}} \approx \frac{9600}{1000}\ln 2
+\approx 6.65 \quad\Rightarrow\quad k = 7
+$$
+
+This is the bit-array budget, excluding configuration/container overhead. About 1% of **absent-key queries** may require an unnecessary exact lookup; it does not mean 1% of inserted keys disappear.
+
+| Change | Benefit / cost |
+| --- | --- |
+| **Increase m at fixed n and k** | Generally fewer false positives, but more memory. |
+| **Increase k toward the optimum** | Can reduce false positives, but adds hashing and bit probes. |
+| **Increase k beyond the optimum** | Can increase false positives by setting too many bits, as well as increasing CPU cost. |
+| **Insert more distinct elements at fixed m and k** | More bits become 1, increasing false positives; a saturated filter becomes unhelpful. |
+
+> **More hash functions are not always better.** Size the bit array and hash count together for the expected number of distinct elements.
+
+### Bloom Filter Applications
+
+| Application | How the filter helps | Important qualification |
+| --- | --- | --- |
+| **Membership screening** | Quickly reject unseen URLs in a crawler or absent words in a dictionary. | Verify positives if exact membership matters. |
+| **Cache lookup screening** | Skip an expensive cache lookup when a key is definitely absent from the represented cache contents. | Keep membership updates safe; the filter's own cost must be worthwhile. |
+| **Database disk-read reduction** | Skip an SST file that definitely does not contain a key. | A positive still requires the normal lookup. RocksDB uses Bloom filters this way. |
+| **Network candidate screening** | Summarize sets to narrow possible destinations or other lookup candidates. | A probabilistic match is not authoritative routing or authorization. |
+| **Duplicate detection** | Identify possible repeats before an exact duplicate check. | Discarding every positive can wrongly discard a new item. |
+
+RocksDB's filters avoid unnecessary work for absent keys; false positives add extra lookup work rather than inventing records. [RocksDB Bloom-filter documentation](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter)
+
+### Limitations and Safe Use
+
+- **No ordinary deletion:** Clearing a bit can erase evidence shared by another key. For example, clearing dave's bit 5 makes an inserted john appear absent. Counting Bloom filters can support deletion with additional counters and careful bookkeeping.
+- **No key retrieval or enumeration:** The filter stores a summary, not the original elements or values.
+- **No automatic capacity growth:** A fixed filter becomes less useful as more distinct keys are inserted. Rebuild or use an appropriate growing-filter design when needed.
+- **No synchronization guarantee:** A stale or incorrectly updated filter may not represent the real set. Distributed updates and concurrent access require separate safeguards.
+- **No exact uniqueness or security decision:** Use authoritative checks where a false positive or stale negative would cause harm.
+
+> **Recall:** Bloom filters save memory and avoid unnecessary lookups by tolerating **false positives**, not false negatives for correctly inserted keys. They are a **pre-filter**, not a replacement for the authoritative data store.
+
+### DSA-Style Bloom Filter Implementation
+
+**Hands-on C++17 core:** [bloom_filter_dsa.cpp](examples/bloom_filter/bloom_filter_dsa.cpp) implements **Insert** and **MayContain** using packed bits and seeded hashes. Its walkthrough reproduces the username example above, including sarah's false positive. See the [README: pseudocode, complexity, build commands, and exact output](examples/bloom_filter/README.md).
+
+Insertion and worst-case lookup take **O(k)** work under constant-time hashing assumptions; string hashing in this implementation takes **O(k(L + 1))** for a key of L bytes. Storage is **m bits**, rounded to words, plus k hash seeds. The example is educational, insertion-only, and does not implement database uniqueness or distributed filter synchronization.
 
 ## Count-Min Sketch
 
@@ -1189,6 +1352,8 @@ Practical designs must also handle:
 
 ## References
 
+- [Adam Kirsch, Michael Mitzenmacher, and George Varghese — Hash-Based Techniques for High-Speed Packet Processing](https://www.eecs.harvard.edu/~michaelm/postscripts/dimacs-chapter-08.pdf)
+- [RocksDB — Bloom Filter Design and Database Use](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter)
 - [David Karger and colleagues — Consistent Hashing and Random Trees](https://people.csail.mit.edu/karger/Papers/web.pdf)
 - [Apache Cassandra — Consistent Hashing, Virtual Nodes, and Replication](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
 - [Envoy — Ring-Hash C++ Implementation](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/ring_hash/ring_hash_lb.cc)
