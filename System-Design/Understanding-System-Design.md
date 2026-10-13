@@ -20,7 +20,10 @@
   - [Evaluating Trade-Offs](#evaluating-trade-offs)
 - [Key Takeaway](#key-takeaway)
 - [System Design vs. Software Architecture](#system-design-vs-software-architecture)
-- [System Design & Deployment Infra, Ops, Networking](#system-design--deployment-infra-ops-networking)
+- [System Design and Related Engineering Disciplines](#system-design-and-related-engineering-disciplines)
+  - [Responsibilities and Overlap](#responsibilities-and-overlap)
+  - [System Design vs. Network Engineering](#system-design-vs-network-engineering)
+  - [Example: Scaling an E-Commerce Platform](#example-scaling-an-e-commerce-platform)
 - [System Design vs. Solution Architecture](#system-design-vs-solution-architecture)
   - [Example: E-commerce platform](#example-e-commerce-platform)
   - [Key takeaway](#key-takeaway-1)
@@ -287,16 +290,88 @@ A useful mental model:
 
 So, **software architecture is largely the high-level part of system design**, not a completely separate discipline.
 
-## System Design & Deployment Infra, Ops, Networking
+## System Design and Related Engineering Disciplines
 
-**System design includes deployment infrastructure, networking, reliability, observability, and operational concerns** at the architectural level.
+**System design** defines how the complete system and its components should work. It includes **high-level architecture (HLD)** and **low-level component design (LLD)**, not just connecting services in a diagram.
 
-DevOps/network engineers usually handle the **deeper implementation and operation**.
+Deployment infrastructure, networking, data storage, reliability, security, and observability are part of these decisions. Specialized engineering disciplines contribute the detailed expertise to design, build, optimize, and operate each part.
 
-So:
+### Responsibilities and Overlap
 
-- **System designer/architect:** decides what infrastructure/networking is needed and why.
-- **DevOps/network engineer:** implements, configures, automates, and operates it.
+| Discipline | Main focus | E-commerce example |
+| --- | --- | --- |
+| **System design** | How the whole system and its components work together, including HLD and LLD | Define services, APIs, storage, scaling, consistency, and failure handling. |
+| **Software engineering** | Building and testing software, including detailed component design | Implement order processing, payment workflows, algorithms, and APIs; prevent duplicate payments. |
+| **Network engineering** | Designing and operating connectivity and network infrastructure | Configure subnets, routing, firewalls, and connectivity between services. |
+| **DevOps / SRE** | Delivery automation and operational reliability | Automate deployments, manage Kubernetes and autoscaling, monitor failures, and test recovery. |
+| **Database engineering** | Data modeling, storage, integrity, and database performance | Design schemas and indexes, tune queries, and configure replication and recovery. |
+
+> These are **overlapping responsibilities**, not separate stages where one discipline decides everything and others merely implement it. Software, network, database, and operations specialists also help shape the system design.
+
+### System Design vs. Network Engineering
+
+Networking is essential to distributed systems, but these disciplines usually focus on different questions.
+
+**System design — communication behavior:**
+
+- **Application-level protocols and APIs:** HTTP, gRPC, and WebSockets; how requests, responses, and errors are represented.
+- **Transport choices:** TCP or UDP where relevant. These operate below application-level protocols, not at the same layer.
+- **Communication patterns:** Synchronous requests versus asynchronous queues and events.
+- **Failure handling:** Timeouts, retries, delayed messages, lost connections, and unavailable dependencies.
+- **Discovery and distribution:** Service discovery, load balancing, and failover.
+- **Correctness guarantees:** Message ordering, delivery guarantees, duplicate handling, and consistency.
+
+**Network engineering — infrastructure and connectivity:**
+
+- **Addressing and segmentation:** IP addresses, subnets, and VLANs.
+- **Network components:** Routers, switches, and firewalls.
+- **Topology and routing:** Physical or virtual connectivity and routing protocols.
+- **Secure connectivity:** VPNs, network segmentation, and permitted communication paths.
+- **Network performance and diagnosis:** Bandwidth, latency, congestion, packet loss, and packet-level troubleshooting.
+
+**Example: Two services communicate.**
+
+> **System design asks:** Should they use an HTTP API, gRPC, or a message queue? What happens when a request is lost or delayed, and is retrying safe?
+>
+> **Network engineering asks:** How are their servers physically or virtually connected? How are packets routed, and which connections do firewalls allow?
+
+System design **does not assume that networking always works**. It designs communication around network limitations and failures. Network engineering goes deeper into the infrastructure that makes that communication possible; both disciplines address performance, reliability, and security at their respective levels.
+
+### Example: Scaling an E-Commerce Platform
+
+Consider an online store with an illustrative target of **one million concurrent users**. A simplified architecture could be:
+
+```mermaid
+flowchart TB
+    USERS["Customers"] --> LB["Load balancer"]
+    LB --> GATEWAY["API gateway instances"]
+    GATEWAY --> PRODUCTS["Product service<br/>Multiple replicas"]
+    GATEWAY --> ORDERS["Order service<br/>Multiple replicas"]
+    ORDERS --> PAYMENTS["Payment service<br/>Multiple replicas"]
+    PRODUCTS --> CACHE["Product cache"]
+    PRODUCTS --> PRODUCTDB[("Product database")]
+    ORDERS --> ORDERDB[("Order database")]
+    PAYMENTS --> PAYMENTDB[("Payment database")]
+    ORDERS -->|Order events| BROKER["Message broker"]
+    BROKER --> NOTIFY["Notification workers"]
+```
+
+**Diagram:** The load balancer distributes incoming traffic across gateway instances; the gateway routes requests to services. Internal service-instance selection is omitted for clarity. Payment processing is shown as a synchronous service call; notifications use asynchronous events. Each database represents its logical storage layer, not necessarily one physical server.
+
+**System design decisions include:**
+
+- **Service replication:** Run multiple instances so work can be distributed and individual failures can be tolerated.
+- **Load balancing:** Route traffic to eligible, healthy instances without overloading a small subset.
+- **Caching:** Reuse frequently accessed product information instead of querying storage every time.
+- **Asynchronous processing:** Queue non-critical work, such as notifications, rather than delaying checkout.
+- **Storage and consistency:** Choose database schemas, partitioning and replication strategies, and the required freshness and correctness of reads and writes.
+- **Safe retries and recovery:** Define timeouts, idempotency, and recovery behavior—for example, retrying a payment request must not charge the customer twice.
+
+Software engineers implement the workflows and APIs; network engineers establish connectivity and access controls; database engineers optimize storage and queries; DevOps/SRE engineers automate deployment, monitoring, scaling, and recovery. **All contribute expertise to the design itself.**
+
+> **A user count is not a capacity proof.** One million connected users and one million simultaneous checkout operations are very different workloads. Define request rates, user behavior, payloads, data size, and latency targets, then validate the design through load and failure testing.
+
+> **Recall:** System design defines how the complete system should work. Specialized engineering disciplines help **design, build, optimize, and operate** its parts.
 
 ## System Design vs. Solution Architecture
 
