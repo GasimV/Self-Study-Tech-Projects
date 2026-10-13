@@ -82,6 +82,17 @@
   - [Count-Min Limitations and Bloom Filter Comparison](#count-min-limitations-and-bloom-filter-comparison)
   - [DSA-Style Count-Min Sketch Implementation](#dsa-style-count-min-sketch-implementation)
 - [HyperLogLog](#hyperloglog)
+  - [Distinct Visitors vs. Total Visits](#distinct-visitors-vs-total-visits)
+  - [Why Rare Bit Patterns Help](#why-rare-bit-patterns-help)
+  - [HyperLogLog Registers and Operations](#hyperloglog-registers-and-operations)
+  - [HyperLogLog Diagram](#hyperloglog-diagram)
+  - [Visitor Walkthrough](#visitor-walkthrough)
+  - [Harmonic Estimation and Small-Range Correction](#harmonic-estimation-and-small-range-correction)
+  - [Accuracy and Memory](#accuracy-and-memory)
+  - [Distributed Merging and Applications](#distributed-merging-and-applications)
+  - [HyperLogLog Limitations](#hyperloglog-limitations)
+  - [DSA-Style HyperLogLog Implementation](#dsa-style-hyperloglog-implementation)
+- [Where These Algorithms Fit in System Design](#where-these-algorithms-fit-in-system-design)
 - [References](#references)
 
 ## Overview
@@ -1547,10 +1558,215 @@ Updates and queries take **O(d)** work with constant-time hashing assumptions, o
 
 ## HyperLogLog
 
-> Study notes to be added.
+**HyperLogLog (HLL)** estimates **cardinality—the number of distinct elements** in a set or stream—using a small, fixed array of registers. It trades exactness for memory efficiency.
+
+> **Mental model:** Hash each ID, remember the rarest bit pattern in each bucket, then combine those summaries to estimate how many **different IDs** appeared. Repeated IDs do not change the summary.
+
+### Distinct Visitors vs. Total Visits
+
+Suppose a website receives:
+
+```text
+alice, bob, alice, carol, bob
+```
+
+- **Total visits = 5:** Count every event.
+- **Distinct visitors = 3:** Count each visitor ID once, regardless of repeat visits.
+
+An exact **set** of IDs solves the second problem. A map from ID to visit count works too, but stores extra information if only uniqueness matters. Both grow with the number of distinct IDs; HLL retains a fixed-size summary instead.
+
+**Memory example:** One billion 64-bit IDs require **8 billion bytes (about 8 GB)** for the raw identifiers alone, before container overhead. One byte cannot represent a billion distinct identities. HLL stores neither those IDs nor their individual counts.
+
+### Why Rare Bit Patterns Help
+
+For approximately uniform hash bits, each bit is roughly like a fair coin flip. A hash beginning with **three zeros followed by one** has probability:
+
+$$
+P(0001\ldots) = (1/2)^4 = 1/16
+$$
+
+A longer zero prefix is rarer. Seeing unusually long prefixes suggests that many different hashes were examined. But one lucky outlier can occur early, so **one longest run is a noisy clue, not an exact count**.
+
+Likewise, the coin sequence **H, H, H, T** has probability 1/16 in a four-flip trial. This does **not** mean it must appear after exactly 16 flips or prove that 16 distinct items were observed.
+
+**Leading or trailing zeros?** Either end can support a consistently defined uniform-hash design. These notes and the code use **leading zeros in the hash remainder**, excluding the bits used to select the bucket. The simplified `2^(longest run + 1)` intuition is **not the complete HLL estimator**.
+
+### HyperLogLog Registers and Operations
+
+| Component | Meaning |
+| --- | --- |
+| **p — precision** | Number of hash bits used to select a bucket. |
+| **m = 2^p** | Number of buckets/registers in this implementation. |
+| **64-bit hash** | One deterministic hash per ID; a repeat ID produces the same hash. |
+| **Bucket j** | The integer represented by the first p hash bits, from 0 to m − 1. |
+| **Rank ρ** | Leading-zero count in the remaining bits **plus 1**; `0001...` has rank 4. |
+| **Register M[j]** | Largest rank observed in bucket j; initially 0. |
+
+**Insert(x):**
+
+1. Hash x once.
+2. Split the hash into **bucket bits** and **remaining bits**.
+3. Determine the remainder's rank.
+4. Update just that bucket: `M[j] = max(M[j], rank)`.
+
+The all-zero remainder has rank **remaining-bit count + 1**. With 64-bit hashes and p = 4, that maximum is **61**.
+
+> HLL does not hash an item separately for every register, increment a visit counter, or remember which IDs were inserted. Each insertion updates **one register with a maximum**.
+
+### HyperLogLog Diagram
+
+```mermaid
+flowchart TB
+    ID["Visitor ID"] --> HASH["One deterministic 64-bit hash"]
+    HASH --> SPLIT["Split the hash"]
+    SPLIT --> BUCKET["First p bits<br/>Select bucket j"]
+    SPLIT --> RANK["Remaining 64-p bits<br/>Rank = leading zeros + 1"]
+    BUCKET --> UPDATE["M[j] = max(M[j], rank)<br/>Only one register changes"]
+    RANK --> UPDATE
+    UPDATE --> REGISTERS["m = 2^p registers<br/>No stored visitor list"]
+    REGISTERS --> ESTIMATE["Combine all registers<br/>Apply small-range correction when needed"]
+    ESTIMATE --> RESULT["Estimated distinct visitor count<br/>Not total visits or a membership answer"]
+
+    classDef step fill:#fff,stroke:#111,color:#111
+    classDef state fill:#a4ffc0,stroke:#111,color:#111
+    class ID,HASH,SPLIT,BUCKET,RANK,ESTIMATE,RESULT step
+    class UPDATE,REGISTERS state
+```
+
+**Diagram:** Different IDs can share a bucket. Repeating the same ID repeats the same bucket and rank, leaving its stored maximum unchanged.
+
+### Visitor Walkthrough
+
+Use **p = 4**, **m = 16** and the example implementation's fixed hash seed **42**. The relevant hash prefixes and updates are:
+
+| ID | Bucket bits | Remainder begins | Rank | Register effect |
+| --- | --- | --- | ---: | --- |
+| `John_1275` | `0001` → 1 | `01...` | 2 | M[1]: 0 → 2 |
+| `David.raymond23` | `0111` → 7 | `1...` | 1 | M[7]: 0 → 1 |
+| `Sarah1978` | `0001` → 1 | `1...` | 1 | M[1] stays 2 |
+| `John` | `0001` → 1 | `1...` | 1 | M[1] stays 2 |
+| `John_1275` again | Same as before | Same as before | 2 | No change |
+| `Sarah1978` again | Same as before | Same as before | 1 | No change |
+
+**Final registers:** M[1] = 2, M[7] = 1, and the other **14 registers remain zero**. There were **6 visits** and **4 distinct IDs**, but the small-range estimate is **2.14**.
+
+This deliberately tiny sketch illustrates an **underestimate**: three distinct names landed in bucket 1 without increasing its maximum. Sharing a bucket does not mean their full 64-bit hashes are identical. Unlike Count-Min Sketch's nonnegative-update guarantee, HLL estimates can be **below or above** the actual cardinality.
+
+### Harmonic Estimation and Small-Range Correction
+
+For positive values $v_1,\ldots,v_m$:
+
+$$
+\operatorname{AM}(v) = \frac{\sum_j v_j}{m},
+\qquad
+\operatorname{HM}(v) = \frac{m}{\sum_j 1/v_j}
+$$
+
+HLL uses **$v_j = 2^{M[j]}$**, not the register ranks themselves. Its raw estimator is:
+
+$$
+E_{\text{raw}} = \alpha_m\frac{m^2}{\sum_{j=0}^{m-1}2^{-M[j]}}
+= \alpha_m m\,\operatorname{HM}(2^{M[0]},\ldots,2^{M[m-1]})
+$$
+
+Here, **αm** corrects systematic bias: **0.673, 0.697, 0.709** for m = 16, 32, 64; for m ≥ 128, use **0.7213 / (1 + 1.079/m)**. A harmonic combination reduces the influence of exceptionally large bucket estimates. It is **not** “average the ranks, then calculate `2^(average + 1)`.” [Original HLL algorithm](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf)
+
+For small sets, many registers are empty and the raw estimate is unsuitable. The teaching implementation applies **linear counting** when $E_{\text{raw}} \le 2.5m$ and **V > 0**, where V is the number of zero registers:
+
+$$
+E_{\text{small}} = m\ln\left(\frac{m}{V}\right)
+$$
+
+In the visitor example, **m = 16** and **V = 14**:
+
+$$
+E_{\text{small}} = 16\ln(16/14) \approx 2.14
+$$
+
+For an empty sketch, V = m, so this returns **0**, not the positive raw estimate. Production variants may use additional bias corrections and sparse representations; this example is **not HLL++**. [HLL engineering improvements](https://research.google/pubs/hyperloglog-in-practice-algorithmic-engineering-of-a-state-of-the-art-cardinality-estimation-algorithm/)
+
+### Accuracy and Memory
+
+A widely used approximation for relative standard error is:
+
+$$
+\operatorname{RSE} \approx \frac{1.04}{\sqrt{m}}
+$$
+
+This describes typical statistical variation under suitable hashing and estimator conditions, **not a maximum error bound for every dataset**, especially for a tiny sketch or small-cardinality correction regime. More registers improve accuracy; roughly four times as many halve the standard error.
+
+| Precision p | Registers m | Approximate RSE | Register payload in this byte-per-register code |
+| ---: | ---: | ---: | ---: |
+| 4 | 16 | 26% — rough illustration | 16 bytes |
+| 10 | 1,024 | 3.25% | 1 KiB |
+| 14 | 16,384 | 0.8125% | 16 KiB |
+
+**Scale example:** With p = 14, the demonstration processes **100,000 distinct IDs twice**. It returns **101,430.83**, an error of about **+1.43%**. The second pass leaves all registers unchanged. An observed error larger than 0.8125% does not violate a hard bound: that number is a standard-error approximation, not a guarantee.
+
+Memory is fixed **for a chosen precision and hash width**, rather than growing per inserted ID. Each register stores a small rank; six bits suffice for the supported 64-bit configuration, although the simple code uses one byte. A packed 16,384-register representation needs **12 KiB** of register payload. Redis uses a dense six-bit layout, with additional metadata, and also supports a sparse representation. [Redis representation details](https://redis.io/docs/latest/commands/pfcount/)
+
+**Why small registers suffice:** Zero-run lengths grow roughly logarithmically with the number of distinct hashes. Storing a length of that scale takes roughly a *logarithm of a logarithm* in bits, rather than storing the full count—hence the LogLog family name. A billion-item scale suggests ranks on the order of 30, but accuracy still requires enough separate registers; it does not justify a reliable billion-visitor estimate from ten bytes.
+
+> **A handful of counters is not automatically accurate.** The register count controls uncertainty. Hash width also limits the useful range: 30 bits can encode about a billion IDs, but random 30-bit hashes would have substantial collisions at that scale. Encoding capacity is not the same as collision-safe hashing.
+
+### Distributed Merging and Applications
+
+Compatible sketches merge by **taking the maximum of each corresponding register**, not by adding registers or estimated counts:
+
+$$
+M_{\text{union}}[j] = \max(M_A[j], M_B[j])
+$$
+
+**Example:** Server A observes `{alice, bob}` and server B observes `{bob, carol}`. Their union has **3** distinct IDs, not 2 + 2 = 4. With matching configuration, merging yields the same registers as inserting their combined IDs into one sketch; overlapping visitors are not counted twice.
+
+The code checks precision and seed compatibility. Real systems must also match the hash algorithm, ID encoding/normalization, rank convention, register layout, and intended time window. Merge is **commutative, associative, and idempotent**: repeated merges do not double-count the same observations.
+
+| Application | Question answered |
+| --- | --- |
+| **Web/product analytics** | How many distinct visitor IDs viewed this page or video? |
+| **Database analytics** | Approximately how many distinct values exist in a column? |
+| **Network monitoring** | How many different source addresses or flows appeared? |
+| **Distributed stream processing** | How many distinct IDs occurred across all partitions? |
+
+Redis provides **PFADD**, **PFCOUNT**, and **PFMERGE** for insertion, estimation, and union summaries. This teaching code does not reproduce its storage format or estimator implementation. [Redis HLL documentation](https://redis.io/docs/latest/develop/data-types/probabilistic/hyperloglogs/)
+
+### HyperLogLog Limitations
+
+- **Approximate, not exact:** Use authoritative records for billing, financial balances, or exact uniqueness constraints.
+- **No membership test or ID list:** HLL cannot tell whether a particular visitor appeared or enumerate its visitors.
+- **No per-ID frequency:** Repeats leave the same summary; Count-Min Sketch answers a different question.
+- **No ordinary deletion:** A maximum does not reveal which other IDs contributed to it. Use separate time-window sketches and explicit retention, not naive register decrements.
+- **Hashing is not perfect:** Poor distribution, finite-hash collisions, or adversarially chosen inputs can harm accuracy. The illustrative hash is not cryptographic.
+- **Identity definition matters:** Different devices, inconsistent ID formatting, or account sharing change what “distinct visitor” means. HLL counts IDs, not verified humans.
+- **Not a privacy guarantee:** Omitting raw IDs from the sketch does not itself establish anonymity or eliminate privacy obligations.
+- **Finite-range limits:** The code uses a 64-bit hash, small-range correction, and a bounded rank. It has no large-range saturation correction, HLL++ bias tables, persistence, or concurrency controls.
+
+### DSA-Style HyperLogLog Implementation
+
+**Hands-on C++17 core:** [hyperloglog_dsa.cpp](examples/hyperloglog/hyperloglog_dsa.cpp) implements **Insert**, **Estimate**, and compatible **Merge**, with a leading-zero rank helper. See the [README for pseudocode, complexity, build commands, and illustrated output](examples/hyperloglog/README.md).
+
+An insertion takes **O(1)** work for a fixed-width hash, or **O(L + 1)** with an L-byte string. Estimation and a two-sketch merge take **O(m)** work; storage is **O(m)** registers. The demonstration's exact set is ground truth only, not part of the sketch.
+
+## Where These Algorithms Fit in System Design
+
+| Algorithm | Where used in system design | Simple example |
+| --- | --- | --- |
+| **Consistent hashing** | Distributed caches, database sharding, request routing | Decide which cache server stores a key; adding a server moves only a portion of the keys. |
+| **Bloom filter** | Database/storage engines, caches, web crawlers | Check whether a key **might exist** before an expensive disk read; “definitely absent” skips the read. |
+| **Count-Min Sketch** | Traffic monitoring, streaming analytics, popularity tracking | Estimate how many requests each URL receives without storing an exact counter for every URL. |
+| **HyperLogLog** | Unique-visitor analytics, approximate distinct counts in databases, distributed streams | Estimate how many **different visitor IDs** appeared across servers without storing every ID. |
+
+> **Consistent hashing:** Where to put it.  
+> **Bloom filter:** Could it be there?  
+> **Count-Min Sketch:** How often did it appear?  
+> **HyperLogLog:** How many different elements appeared?
 
 ## References
 
+- [Philippe Flajolet, Éric Fusy, Olivier Gandouet, and Frédéric Meunier — HyperLogLog: The Analysis of a Near-Optimal Cardinality Estimation Algorithm](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf)
+- [Google Research — HyperLogLog in Practice](https://research.google/pubs/hyperloglog-in-practice-algorithmic-engineering-of-a-state-of-the-art-cardinality-estimation-algorithm/)
+- [Redis — HyperLogLog Data Type](https://redis.io/docs/latest/develop/data-types/probabilistic/hyperloglogs/)
+- [Redis — PFCOUNT and HyperLogLog Representation](https://redis.io/docs/latest/commands/pfcount/)
 - [Graham Cormode and S. Muthukrishnan — An Improved Data Stream Summary: The Count-Min Sketch and its Applications](https://www.cs.ox.ac.uk/people/graham.cormode/pubs/papers/cm-full.pdf)
 - [Redis — Count-Min Sketch Data Type](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
 - [Adam Kirsch, Michael Mitzenmacher, and George Varghese — Hash-Based Techniques for High-Speed Packet Processing](https://www.eecs.harvard.edu/~michaelm/postscripts/dimacs-chapter-08.pdf)
