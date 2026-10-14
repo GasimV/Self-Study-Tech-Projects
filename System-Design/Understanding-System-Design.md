@@ -3,6 +3,10 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [System Design at Different Scales](#system-design-at-different-scales)
+  - [General vs. Distributed System Design](#general-vs-distributed-system-design)
+  - [Small Applications vs. Large Systems](#small-applications-vs-large-systems)
+  - [Single-Server Application Design Checklist](#single-server-application-design-checklist)
 - [Core Terminology](#core-terminology)
 - [Functional and Non-Functional Requirements](#functional-and-non-functional-requirements)
 - [Design Process](#design-process)
@@ -45,6 +49,48 @@ Design connects user needs with technical decisions. For an online store, this i
 The goal is to meet today's requirements while making future changes manageable. Good design anticipates bottlenecks and failures, supports expected growth, and balances infrastructure cost with the team's ability to build and operate the system.
 
 > Start with the required behavior and operating conditions. These determine which architecture and mechanisms are useful.
+
+## System Design at Different Scales
+
+### General vs. Distributed System Design
+
+**System design applies to applications of any size.** It defines components, interfaces, data storage, security, performance, and failure handling.
+
+**Distributed system design** adds concerns that arise when components communicate across machines: replication, distributed coordination, network partitions, sharding, and distributed messaging.
+
+> **System design includes distributed system design—not the other way around.** These notes emphasize distributed systems, but many foundations also apply to single-server applications.
+
+### Small Applications vs. Large Systems
+
+| Aspect | Small, single-server application | Larger or distributed system |
+| --- | --- | --- |
+| **Architecture** | A simple monolith may be sufficient. | May need multiple instances and distributed infrastructure; microservices are not mandatory. |
+| **Main considerations** | Correctness, maintainability, security, data integrity, performance, and recovery. | The same concerns, plus greater capacity, coordination, and failure-management demands. |
+| **Design approach** | Use the simplest structure that satisfies requirements. | Add mechanisms where workload, reliability targets, or other constraints justify them. |
+
+> **Complexity follows requirements, not merely application size.** A small application can have strict security or recovery requirements; a monolith can also scale substantially.
+
+### Single-Server Application Design Checklist
+
+| Consideration | What to decide |
+| --- | --- |
+| **Requirements** | Features, workload, performance, security, and recovery expectations. |
+| **Architecture and modules** | Responsibilities, boundaries, and data flow. |
+| **Interfaces and APIs** | Inputs, outputs, validation, and errors—where interfaces are needed. |
+| **Data storage** | Models, schemas, indexes, transactions, and persistence—if data is stored. |
+| **Algorithms and data structures** | Suitable processing and storage approaches. |
+| **Concurrency** | Safe handling of simultaneous operations and shared state. |
+| **Security** | Access controls where needed, input validation, secrets, and data protection. |
+| **Failures and recovery** | Error handling, crash recovery, and protection against corrupted or lost data. |
+| **Performance** | CPU, memory, I/O, and response-time requirements. |
+| **Deployment** | Runtime, dependencies, configuration, and updates. |
+| **Observability** | Useful logs, error reporting, and health monitoring. |
+| **Backups** | Backup and restore procedures for persistent data. |
+| **Testing and maintainability** | Automated checks and manageable future changes. |
+
+> A single server still needs **concurrency control, data consistency, durability, and crash recovery**. Network failures also matter when it communicates with clients or external services. It does not automatically need distributed consensus, sharding, or a message broker.
+>
+> **These are design considerations—not a requirement to introduce a separate technology for every concern.**
 
 ## Core Terminology
 
