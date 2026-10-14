@@ -432,7 +432,7 @@ Related notes:
 - [Distributed System Attributes](Distributed-System-Attributes.md) — consistency, availability, latency, durability, and fault tolerance.
 - [AI Systems Design](AI-Systems-Design.md) — model integration, agentic workflows, evaluation, and operations.
 - [Consensus and Replication Protocols](Distributed-Systems-Theorems-and-Data-Structures.md#consensus-and-replication-protocols) — Paxos, Raft, and Zab for shared digital decisions.
-- [Load Balancing and Traffic Distribution](Load-Balancing-and-Traffic-Distribution.md) — backend request distribution, reverse proxies, and gateway-related boundaries.
+- [Distributed Systems Building Blocks](Distributed-Systems-Building-Blocks.md) — DNS, backend request distribution, reverse proxies, and gateway-related boundaries.
 
 ## Key Takeaways
 

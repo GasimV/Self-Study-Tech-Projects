@@ -67,7 +67,7 @@ The goal is to meet today's requirements while making future changes manageable.
 
 Latency and throughput measure different things: a system can process many requests per second while individual requests still take a long time. Likewise, a reachable service can return incorrect results, so availability alone does not establish reliability.
 
-See [Distributed System Attributes](Distributed-System-Attributes.md) for deeper explanations, and [Load Balancing and Traffic Distribution](Load-Balancing-and-Traffic-Distribution.md) for routing and backend selection.
+See [Distributed System Attributes](Distributed-System-Attributes.md) for deeper explanations, and [Load Balancing and Traffic Distribution](Distributed-Systems-Building-Blocks.md#load-balancers) for routing and backend selection.
 
 ## Functional and Non-Functional Requirements
 
@@ -146,7 +146,7 @@ Scalability is the ability to handle increasing demand without unacceptable perf
 
 > Horizontal scaling usually offers greater long-term capacity and fault isolation, but it also introduces distributed-system complexity. Load balancing, stateless services, caching, replication, and data partitioning are common scaling techniques.
 
-Measure which resource limits capacity before adding instances. A shared database, hot shard, or external API can remain the bottleneck. See [Scalability](Distributed-System-Attributes.md#scalability) and [Autoscaling with Load Balancing](Load-Balancing-and-Traffic-Distribution.md#autoscaling-with-load-balancing).
+Measure which resource limits capacity before adding instances. A shared database, hot shard, or external API can remain the bottleneck. See [Scalability](Distributed-System-Attributes.md#scalability) and [Autoscaling with Load Balancing](Distributed-Systems-Building-Blocks.md#autoscaling-with-load-balancing).
 
 ### Fault Tolerance
 
