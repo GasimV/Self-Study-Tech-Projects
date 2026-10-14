@@ -1657,16 +1657,16 @@ This deliberately tiny sketch illustrates an **underestimate**: three distinct n
 For positive values $v_1,\ldots,v_m$:
 
 $$
-\operatorname{AM}(v) = \frac{\sum_j v_j}{m},
+\mathrm{AM}(v) = \frac{\sum_j v_j}{m},
 \qquad
-\operatorname{HM}(v) = \frac{m}{\sum_j 1/v_j}
+\mathrm{HM}(v) = \frac{m}{\sum_j 1/v_j}
 $$
 
 HLL uses **$v_j = 2^{M[j]}$**, not the register ranks themselves. Its raw estimator is:
 
 $$
-E_{\text{raw}} = \alpha_m\frac{m^2}{\sum_{j=0}^{m-1}2^{-M[j]}}
-= \alpha_m m\,\operatorname{HM}(2^{M[0]},\ldots,2^{M[m-1]})
+E_{\mathrm{raw}} = \alpha_m\frac{m^2}{\sum_{j=0}^{m-1}2^{-M[j]}}
+= \alpha_m m\,\mathrm{HM}(2^{M[0]},\ldots,2^{M[m-1]})
 $$
 
 Here, **αm** corrects systematic bias: **0.673, 0.697, 0.709** for m = 16, 32, 64; for m ≥ 128, use **0.7213 / (1 + 1.079/m)**. A harmonic combination reduces the influence of exceptionally large bucket estimates. It is **not** “average the ranks, then calculate `2^(average + 1)`.” [Original HLL algorithm](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf)
@@ -1690,7 +1690,7 @@ For an empty sketch, V = m, so this returns **0**, not the positive raw estimate
 A widely used approximation for relative standard error is:
 
 $$
-\operatorname{RSE} \approx \frac{1.04}{\sqrt{m}}
+\mathrm{RSE} \approx \frac{1.04}{\sqrt{m}}
 $$
 
 This describes typical statistical variation under suitable hashing and estimator conditions, **not a maximum error bound for every dataset**, especially for a tiny sketch or small-cardinality correction regime. More registers improve accuracy; roughly four times as many halve the standard error.
