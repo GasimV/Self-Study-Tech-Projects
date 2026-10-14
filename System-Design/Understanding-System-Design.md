@@ -7,6 +7,8 @@
   - [General vs. Distributed System Design](#general-vs-distributed-system-design)
   - [Small Applications vs. Large Systems](#small-applications-vs-large-systems)
   - [Single-Server Application Design Checklist](#single-server-application-design-checklist)
+  - [What a Small Single-Server App Usually Does Not Need](#what-a-small-single-server-app-usually-does-not-need)
+  - [What the Broader System Design Study Adds](#what-the-broader-system-design-study-adds)
 - [Core Terminology](#core-terminology)
 - [Functional and Non-Functional Requirements](#functional-and-non-functional-requirements)
 - [Design Process](#design-process)
@@ -91,6 +93,42 @@ The goal is to meet today's requirements while making future changes manageable.
 > A single server still needs **concurrency control, data consistency, durability, and crash recovery**. Network failures also matter when it communicates with clients or external services. It does not automatically need distributed consensus, sharding, or a message broker.
 >
 > **These are design considerations—not a requirement to introduce a separate technology for every concern.**
+
+### What a Small Single-Server App Usually Does Not Need
+
+> **“Usually unnecessary” does not mean “never useful.”** Add these mechanisms only when a concrete requirement justifies them.
+
+| Mechanism | Why it is usually unnecessary initially |
+| --- | --- |
+| **Distributed consensus: Paxos, Raft, BFT** | No replicated decision-making group needs agreement. Local transactions and concurrency control still matter. |
+| **Database sharding** | One database can handle the expected data and workload. Internal table partitioning is a separate option. |
+| **Multi-server replication and automatic failover** | Not necessary if downtime during server recovery is acceptable. Backups remain important. |
+| **Load balancing across application replicas** | There is only one application instance to select. A reverse proxy can still help with HTTPS and routing. |
+| **Distributed caching** | No shared cache across servers is required; ordinary caching may still help. |
+| **Microservices and service meshes** | Modules within one application can provide sufficient separation without inter-service networking. |
+| **Kafka/RabbitMQ infrastructure** | Not required merely because the application exists. Durable asynchronous work or integrations may justify a broker even at small scale. |
+| **Multi-region routing and replication** | Not required unless geographic performance, recovery, or other requirements demand them. |
+
+**Example:** A small inventory app might use one application and one database, with authentication, transactions, logging, and tested backups. It need not introduce service discovery, distributed consensus, or sharding.
+
+### What the Broader System Design Study Adds
+
+The existing checklist provides the foundations. Broader study teaches additional techniques and **when their benefits justify their costs**:
+
+| Area | Topics studied |
+| --- | --- |
+| **Connectivity and request routing** | DNS, reverse proxies, load balancers, gateways, CDNs |
+| **Scaling and capacity** | Vertical/horizontal scaling, autoscaling, bottlenecks, backpressure |
+| **Distributed data** | Replication, partitioning, sharding, consistency, distributed caches |
+| **Coordination and limitations** | CAP, PACELC, FLP, Paxos, Raft, Zab, Byzantine agreement |
+| **Asynchronous communication** | Queues, pub/sub, event-driven workflows, ordering, delivery guarantees |
+| **Efficient distribution and summaries** | Consistent hashing, Bloom filters, Count-Min Sketch, HyperLogLog |
+| **Production operation** | Security, metrics, observability, fault tolerance, recovery, deployment |
+| **Architectural choices** | Monoliths, microservices, integration patterns, cost and complexity trade-offs |
+
+> **A course teaches a toolbox—not a deployment checklist.** Learn the techniques so you can choose appropriately, not so every application uses all of them.
+>
+> **Monolith describes application structure; single-server describes deployment.** A monolith can run across multiple servers and require distributed-system techniques.
 
 ## Core Terminology
 
