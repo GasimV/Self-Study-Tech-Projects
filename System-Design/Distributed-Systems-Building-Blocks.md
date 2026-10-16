@@ -12,6 +12,8 @@
     - [Counts and Locations](#counts-and-locations)
     - [Root Identities and Anycast](#root-identities-and-anycast)
     - [Operators, Governance, and National Networks](#operators-governance-and-national-networks)
+    - [Example: Azerbaijan and the .az Domain](#example-azerbaijan-and-the-az-domain)
+    - [DNS Independence vs. Network Isolation](#dns-independence-vs-network-isolation)
   - [DNS Querying](#dns-querying)
     - [Iterative Queries](#iterative-queries)
     - [Recursive Queries](#recursive-queries)
@@ -234,6 +236,118 @@ The Moscow and Seoul deployment observations are from the [official inventory ch
 **What if a country has no root instance?** A reachable resolver can contact an instance in another country and follow the usual referrals, or use cached information or an approved upstream resolver. Hosting a local root instance is not a prerequisite for public DNS resolution; usable network connectivity and policy still matter.
 
 > **Recall:** Operating a local DNS server is not the same as controlling the global DNS namespace. A country or organization can use global DNS without hosting every layer of its infrastructure.
+
+#### Example: Azerbaijan and the .az Domain
+
+Azerbaijan's **`.az` country-code top-level domain (ccTLD)** is part of the global DNS namespace. Managing `.az` does not mean managing every DNS lookup made by someone in Azerbaijan.
+
+| Role | Responsibility |
+| --- | --- |
+| **IANA root delegation** | Publishes the delegation identifying the authoritative nameservers for `.az`. |
+| **IntraNS** | Listed by IANA as the `.az` ccTLD manager. |
+| **Domain administrators and their DNS providers** | Manage authoritative records for domains delegated below `.az`. |
+| **Recursive resolver operators** | Resolve names for clients; these may be ISPs, organizations, public DNS services, or users operating their own resolvers. |
+
+**Snapshot checked on 16 October 2026:** IANA lists these four authoritative nameserver hostnames for `.az`. IPv4 addresses below are taken from that delegation record; consult it for IPv6 addresses and later changes. [IANA `.az` delegation](https://www.iana.org/domains/root/db/az.html)
+
+| Nameserver hostname | Listed IPv4 address |
+| --- | --- |
+| `ns13.intrans.az` | `217.14.111.13` |
+| `ns3.intrans.az` | `148.251.2.246` |
+| `az.hostmaster.ua` | `195.47.253.13` |
+| `rip.psg.com` | `147.28.0.39` |
+
+These are service names and addresses, **not a physical-location inventory**. A hostname's suffix does not establish where its machines are located, and an address can represent a distributed service. The TLD manager, authoritative DNS operator, resolver provider, and website host need not be the same organization.
+
+**Illustrative lookup:** A user in Baku opens `www.example.az`. Here, `example.az` is a hypothetical delegated domain for the walkthrough—not a claim about that live name's registration or DNS configuration. Assume an uncached, successful lookup without aliases.
+
+```mermaid
+flowchart TB
+    CLIENT["Client in Baku"] -->|"1"| RES["Configured resolver"]
+    RES -->|"2"| ROOT["Root server"]
+    ROOT -->|"3"| RES
+    RES -->|"4"| AZ[".az authoritative server"]
+    AZ -->|"5"| RES
+    RES -->|"6"| AUTH["example.az authority"]
+    AUTH -->|"7"| RES
+    RES -->|"8"| CLIENT
+    CLIENT -->|"9"| WEB["Website endpoint"]
+    WEB -->|"10"| CLIENT
+```
+
+1. The client asks its configured recursive resolver for the name.
+2. The resolver queries a root server.
+3. The root returns a referral to `.az` nameservers.
+4. The resolver queries an authoritative server for `.az`.
+5. That server returns a referral to `example.az` nameservers.
+6. The resolver queries an authoritative server for `example.az`.
+7. The authority returns the website's address record.
+8. The resolver answers the client; appropriate answers and referrals can be cached.
+9. The browser establishes its separate connection to the returned endpoint and sends its HTTP(S) request.
+10. The web endpoint returns the application response.
+
+**Diagram:** Root, TLD, and domain servers provide answers or referrals **to the resolver**. They do not relay the browser's web request through the hierarchy. Cached information, forwarding, aliases, or additional delegations can change the actual steps.
+
+> **Geography does not choose the TLD.** A user in Baku resolving `google.com` follows the `.com` delegation, not `.az` merely because the user is in Azerbaijan. The configured resolver can also be outside Azerbaijan.
+
+#### DNS Independence vs. Network Isolation
+
+> **DNS tells a computer where a service is. Networking determines whether it can reach that service.** Operating your own DNS is not the same as operating a self-contained network, and neither automatically means isolation from the global internet.
+
+These are illustrative architectures, not permanent labels for entire countries:
+
+| Architecture | Naming | Connectivity |
+| --- | --- | --- |
+| **Globally connected network** | Uses the global namespace, possibly through locally operated resolvers | Communicates with external networks according to routing and access policy. |
+| **Domestic infrastructure with controlled external connectivity** | Domestic DNS and services coexist with global naming; local views or policy can affect answers | External connectivity exists but may be managed or restricted. |
+| **Isolated intranet** | Uses locally available zones or a separately administered namespace | Services communicate internally; that network has no general global connectivity. |
+
+**Local DNS does not necessarily mean an alternative root.** A resolver can serve a maintained local copy of the **global** root zone while retaining its existing delegations and namespace. RFC 8806 describes this as a local service for the resolver on the same host. It still needs maintenance; the root-zone copy is not a copy of every website's DNS records or content. [Local root service: RFC 8806](https://www.rfc-editor.org/rfc/rfc8806)
+
+**Theoretical example: AZ-Net.** Imagine a country-sized intranet with domestic users, networks, DNS, and hosted applications. This is an architectural example, **not a claim that Azerbaijan operates such an isolated system**.
+
+```mermaid
+flowchart TB
+    subgraph LOCAL["Hypothetical AZ-Net: no general global connectivity"]
+        USERS["Domestic clients"] --> NETWORK["Domestic network"]
+        NETWORK -->|"1"| DNS["Internal DNS"]
+        DNS -->|"2"| NETWORK
+        NETWORK -->|"3"| APPS["Domestic applications"]
+        APPS --> DATA["Local data services"]
+        APPS --> SUPPORT["Local supporting services"]
+    end
+    GLOBAL["Global internet"]
+```
+
+**Diagram:** The global internet has no connection in this isolated example. The numbered arrows represent **DNS query (1), DNS answer (2), and subsequent application traffic (3)** across the domestic network. Application traffic does not pass through DNS. The drawing omits response arrows and redundancy for clarity.
+
+For example, a private zone could map the documentation name **`bank.aznet.example` → `10.0.0.50`**, and a browser with a valid internal route could reach the domestic banking endpoint. The private mapping does not make that address globally reachable.
+
+| Required capability | Why DNS alone is insufficient |
+| --- | --- |
+| **Domestic connectivity** | Routers, links, and interconnections must carry packets between users and services. |
+| **Locally available naming** | Resolvers need the relevant local authoritative records, not just cached external addresses. A separate root hierarchy is optional when configured private zones suffice. |
+| **Domestic hosting and storage** | The application, its databases, and necessary content must actually be reachable inside the network. |
+| **Supporting dependencies** | Authentication, certificate trust, time services, monitoring, and required application dependencies must remain usable without external access. |
+| **Operations and recovery** | Redundancy, backups, updates, and tested failure handling are still needed. Isolation does not guarantee reliability or security. |
+
+**Example failure:** An internal portal's name resolves correctly, but login still fails because its identity provider is only reachable outside AZ-Net. Likewise, a locally hosted page can break if required scripts or APIs exist only on external services. DNS independence does not remove these dependencies.
+
+**Naming and reconnection:** A private network can administer its own names, but creating a private TLD does not register it in the global root. Arbitrarily invented TLDs can conflict with public names now or later. The example uses reserved `.example` names; real namespace choices require deliberate management.
+
+Before reconnecting, reconcile **name ownership and resolution views, address overlap and routing, DNSSEC/TLS trust, and external service dependencies**. Conflicting roots can cause the same name to identify unrelated services. A coordinated public root preserves global naming consistency; it does not require every user to receive an identical IP address, as legitimate geographic routing and split views can differ. [IAB explanation of the unique public root: RFC 2826](https://www.rfc-editor.org/rfc/rfc2826)
+
+**Real-world cases and their limits:**
+
+| Case | What it illustrates | Qualification |
+| --- | --- | --- |
+| **Russia's National DNS** | Nationally managed DNS infrastructure intended to reduce dependence on external root access | The Internet Society's assessment, updated in December 2023, describes its design and fragmentation risks. This is not evidence that Russia is permanently disconnected from the global internet. [Assessment](https://www.internetsociety.org/resources/internet-fragmentation/russias-national-dns/) |
+| **Iran's domestic networking / National Information Network** | Domestic reachability and services can coexist with restrictions on international connectivity | Initial private-address observations were documented in a **2012 working draft**; a **2026 measurement preprint** discusses NIN and international shutdowns. These dated studies do not guarantee that every domestic service works during every disruption. [2012 research](https://arxiv.org/abs/1209.6398), [2026 study](https://arxiv.org/html/2605.00187v2) |
+| **North Korea's Kwangmyong** | A reported domestic intranet, distinct from public internet services | A February 2026 researcher report describes evidence from sources and logs, with uncertainties identified. Do not equate this intranet with the entire country's connectivity or infer population-wide access from `.kp`'s public delegation. [Researcher's report](https://nkinternet.com/2026/02/08/kwangmyong/) |
+
+These examples concern different mechanisms and observation periods; none should be reduced to “this country has its own completely separate internet.”
+
+> **Final mental model:** **Local DNS operation ≠ an independent namespace ≠ network isolation.** A country can host DNS and applications while remaining globally connected, or operate a country-sized intranet. Meaningful independence depends on the complete service and dependency chain—not DNS alone.
 
 ### DNS Querying
 
@@ -823,6 +937,13 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 
 ## Further Reading
 
+- [IANA: Azerbaijan's .az Delegation](https://www.iana.org/domains/root/db/az.html)
+- [RFC 8806: Running a Root Server Local to a Resolver](https://www.rfc-editor.org/rfc/rfc8806)
+- [RFC 2826: IAB Technical Comment on the Unique DNS Root](https://www.rfc-editor.org/rfc/rfc2826)
+- [Internet Society: Russia's National DNS — Assessment Updated December 2023](https://www.internetsociety.org/resources/internet-fragmentation/russias-national-dns/)
+- [Collin Anderson: The Hidden Internet of Iran — 2012 Working Draft](https://arxiv.org/abs/1209.6398)
+- [Sadeghi Jahromi and Jaskolka: Internet Shutdown Measurements in Iran — 2026 Preprint](https://arxiv.org/html/2605.00187v2)
+- [North Korean Internet: Kwangmyong — February 2026 Researcher Report](https://nkinternet.com/2026/02/08/kwangmyong/)
 - [IANA: Root Names, Addresses, and Operators](https://www.iana.org/domains/root/servers)
 - [Root Server Operators: Live Inventory and Location Map](https://root-servers.org/)
 - [ICANN: The 2016 IANA Stewardship Transition](https://www.icann.org/stewardship-accountability)
