@@ -19,6 +19,7 @@
     - [Recursive Queries](#recursive-queries)
     - [Conceptual Fully Recursive Forwarding](#conceptual-fully-recursive-forwarding)
   - [DNS Caching](#dns-caching)
+    - [Planned Hosting Migration and DNS TTL](#planned-hosting-migration-and-dns-ttl)
   - [Private DNS and Internal Applications](#private-dns-and-internal-applications)
     - [Internal Infrastructure and Lookup Scope](#internal-infrastructure-and-lookup-scope)
     - [What the DNS Service Stores](#what-the-dns-service-stores)
@@ -435,6 +436,45 @@ This is one resolver's timeline, not a global update deadline. Other caches may 
 > **TTL trade-off:** Longer TTLs reduce repeated queries but can prolong stale routing after a change. Shorter TTLs improve responsiveness to updates but increase query load and reliance on reachable upstream DNS.
 
 Ordinary expiry requires refreshing the answer. Some resolvers support explicitly configured **serve-stale** behavior during upstream failure; that is a resilience policy, not a promise that every cache always serves expired data. [Serving stale DNS data: RFC 8767](https://www.rfc-editor.org/rfc/rfc8767)
+
+#### Planned Hosting Migration and DNS TTL
+
+**DNS TTL belongs to a DNS record, not the application server.** When an application moves to a new IP address, cached answers may continue directing clients to the old endpoint until their **remaining TTL** expires. The new endpoint can already be running and available for testing before public DNS points to it.
+
+> A TTL of one day does not mean everyone switches exactly one day after migration. Different caches obtained the old answer at different times; lowering TTL does not shorten a lifetime already cached.
+
+**Remaining-lifetime example:** A resolver caches the old address at **09:00** with a 24-hour TTL. If the address changes at **15:00**, that cached answer can remain usable until **09:00 the next day**—another **18 hours**, not necessarily another full day.
+
+**Planned migration example:** Move `www.example.com` from **`192.0.2.10`** to **`192.0.2.20`**. The current TTL is **86,400 seconds (24 hours)**; temporarily lower it to **300 seconds (5 minutes)**. This example changes an address record while keeping the authoritative DNS service in place.
+
+| Stage | Action | Why |
+| --- | --- | --- |
+| **Lower TTL in advance** | Change the relevant record's TTL to 300 seconds, keeping the old IP. | Prepare for faster refreshes during cutover. |
+| **Allow old caches to expire** | Once the authoritative servers consistently serve the lower TTL, wait at least the previous 24-hour TTL before changing the IP. | Existing caches may still retain the old 86,400-second lifetime. |
+| **Prepare and test** | Deploy and test the application at the new hosting location before cutover. This can happen during the waiting period. | The new endpoint must work before users arrive. |
+| **Switch the address** | Update the DNS record to the new IP, retaining the short TTL. | Subsequent successful refreshes obtain the new destination. |
+| **Monitor the overlap** | Keep old and new endpoints available temporarily; monitor requests, errors, and connections on both. | Clients can reach different endpoints during the transition. |
+| **Stabilize and retire** | Once it is safe, retire the old endpoint and increase TTL again if appropriate. | Avoid premature shutdown while reducing ongoing lookup load after the migration. |
+
+Lowering TTL before a planned address change and increasing it after validation is also described in [AWS's DNS TTL guidance](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-values-basic.html).
+
+**When can the old hosting server be shut down?** Generally, keep both endpoints available during the transition—but do **not** make retirement depend on proving that caches have expired everywhere. There is no reliable global view of every client cache. Instead:
+
+1. Allow the relevant TTL window to pass, taking the pre-cutover TTL preparation into account.
+2. Check remaining legitimate traffic and long-lived connections to the old endpoint; DNS expiry does not close existing connections.
+3. Confirm that the new endpoint is healthy and application data remains correct.
+4. Allow a safety margin appropriate to the workload and recovery requirements before decommissioning the old endpoint.
+
+**Important cautions:**
+
+- **Five minutes is not a universal traffic-switch deadline.** DNS behavior, local/application caching, and the serve-stale policies discussed above can affect observed refreshes. Existing connections may last longer still. [Cloudflare's TTL and client-cache explanation](https://developers.cloudflare.com/dns/manage-dns-records/reference/ttl/)
+- **Test the correct hostname and HTTPS behavior**, not only the new raw IP. Hostname-based routing and TLS certificates can make those tests behave differently.
+- **DNS does not migrate or synchronize application data.** If both endpoints accept writes, use an appropriate shared authoritative data source or coordinated migration strategy; do not let them independently create conflicting state.
+- **Endpoint overlap does not require two independent writable application copies.** For example, the old endpoint may forward requests to the new service if the architecture supports that safely.
+- **Keep a rollback path.** Reverting DNS also takes effect through caches, so it is not an instantaneous global undo. A rollback must also account for data written after cutover.
+- **Check all affected records.** IPv4, IPv6, aliases, or a change of authoritative nameservers can involve additional records and cache lifetimes beyond this simple A-record example.
+
+> **Recall:** Lower TTL early, prepare the new endpoint, change DNS, keep an overlap period, monitor and drain old traffic, then retire the old endpoint when it is safe. **TTL controls cache reuse—not application readiness, connection lifetime, or data migration.**
 
 ### Private DNS and Internal Applications
 
@@ -937,6 +977,8 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 
 ## Further Reading
 
+- [AWS: DNS Record TTL and Preparing for Address Changes](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-values-basic.html)
+- [Cloudflare: DNS TTL and Client Cache Behavior](https://developers.cloudflare.com/dns/manage-dns-records/reference/ttl/)
 - [IANA: Azerbaijan's .az Delegation](https://www.iana.org/domains/root/db/az.html)
 - [RFC 8806: Running a Root Server Local to a Resolver](https://www.rfc-editor.org/rfc/rfc8806)
 - [RFC 2826: IAB Technical Comment on the Unique DNS Root](https://www.rfc-editor.org/rfc/rfc2826)
