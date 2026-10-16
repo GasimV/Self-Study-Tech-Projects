@@ -100,6 +100,10 @@ flowchart LR
 
 DNS is **not one central server or a complete database copied onto every server**. Responsibilities are distributed between resolvers and authoritative servers.
 
+> A **recursive DNS resolver is a software service**, not a special type of physical computer. It can run on a physical server, virtual machine, or container. Your ISP, organization, or a public DNS provider can operate it—or you can run one yourself. It answers clients using cached information, queries the DNS hierarchy, or forwards requests to another resolver, depending on its configuration.
+
+> The **stub resolver** is the client-side component, commonly part of your OS. The **recursive resolver** is the service it asks to perform resolution. They can run on different machines or on the same computer.
+
 | Component | Responsibility |
 | --- | --- |
 | **Stub resolver** | Client-side DNS component, commonly in the OS, that asks a recursive resolver for an answer. |
