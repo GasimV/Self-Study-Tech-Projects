@@ -8,11 +8,22 @@
   - [Name Servers and Resolvers](#name-servers-and-resolvers)
   - [Resource Records](#resource-records)
   - [DNS Hierarchy](#dns-hierarchy)
+  - [DNS Server Deployment and Governance](#dns-server-deployment-and-governance)
+    - [Counts and Locations](#counts-and-locations)
+    - [Root Identities and Anycast](#root-identities-and-anycast)
+    - [Operators, Governance, and National Networks](#operators-governance-and-national-networks)
   - [DNS Querying](#dns-querying)
     - [Iterative Queries](#iterative-queries)
     - [Recursive Queries](#recursive-queries)
     - [Conceptual Fully Recursive Forwarding](#conceptual-fully-recursive-forwarding)
   - [DNS Caching](#dns-caching)
+  - [Private DNS and Internal Applications](#private-dns-and-internal-applications)
+    - [Internal Infrastructure and Lookup Scope](#internal-infrastructure-and-lookup-scope)
+    - [What the DNS Service Stores](#what-the-dns-service-stores)
+    - [Bank Portal Request Flow](#bank-portal-request-flow)
+    - [Split-Horizon DNS and Security](#split-horizon-dns-and-security)
+    - [Local Hosts Files](#local-hosts-files)
+    - [Public DNS, Private DNS, and Hosts Files Compared](#public-dns-private-dns-and-hosts-files-compared)
 - [Scalability, Reliability, and Consistency in DNS](#scalability-reliability-and-consistency-in-dns)
   - [Scalability](#scalability)
   - [Reliability](#reliability)
@@ -99,6 +110,16 @@ DNS is **not one central server or a complete database copied onto every server*
 
 A **zone** is an administratively managed portion of the DNS namespace. Delegation lets one zone point to the servers responsible for a child zone. Server roles can coexist in an implementation, but they are different responsibilities.
 
+**Authoritative DNS server vs. application server:**
+
+| Aspect | Authoritative DNS server | Application server |
+| --- | --- | --- |
+| **Serves** | DNS records for its zones | Application pages, APIs, and business operations |
+| **Example response** | An address record for `portal.example.com` | The portal's HTML or API response |
+| **Role in a web visit** | Helps the resolver obtain the endpoint address | Handles the subsequent application request |
+
+DNS does **not** forward the browser's web request. After resolution, the browser connects separately to the returned address, which may identify an application server, reverse proxy, or load balancer. See [DNS Name Resolution](#dns-name-resolution) for that separation. DNS and application software can share a physical or virtual machine, but they remain different services.
+
 ### Resource Records
 
 A **resource record (RR)** associates a name with typed data and a cache lifetime. Address records are only one kind. The following names and addresses are illustrative:
@@ -134,6 +155,81 @@ flowchart TB
 ```
 
 **Diagram:** Arrows show **delegation and responsibility**, not recursive forwarding of every query. Root servers do not store every website's address, and authoritative DNS servers are not the web servers themselves. More delegation levels or aliases can add steps; cached records can eliminate steps.
+
+### DNS Server Deployment and Governance
+
+DNS is distributed both **logically**—through zones and delegations—and **physically**—through deployments in different networks and locations. A server name, an operator, a deployment, and a physical computer are not interchangeable concepts.
+
+#### Counts and Locations
+
+| DNS role or counting unit | How many? | Where? |
+| --- | --- | --- |
+| **Root-server identities** | 13 named identities, A–M, operated by 12 organizations at the snapshot date below | Each identity can be served from multiple locations. |
+| **Root-server operational instances** | 2,047 in the dated inventory below; this is a changing deployment count | Distributed across countries and networks worldwide. |
+| **TLD authoritative infrastructure** | Multiple deployments serving the different TLD zones; no single useful fixed global machine count | Registry/operator infrastructure in multiple locations. |
+| **Other authoritative servers** | Many independently operated services for delegated zones; no fixed global total | Organizations, hosting providers, and managed DNS infrastructure. |
+| **Recursive resolvers** | Many ISP, enterprise, public-service, and private deployments | Near their users or in provider infrastructure. |
+
+**Dated snapshot:** The [root-server operators' inventory](https://root-servers.org/) reported **2,047 operational instances and 12 operators on 16 October 2026**, with a published timestamp of `2026-10-16T02:15:00Z`. Use its live map and per-operator listings for current locations; this number is not a permanent architectural constant. Published sites include London, Frankfurt, Tokyo, and New York, among many others.
+
+An **instance** is a deployed service instance, not necessarily one physical computer. A site or service deployment can involve multiple machines. Likewise, root and TLD servers are themselves authoritative for their respective zones—the table groups responsibilities, not mutually exclusive hardware types. [DNS terminology: RFC 9499](https://www.rfc-editor.org/info/rfc9499)
+
+> **13 identities does not mean 13 computers or 13 countries.** A–M name logical root services; their deployed instances provide the geographic distribution. The [IANA root-server list](https://www.iana.org/domains/root/servers) identifies their names, addresses, and operators. Verisign operates both A and J, illustrating why identity count and operator count differ.
+
+#### Root Identities and Anycast
+
+**Anycast** allows instances in different locations to serve the **same destination IP address**. Their networks advertise reachability to that service address, and routing determines which instance receives a query.
+
+For example, A-root's name is **`a.root-servers.net`**, and its IPv4 service address is **`198.41.0.4`**. The following three sites are illustrative, not a claim about its complete or exact deployment inventory. [A-root name and address](https://www.iana.org/domains/root/servers)
+
+```mermaid
+flowchart TB
+    RES["DNS resolver"] --> ROUTE["Network routing"]
+    subgraph AROOT["A-root: one logical identity"]
+        SITEA["Illustrative site 1<br/>198.41.0.4"]
+        SITEB["Illustrative site 2<br/>198.41.0.4"]
+        SITEC["Illustrative site 3<br/>198.41.0.4"]
+    end
+    ROUTE --> SITEA
+    ROUTE --> SITEB
+    ROUTE --> SITEC
+```
+
+**Diagram:** The three arrows show **possible destinations**, not a broadcast. A query normally reaches **one** instance. Each instance serves the root-zone information; the resolver does not need a unique address for every physical location.
+
+- **Latency:** Routing can select a nearby network location, but its chosen route is not necessarily the geographically closest or lowest-latency one.
+- **Capacity:** Different clients' queries can reach different instances, distributing aggregate load.
+- **Resilience:** If an unhealthy location's route is withdrawn or otherwise avoided, traffic can reach another instance. Detection and routing convergence take time; rerouting is not automatically instantaneous, and retries may be needed.
+
+> **Mental model:** A root identity is a distributed DNS service. Anycast selects a reachable deployment through network routing; it is not a DNS query sent to every deployment.
+
+#### Operators, Governance, and National Networks
+
+“Who controls DNS?” combines several different responsibilities:
+
+| Responsibility | What it means |
+| --- | --- |
+| **Root-server operation** | Operators run the instances serving their root identities. Examples include Verisign, ISC, Netnod, RIPE NCC, WIDE, and ICANN. |
+| **Root-zone coordination** | IANA functions, provided by PTI within ICANN, coordinate root delegations through established processes. This is distinct from running every root-server instance. |
+| **TLD and domain administration** | Registries and delegated domain administrators manage their respective zones, not every name in the global DNS. |
+| **Geographic hosting** | An operator's service can have deployments outside the country where the organization is based. Hosting an instance does not confer authority to rewrite the global namespace. |
+| **Domestic network policy** | Governments and network operators can affect local access, resolver behavior, and connectivity. That is different from administering the global root zone. |
+
+No single country performs all these roles. Many root operators are US-based, but operator headquarters, deployment locations, and governance responsibilities are different facts. See [IANA's operator list](https://www.iana.org/domains/root/servers). The direct US government IANA-functions contract ended on **1 October 2016**; that transition did not eliminate legal jurisdictions or domestic network policies. [ICANN's stewardship-transition explanation](https://www.icann.org/stewardship-accountability)
+
+**Brief country examples:**
+
+| Country | What the technical evidence establishes |
+| --- | --- |
+| **Russia** | [`.ru` is delegated in the public root](https://www.iana.org/domains/root/db/ru.html); the dated root-server inventory also lists operational instances in Moscow. |
+| **South Korea** | [`.kr` is delegated in the public root](https://www.iana.org/domains/root/db/kr.html); the inventory lists operational instances in Seoul. |
+| **North Korea** | [`.kp` has a public-root delegation](https://www.iana.org/domains/root/db/kp.html). That fact does not establish residents' access to the global internet or the scope of domestic intranets. |
+
+The Moscow and Seoul deployment observations are from the [official inventory checked on 16 October 2026](https://root-servers.org/), not a guarantee that every listed location remains operational indefinitely. DNS participation, local hosting, domestic naming systems, and internet-access restrictions are separate questions.
+
+**What if a country has no root instance?** A reachable resolver can contact an instance in another country and follow the usual referrals, or use cached information or an approved upstream resolver. Hosting a local root instance is not a prerequisite for public DNS resolution; usable network connectivity and policy still matter.
+
+> **Recall:** Operating a local DNS server is not the same as controlling the global DNS namespace. A country or organization can use global DNS without hosting every layer of its infrastructure.
 
 ### DNS Querying
 
@@ -221,6 +317,115 @@ This is one resolver's timeline, not a global update deadline. Other caches may 
 > **TTL trade-off:** Longer TTLs reduce repeated queries but can prolong stale routing after a change. Shorter TTLs improve responsiveness to updates but increase query load and reliance on reachable upstream DNS.
 
 Ordinary expiry requires refreshing the answer. Some resolvers support explicitly configured **serve-stale** behavior during upstream failure; that is a resilience policy, not a promise that every cache always serves expired data. [Serving stale DNS data: RFC 8767](https://www.rfc-editor.org/rfc/rfc8767)
+
+### Private DNS and Internal Applications
+
+An organization can use the same DNS protocols to name **internal resources**. Employees do not need to memorize application IP addresses, and private-only records need not be published through public DNS.
+
+**Bank example:**
+
+```text
+Internal zone:       internal.bank.example
+Employee portal:     portal.internal.bank.example
+Portal endpoint:     10.0.1.50
+Configured resolver: 10.0.1.10
+```
+
+Names ending in **`.example` are documentation placeholders**, not a real bank's domain. In a real deployment, use a deliberately managed namespace, such as a suitable subdomain of a domain the organization controls. The `10.0.1.x` addresses illustrate private-network endpoints, reachable only where routing and policy permit them. [Reserved example names: RFC 2606](https://www.rfc-editor.org/rfc/rfc2606)
+
+#### Internal Infrastructure and Lookup Scope
+
+| Component | Needed for the private portal lookup? | Role |
+| --- | --- | --- |
+| **Client-side name resolution** | Yes, when accessing the portal by name | Uses configured local sources/caches and a resolver. |
+| **Internal authoritative zone** | Yes, for centrally served private DNS records | Holds the portal record and authoritative answers for `internal.bank.example`. |
+| **Recursive resolver/forwarder role** | Commonly used by clients | Answers from local zones/cache or contacts the configured internal authority. |
+| **Public root and TLD servers** | Not for this configured private zone | Remain relevant when the resolver performs uncached public resolution. |
+| **Application endpoint** | Yes, but it is not a DNS server role | Runs the portal or forwards requests to its application instances. |
+
+The resolver knows the private zone because it serves it locally or is configured to query an appropriate internal authority, for example through conditional forwarding. It does **not** have to discover that private zone through the public root. The organization also does not need to build its own root/TLD hierarchy merely to serve one internal zone.
+
+Resolver and authoritative roles may run on the same physical or virtual server, or on separate infrastructure. Multiple appropriately configured DNS deployments reduce dependence on a single server; clients need a way to use the alternatives, and authoritative data must be kept consistent.
+
+**What about a public name?** For an allowed name such as `www.example.com`, the bank's resolver can use an approved upstream service or perform public iterative resolution. Routing private names to the correct internal authority avoids treating them as public names or leaking unnecessary private-name queries upstream.
+
+#### What the DNS Service Stores
+
+DNS data may be held in zone files, a directory/database backend, or a managed service. DNS does not require a particular relational database product.
+
+| Information | Example | Meaning |
+| --- | --- | --- |
+| **Authoritative zone records** | A record: `portal.internal.bank.example` → `10.0.1.50`; CNAME: `hr.internal.bank.example` → `portal.internal.bank.example` | The zone's source data. AAAA, MX, and NS records have the same roles described in [Resource Records](#resource-records). |
+| **Zone metadata** | SOA record, including a zone serial and maintenance timers | Identifies zone-management information; the serial helps track zone versions. |
+| **Record lifetimes** | TTL 300 on a record | Controls ordinary cache reuse, not how long the application itself exists. |
+| **Resolver cache** | Previously obtained answers and delegation information | Temporary copied information; not the source of authority for those zones. |
+| **Server configuration** | Served zones, upstream forwarders, access policies | Controls server behavior; configuration is distinct from the resource records themselves. |
+
+DNS is **not the application's business database or source-code store**. Customer accounts, business transactions, and portal content belong in the application and its storage systems. Do not use ordinary DNS records as a password or secret store.
+
+#### Bank Portal Request Flow
+
+The client first uses its applicable local name-resolution sources and caches. The diagram shows a lookup that needs DNS and misses the resolver's cache; a usable local answer can skip that work.
+
+```mermaid
+flowchart TB
+    CLIENT["Employee client"] -->|"1"| RES["Bank resolver<br/>10.0.1.10"]
+    RES -->|"2"| AUTH["Internal authority"]
+    AUTH -->|"3"| RES
+    RES -->|"4"| CLIENT
+    CLIENT -->|"5"| APP["Portal endpoint<br/>10.0.1.50"]
+    APP -->|"6"| CLIENT
+```
+
+1. The client asks for `portal.internal.bank.example`.
+2. The resolver queries the internal authority for the configured private zone.
+3. The authority returns the A record containing `10.0.1.50`.
+4. The resolver returns the answer to the client, with applicable caching.
+5. The browser connects to the portal endpoint and sends its HTTPS request.
+6. The application returns its response after applying its normal access checks.
+
+**Diagram:** The resolver and authority boxes are **logical roles**, not a requirement for two separate machines. DNS traffic ends with the address response; the browser's portal request does not pass through the DNS server.
+
+#### Split-Horizon DNS and Security
+
+**Split DNS**, also called **split-horizon DNS**, allows the same name to receive different answers depending on the querying context. An internal resolver may return a private address for a company service while an external view returns a public entry point or no published record. [Current DNS terminology: RFC 9499](https://www.rfc-editor.org/info/rfc9499)
+
+**Example:** For the illustrative name `portal.bank.example`, an internal view returns **`10.0.1.50`**, while an external view returns a public entry point represented here by **`192.0.2.50`**. Employees on the company network or an appropriately configured VPN use the internal view. The resolver/view configuration and network path determine the result—not merely whether a user knows the name. These are documentation names and addresses, not a live public delegation.
+
+> **Private naming is not application security.** DNS does not grant access, authenticate employees, or encrypt portal traffic. Authentication, authorization, TLS, and network controls remain necessary according to the application's requirements. Keeping a record private is not a substitute for protecting the endpoint.
+
+#### Local Hosts Files
+
+A **hosts file** provides static hostname-to-address mappings on an individual computer. Example entries are:
+
+```text
+127.0.0.1    localhost
+10.0.1.50    portal.internal.bank.example
+10.0.1.60    test.internal.bank.example
+```
+
+Conventional locations:
+
+- **Windows:** `C:\Windows\System32\drivers\etc\hosts`
+- **Linux/macOS:** `/etc/hosts`
+
+Applications using the relevant system name-resolution mechanism can obtain these mappings without a DNS query. The lookup order, cache interaction, and whether an application uses that mechanism depend on OS and application configuration; “the hosts file is always checked first” is not a universal rule. [Linux hosts-file documentation](https://man7.org/linux/man-pages/man5/hosts.5.html), [Microsoft hosts-file documentation](https://support.microsoft.com/en-us/windows/experience/how-to-reset-the-hosts-file-back-to-the-default)
+
+**Useful for:** Small local overrides, controlled testing, or an isolated machine's naming needs. The file does not provide authoritative zones, DNS queries/referrals, MX routing, or DNS-record TTL fields.
+
+**Why not distribute a hosts file to every employee?** Each computer needs the right entries and later updates. Configuration-management tools can distribute files, but the hosts file itself does not publish or automatically synchronize its mappings. A stale entry can keep pointing to an old endpoint; centrally managed DNS is usually more practical as the fleet grows.
+
+#### Public DNS, Private DNS, and Hosts Files Compared
+
+| Aspect | Public DNS | Private DNS | Hosts file |
+| --- | --- | --- | --- |
+| **Scope** | Globally delegated namespace and published records | Organization-controlled zones or DNS views | One computer's local mappings |
+| **Management** | Delegated zone administrators and DNS operators | Organization's infrastructure team or configured DNS provider | Local administration or configuration-management tooling |
+| **Resolution** | Resolvers use caches, upstream services, and public delegations | Configured resolvers obtain internal authoritative answers; public lookup may also be supported | Applications consult a local file through their resolution mechanism |
+| **Scaling** | Distributed authority, replication, and caching | Shared administration, redundant servers, and caching | Updates must reach every affected computer |
+| **Application security** | Separate from DNS naming | Separate from DNS naming | Separate from the local mapping |
+
+> **Mental model:** Public DNS provides globally coordinated names; private DNS provides organization-controlled resolution; a hosts file provides local mappings. All help find endpoints, but none runs or secures the application merely by naming it.
 
 ## Scalability, Reliability, and Consistency in DNS
 
@@ -614,6 +819,16 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 
 ## Further Reading
 
+- [IANA: Root Names, Addresses, and Operators](https://www.iana.org/domains/root/servers)
+- [Root Server Operators: Live Inventory and Location Map](https://root-servers.org/)
+- [ICANN: The 2016 IANA Stewardship Transition](https://www.icann.org/stewardship-accountability)
+- [IANA: .ru Delegation](https://www.iana.org/domains/root/db/ru.html)
+- [IANA: .kr Delegation](https://www.iana.org/domains/root/db/kr.html)
+- [IANA: .kp Delegation](https://www.iana.org/domains/root/db/kp.html)
+- [RFC 9499: DNS Terminology, Including Split DNS and Server Instances](https://www.rfc-editor.org/info/rfc9499/)
+- [RFC 2606: Reserved Names for Documentation and Examples](https://www.rfc-editor.org/rfc/rfc2606)
+- [Linux Manual: hosts File](https://man7.org/linux/man-pages/man5/hosts.5.html)
+- [Microsoft: Hosts File Location and Format](https://support.microsoft.com/en-us/windows/experience/how-to-reset-the-hosts-file-back-to-the-default)
 - [RFC 1034: Domain Names — Concepts and Facilities](https://www.rfc-editor.org/rfc/rfc1034)
 - [RFC 1035: Domain Names — Implementation and Specification](https://www.rfc-editor.org/rfc/rfc1035)
 - [RFC 3596: DNS Extensions to Support IPv6](https://www.rfc-editor.org/rfc/rfc3596)
