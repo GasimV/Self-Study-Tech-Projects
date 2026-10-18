@@ -34,9 +34,12 @@
 - [Load Balancers](#load-balancers)
   - [Load Balancing Overview](#load-balancing-overview)
   - [Where Balancing Happens](#where-balancing-happens)
+    - [Load Balancer Placement](#load-balancer-placement)
     - [Layer 4 vs. Layer 7](#layer-4-vs-layer-7)
     - [Local vs. Global Traffic Distribution](#local-vs-global-traffic-distribution)
+      - [DNS-Based Global Load Balancing](#dns-based-global-load-balancing)
   - [Backend Selection Algorithms](#backend-selection-algorithms)
+    - [Static vs. Dynamic Selection](#static-vs-dynamic-selection)
   - [Reverse Proxy vs. Load Balancer](#reverse-proxy-vs-load-balancer)
     - [Mental Model: Service Routing and Instance Selection](#mental-model-service-routing-and-instance-selection)
     - [Single-Server Deployments](#single-server-deployments)
@@ -48,9 +51,12 @@
     - [How It Works](#how-it-works)
     - [Connection to the Backend](#connection-to-the-backend)
   - [Session Affinity](#session-affinity)
+  - [State in Load Balancing](#state-in-load-balancing)
   - [Health Checks and Failover](#health-checks-and-failover)
   - [Autoscaling with Load Balancing](#autoscaling-with-load-balancing)
   - [Traffic Routing Policies](#traffic-routing-policies)
+  - [Illustrative Multi-Tier Deployment](#illustrative-multi-tier-deployment)
+  - [Implementation Options](#implementation-options)
   - [Worked Example: Flash Sale](#worked-example-flash-sale)
   - [Design Checklist](#design-checklist)
   - [Key Takeaways](#key-takeaways)
@@ -651,7 +657,40 @@ flowchart LR
 
 The routing decision has two parts: **which group of backends is eligible** (for example, a region or service) and **which healthy backend within that group receives the work**. Health, performance, location, session state, and business rules may all affect that choice.
 
+Balancing is a general scheduling idea: work can be spread across CPU cores, storage devices, or network links. Here, the focus is **application traffic distributed among service instances**.
+
+| Benefit | What balancing contributes | What it does not guarantee |
+| --- | --- | --- |
+| **Capacity utilization** | Spreads work across eligible resources | Equal CPU use or the shortest possible response time |
+| **Availability** | Directs new work away from detected failed backends | Recovery of every in-flight request or survival of shared failures |
+| **Horizontal scaling** | Includes new ready instances in the destination pool | Automatic scaling of databases or other dependencies |
+| **Graceful degradation** | Can cooperate with limits, prioritization, and load shedding | Continued operation under unlimited demand |
+| **Operational control** | Provides a place for routing, health policies, and metrics | Correct policies without configuration and monitoring |
+
 ### Where Balancing Happens
+
+#### Load Balancer Placement
+
+Load balancing is useful wherever a caller needs to choose among **interchangeable, eligible instances**. It can sit at the public entry point or between internal tiers.
+
+```mermaid
+flowchart TB
+    CLIENT["Clients"] --> EDGE["Public load balancer"]
+    EDGE --> WEB1["Frontend instance 1"]
+    EDGE --> WEB2["Frontend instance 2"]
+    WEB1 --> INTERNAL["Internal load balancer"]
+    WEB2 --> INTERNAL
+    INTERNAL --> APP1["Application instance 1"]
+    INTERNAL --> APP2["Application instance 2"]
+    APP1 --> DATA["Database endpoint"]
+    APP2 --> DATA
+```
+
+The frontend and application pools can scale independently. An internal balancer may be a proxy, a platform service, or client-side selection through a library; **not every service boundary needs another proxy**.
+
+Database routing needs additional care: a primary and a read replica are usually **not interchangeable write targets**. Use database-aware routing or the database's supported endpoints, respecting write leadership, replication lag, transaction state, and consistency requirements.
+
+> A balancer can route around an eligible instance's failure; it cannot make an unavailable dependency work. Timeouts, circuit breakers, backpressure, and dependency-aware recovery remain separate concerns.
 
 #### Layer 4 vs. Layer 7
 
@@ -680,6 +719,25 @@ Local balancing spreads work and provides instance-level failover. Global distri
 
 DNS-based routing updates the answers given to *new* DNS lookups. Cached DNS answers and existing connections can keep using an old endpoint until they expire or reconnect, so DNS failover is not instantaneous.
 
+##### DNS-Based Global Load Balancing
+
+**DNS-based GSLB selects the addresses returned during name resolution.** The subsequent application connection goes to the selected endpoint, not through the DNS server. The existing [overview diagram](#load-balancing-overview) shows how global selection can lead to a regional balancer and then an instance.
+
+| Approach | Example | Limitation |
+| --- | --- | --- |
+| **Simple round-robin DNS** | Return several addresses, possibly rotating their order | Clients and caches do not necessarily produce an even request split; no inherent backend health detection |
+| **Health-aware DNS policy** | Omit an unhealthy region from newly generated answers | Detection and cached answers delay the effect of a change |
+| **Weighted, geographic, or latency policy** | Prefer an allowed region using configured weights or location/latency information | Resolver location and available client information may not accurately represent each user |
+
+For example, a DNS answer can identify Region A's entry point; its local balancer then selects a ready application instance. DNS policies and regional balancing solve **different selection problems**, not competing versions of the same function. Health-aware DNS is available in systems such as [Amazon Route 53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html).
+
+Important limits:
+
+- A DNS response may be cached and reused by many clients. Address order is not a guarantee of which address a client uses, or how much traffic reaches it.
+- TTL affects answer reuse; it does not move existing connections. See [planned migration and TTL](#planned-hosting-migration-and-dns-ttl) for transition planning.
+- DNS is **not universally restricted to 512-byte responses**. That is the original UDP limit without extensions; EDNS permits larger UDP messages, and DNS supports TCP. Response size is not a reason to publish every backend address. See [RFC 6891](https://www.rfc-editor.org/rfc/rfc6891) and [RFC 7766](https://www.rfc-editor.org/rfc/rfc7766).
+- DNS, anycast, and proxy-based global routing are architectural options. **Not every application requires both global and local balancing**, and regional health information need not come from a direct local-balancer-to-global-balancer reporting channel.
+
 ### Backend Selection Algorithms
 
 Selection algorithms operate on the *healthy, eligible* backend pool. Different algorithms work best for different request lengths and server capacities.
@@ -691,6 +749,7 @@ Selection algorithms operate on the *healthy, eligible* backend pool. Different 
 | **Least connections** | Choose the backend with the fewest active connections | Long-lived or uneven connections | Connection count may not reflect CPU work |
 | **Least response time** | Prefer a backend with lower observed latency, often with load considered | Latency-sensitive services | Noisy measurements can cause traffic shifts |
 | **IP or key hash** | Map a stable key to a backend | Affinity or cache locality | NAT can group users; mapping changes when nodes change |
+| **Consistent hashing** | Map a key through a ring or another stable assignment structure | Cache locality with reduced remapping as membership changes | Hot keys, uneven distribution, and divergent membership views still need handling |
 
 For weighted routing, an instance with weight $w_i$ receives approximately this share *over many requests* when all targets remain healthy:
 
@@ -699,6 +758,21 @@ p_i \approx \frac{w_i}{\sum_{j=1}^{n} w_j}
 $$
 
 For example, weights `2:1` aim for roughly two-thirds of requests to the first instance and one-third to the second. They do not guarantee equal CPU use or exact percentages in a short sample. **Consistent hashing** can reduce remapping when a node joins or leaves, but it still requires a strategy for hot keys.
+
+See the [consistent-hashing explanation](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing), [DSA-style README](examples/consistent_hashing/README.md), and [C++ core](examples/consistent_hashing/consistent_hashing_dsa.cpp) for the ring procedure. Production policies include ring hashing and other approaches; see [Envoy's selection-policy documentation](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers).
+
+#### Static vs. Dynamic Selection
+
+This distinction describes **which information determines selection**, not whether the balancer stores any data at all.
+
+| Policy style | Selection inputs | Examples | Trade-off |
+| --- | --- | --- | --- |
+| **Static or configuration-driven** | Configured membership, weights, or a request key, without current backend-load measurements | Round robin, fixed weighted round robin, key hashing | Simple and predictable, but unequal request costs can create imbalance |
+| **Dynamic or load-aware** | Current or recent connection counts, active requests, latency, or reported utilization | Least connections, least requests, latency-aware selection | Adapts to measured conditions, but measurements cost work and may be stale or noisy |
+
+**Health filtering is separate from selection.** Round robin can still exclude unhealthy instances. Dynamic selection does not necessarily require every balancer to exchange all measurements: counters may be local, while other designs collect backend load reports. Fixed weights are configuration-driven; weights recomputed from utilization make that policy load-aware. [Envoy documents both fixed and load-informed policies](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers).
+
+A balancer therefore does **not always select the least-busy server**, and a dynamic policy is not automatically better. Choose based on request duration, capacity differences, measurement quality, overhead, and observed performance.
 
 ### Reverse Proxy vs. Load Balancer
 
@@ -921,6 +995,24 @@ TLS termination does **not** imply that traffic to the backend must be plaintext
 
 Affinity can simplify a stateful application, but it makes load distribution less even and complicates scaling and failover. Prefer **stateless application instances plus shared or client-held session state** when practical. If affinity is necessary, plan for the backend to disappear mid-session.
 
+### State in Load Balancing
+
+**Stateful versus stateless is meaningful only when you name the state being discussed.** A balancer can avoid per-client affinity mappings while still keeping connection counters, configuration, health status, and backend membership.
+
+| Kind of state | Example | Implication |
+| --- | --- | --- |
+| **Connection or flow state** | Map an established TCP flow to its backend | Later packets must reach the correct connection; losing mappings can interrupt it |
+| **Server-side affinity mapping** | Remember that session X belongs to instance 2 | Replacement balancers may need that mapping or a recovery strategy |
+| **Cookie-carried or deterministic affinity** | Read a routing cookie or hash a stable key | Can avoid a server-side per-client mapping, but still depends on valid inputs and backend configuration |
+| **Application session state** | A user's cart stored in a backend's memory | Routing alone does not replicate or recover that cart |
+| **Shared operational state** | Distribute membership or synchronize selected mappings | Helps coordinate balancers but adds consistency and failure-handling concerns |
+
+**Local state is still state**; it does not become stateless merely because it is not shared. Conversely, stateful balancing does not require every deployment to synchronize every session between all balancers. Some use connection pinning, selected replication, client-carried information, or tolerate reconnection.
+
+Consistent hashing can reduce mapping changes, but it does not eliminate connection state or recover lost application sessions. Balancers also need compatible hashing inputs and membership views to make matching choices. Google's [Maglev design](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/) illustrates a production combination of consistent hashing and connection tracking.
+
+> Distinguish **balancer state** from **application state**. A deterministic routing decision does not make the application stateless, and sticky routing is not data replication.
+
 ### Health Checks and Failover
 
 A balancer should send new work only to backends that can actually serve it. A running process is not necessarily a *ready* process: it may still be starting, overloaded, or disconnected from a critical dependency.
@@ -941,6 +1033,10 @@ register → warm up → pass readiness check → receive traffic
 > A health check should reflect the operation being served. A shallow `/health` response can be green while checkout cannot reach its payment dependency. At the same time, making every health check depend on every downstream service can cause correlated mass failover.
 
 At the global layer, failover may move users to another region. That region must have enough spare capacity and access to the data required for correct operation. Routing alone cannot preserve session state, synchronize databases, or guarantee zero downtime.
+
+**Failover is not the same as safely replaying a request.** A backend may commit an order before its response is lost. Retry only when the operation is safe to repeat or protected by an appropriate idempotency mechanism; consider replayability, deadlines, and retry limits.
+
+The balancing layer itself also needs a failure plan: redundant instances, a managed service, routing failover, or another deployment-specific arrangement. A single proxy on a single host can otherwise become the entry point's single point of failure. TLS termination can centralize certificate handling and move cryptographic work, but is **not by itself DDoS protection**; backend encryption choices remain as described in [TLS Termination](#tls-termination).
 
 ### Autoscaling with Load Balancing
 
@@ -984,6 +1080,44 @@ Keep headroom for bursts and failures. Scale-out has a delay, so use warm capaci
 For a canary rollout, increase the new version's weight only after checking error rate, latency, and business outcomes. Keep a fast rollback path. Session affinity and caches can make the observed split differ from the configured weight.
 
 > Geo routing can help apply regional policy, but it does not by itself guarantee data residency. Verify where requests, processing, logs, backups, and failover traffic actually go.
+
+### Illustrative Multi-Tier Deployment
+
+A large deployment **might** separate global endpoint selection, packet distribution, transport-level balancing, and application-level routing:
+
+```mermaid
+flowchart TB
+    CLIENT["Clients"] -.->|"1. Lookup"| DNS["DNS or global traffic policy"]
+    DNS -.->|"2. Address"| CLIENT
+    CLIENT -->|"3. Connect"| NETWORK["Network routing / ECMP"]
+    NETWORK --> L4A["L4 balancer A"]
+    NETWORK --> L4B["L4 balancer B"]
+    L4A --> L7A["L7 proxy A"]
+    L4A --> L7B["L7 proxy B"]
+    L4B --> L7A
+    L4B --> L7B
+    L7A --> APP["Eligible application instances"]
+    L7B --> APP
+```
+
+1. **DNS/global policy:** Supplies an entry-point address; it does not forward the HTTP request.
+2. **Network distribution:** Routing can spread flows across available balancer instances. ECMP means *equal-cost multipath*; it commonly hashes flow fields rather than simply rotating individual packets.
+3. **L4 layer:** Selects a transport destination and preserves flow consistency as required by the design.
+4. **L7 layer:** Applies HTTP routing and selects ready application backends, with TLS terminated at or before HTTP inspection.
+
+This is an **illustration, not a required four-tier standard**. Products can combine roles, managed services can hide layers, and smaller applications can omit most of them. Every extra hop adds latency, operating cost, and a failure surface. Changes in routing or backend membership must account for existing flows. [Maglev](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/) is one example of routing distributing traffic across software network balancers, not a template every application must follow.
+
+### Implementation Options
+
+| Option | Deployment and responsibility | Advantages | Trade-offs |
+| --- | --- | --- | --- |
+| **Hardware appliance** | Dedicated device operated by your team | Specialized acceleration and integrated network functions may fit particular requirements | Procurement, capacity planning, licensing, redundant devices, and vendor dependence |
+| **Self-managed software** | Processes on hosts, VMs, or containers; your team manages configuration and lifecycle | Programmability, flexible placement, and scaling on general-purpose infrastructure | Patching, capacity, observability, redundancy, and configuration safety remain your responsibility |
+| **Managed cloud service / LBaaS** | Provider operates the balancing infrastructure within a defined service scope | Less infrastructure maintenance; integration with discovery, metrics, and scaling | Usage charges, service limits, provider-specific behavior, and configuration responsibilities |
+
+**LBaaS** means *load balancing as a service*. A particular offering may be regional or global, L4 or L7; do not assume it supplies all scopes and features. Managed infrastructure does not remove responsibility for healthy backends, application correctness, or safe routing policies.
+
+There is **no universal performance winner**. Compare throughput, connections, TLS and HTTP processing, latency under realistic load, failure behavior, required features, and total operational cost. Hardware acceleration can help specific workloads; production software systems can also achieve high throughput. Hybrid designs are possible, but should solve a concrete requirement rather than add layers by default.
 
 ### Worked Example: Flash Sale
 
@@ -1083,6 +1217,11 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - [RFC 8767: Serving Stale Data to Improve DNS Resiliency](https://www.rfc-editor.org/rfc/rfc8767)
 
 - [NGINX: Using nginx as HTTP load balancer](https://nginx.org/en/docs/http/load_balancing.html)
+- [NGINX: HTTP Selection Methods, Weights, and Session Persistence](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/)
+- [Envoy: Backend Selection Policies](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers)
+- [Google: Maglev — Software Network Load Balancing, Hashing, and Connection Tracking](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/)
+- [AWS: Health Checks and DNS Failover](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html)
+- [RFC 6891: EDNS and Extended DNS UDP Message Sizes](https://www.rfc-editor.org/rfc/rfc6891)
 - [NGINX: Beginner's Guide — Processes, Configuration, Static Files, and Proxying](https://nginx.org/en/docs/beginners_guide.html)
 - [NGINX: proxy_pass and URI Handling](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass)
 - [NGINX: Authentication via Subrequests](https://nginx.org/en/docs/http/ngx_http_auth_request_module.html)
