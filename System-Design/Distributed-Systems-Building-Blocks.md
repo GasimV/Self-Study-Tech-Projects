@@ -39,8 +39,10 @@
   - [Backend Selection Algorithms](#backend-selection-algorithms)
   - [Reverse Proxy vs. Load Balancer](#reverse-proxy-vs-load-balancer)
     - [Mental Model: Service Routing and Instance Selection](#mental-model-service-routing-and-instance-selection)
+    - [Single-Server Deployments](#single-server-deployments)
     - [NGINX, Ingress, and Kubernetes Service](#nginx-ingress-and-kubernetes-service)
   - [Common Reverse Proxy Functions](#common-reverse-proxy-functions)
+    - [Reverse Proxy vs. API Gateway](#reverse-proxy-vs-api-gateway)
   - [CDNs and Origin Traffic](#cdns-and-origin-traffic)
   - [TLS Termination](#tls-termination)
     - [How It Works](#how-it-works)
@@ -732,7 +734,65 @@ This diagram shows *logical decisions*, not required separate devices. One NGINX
 
 > **Memory aid:** A reverse proxy is the intermediary that receives and forwards client requests. Load balancing is the choice among available destinations. Service routing and instance selection often happen together, but neither term is a formal subtype of the other.
 
+#### Single-Server Deployments
+
+**One physical server does not necessarily mean one application instance.** A server can run a reverse proxy, one or several application processes, and a database.
+
+| Deployment | Reverse proxy | Load balancing |
+| --- | --- | --- |
+| **One application instance on one server** | Can provide a common entry point for HTTPS and request policies | Usually unnecessary: there is only one application instance to select |
+| **Several application instances on one server** | Can forward requests to local processes | Can distribute requests among processes listening on different ports |
+| **Application instances on multiple servers** | Can route requests to the appropriate service | Can distribute requests among instances on different machines |
+
+**Example: One backend instance.** The client is outside the server; the other components share one machine.
+
+```mermaid
+flowchart LR
+    CLIENT["Client"] --> PROXY
+    subgraph HOST["One physical server"]
+        PROXY["NGINX reverse proxy"] --> APP["Backend application"]
+        APP --> DB["Database"]
+    end
+```
+
+**Example: Several backend processes on the same server.** Each request goes to one selected instance, not all three.
+
+```mermaid
+flowchart LR
+    CLIENT["Client"] --> PROXY
+    subgraph HOST["One physical server"]
+        PROXY["NGINX proxy and load balancer"] --> APP1["App instance: port 8001"]
+        PROXY --> APP2["App instance: port 8002"]
+        PROXY --> APP3["App instance: port 8003"]
+    end
+```
+
+Multiple local instances can use available server capacity, but **they do not protect against failure of that physical server**.
+
+Even with one backend, a configured proxy can provide:
+
+- **HTTPS handling:** Manage the client-facing certificate and encrypted connection; see [TLS Termination](#tls-termination) for HTTP upstreams, re-encryption, and pass-through.
+- **Request routing:** Forward `/api/` to an API on port `8000` and `/` to a frontend on port `3000`. It may instead serve `/images/` from local files: that is its **web-server role**, whereas forwarding to an image service is reverse proxying.
+- **Request controls:** Apply configured rate limits, request-size limits, and access restrictions before forwarding.
+- **Caching:** Reuse selected, safely cacheable responses instead of repeatedly contacting the backend; personalized responses need appropriate isolation or must not be shared.
+
+Without a proxy, clients can connect directly to an application server that provides the required HTTPS, routing, and controls itself. **A reverse proxy is optional**, not a prerequisite for a small application. NGINX documents both [local proxying and static-file serving](https://nginx.org/en/docs/beginners_guide.html), as well as [balancing among backend instances](https://nginx.org/en/docs/http/load_balancing.html).
+
+> **Remember:** A reverse proxy can be useful with **one backend**. Load balancing becomes useful when there are **multiple eligible instances**, even if they share one machine.
+
 #### NGINX, Ingress, and Kubernetes Service
+
+**NGINX is running server software, not a configuration file.** Its processes receive and handle requests; files such as `nginx.conf` describe how it should behave. The file itself does not forward traffic. See the [NGINX beginner's guide](https://nginx.org/en/docs/beginners_guide.html).
+
+For example, this **configuration fragment belongs inside an HTTP `server` block**; it is not a complete configuration:
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+}
+```
+
+In this standalone, same-host example, NGINX forwards `/api/orders` to `http://127.0.0.1:8000/api/orders`. Because `proxy_pass` specifies no URI after the host and port, it preserves the `/api/` prefix. In containers, loopback refers to the container's own network namespace, so another container normally needs a different backend address. See the [`proxy_pass` reference](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass).
 
 | Term | What it is | Role in this example |
 | --- | --- | --- |
@@ -787,6 +847,24 @@ A reverse proxy can perform several functions at once:
 6. **Application routing:** Send requests to services based on hostname, path, or other request properties.
 
 These are common capabilities, not mutually exclusive types. For example, the same proxy can terminate TLS, check authentication, and then balance requests across an application cluster.
+
+#### Reverse Proxy vs. API Gateway
+
+A **reverse proxy** describes an intermediary that receives client requests and forwards them to backends. An **API gateway** is an API-focused entry point that applies routing and API policies. These roles overlap: the same component can perform both.
+
+| Capability | Reverse proxy, such as NGINX | API gateway |
+| --- | --- | --- |
+| **Request routing** | Can route by host or path | Commonly routes APIs and versions |
+| **TLS termination** | Can handle client HTTPS when configured | Commonly handles client HTTPS |
+| **Rate limiting and request limits** | Available depending on implementation and configuration | Common API-policy capabilities; support varies |
+| **Authentication** | May use built-in modules or delegate to an authentication service | Often integrates with identity providers and token validation |
+| **API keys, consumer quotas, and API management** | May require additional modules, services, or products | Often a focus, but exact features vary by product |
+
+These are **capabilities, not automatic guarantees**. For example, NGINX can delegate access decisions through its [HTTP authentication-request module](https://nginx.org/en/docs/http/ngx_http_auth_request_module.html), which is not built by default. A simple forwarding configuration does not automatically enable authentication, caching, or rate limiting.
+
+> **Mental model:** Reverse proxy = an intermediary role. API gateway = an API-management role. Neither removes the application's responsibility to validate input and enforce business-level authorization.
+
+For what HTTPS decryption at the entry point actually means, see [TLS Termination](#tls-termination); the backend connection can use HTTP or a separate, verified HTTPS connection according to the security requirements.
 
 ### CDNs and Origin Traffic
 
@@ -1005,6 +1083,9 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - [RFC 8767: Serving Stale Data to Improve DNS Resiliency](https://www.rfc-editor.org/rfc/rfc8767)
 
 - [NGINX: Using nginx as HTTP load balancer](https://nginx.org/en/docs/http/load_balancing.html)
+- [NGINX: Beginner's Guide — Processes, Configuration, Static Files, and Proxying](https://nginx.org/en/docs/beginners_guide.html)
+- [NGINX: proxy_pass and URI Handling](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass)
+- [NGINX: Authentication via Subrequests](https://nginx.org/en/docs/http/ngx_http_auth_request_module.html)
 - [Kubernetes: Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Kubernetes: Service](https://kubernetes.io/docs/concepts/services-networking/service/)
 - [F5: What is SSL termination?](https://www.f5.com/glossary/ssl-termination)
