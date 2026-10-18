@@ -6,6 +6,7 @@
 - [Exploring DNS](#exploring-dns)
   - [DNS Name Resolution](#dns-name-resolution)
   - [Name Servers and Resolvers](#name-servers-and-resolvers)
+    - [Checking Your DNS Server in Windows](#checking-your-dns-server-in-windows)
   - [Resource Records](#resource-records)
   - [DNS Hierarchy](#dns-hierarchy)
   - [DNS Server Deployment and Governance](#dns-server-deployment-and-governance)
@@ -134,6 +135,45 @@ A **zone** is an administratively managed portion of the DNS namespace. Delegati
 | **Role in a web visit** | Helps the resolver obtain the endpoint address | Handles the subsequent application request |
 
 DNS does **not** forward the browser's web request. After resolution, the browser connects separately to the returned address, which may identify an application server, reverse proxy, or load balancer. See [DNS Name Resolution](#dns-name-resolution) for that separation. DNS and application software can share a physical or virtual machine, but they remain different services.
+
+#### Checking Your DNS Server in Windows
+
+Plain `ipconfig` shows basic interface information, not the configured DNS server addresses. In **PowerShell**, inspect the full configuration or list DNS addresses directly:
+
+```powershell
+ipconfig /all
+Get-DnsClientServerAddress
+```
+
+Check **DNS Servers** for the active network adapter; entries on disconnected or virtual adapters are not necessarily used for your lookup. A default gateway address alone does not establish that the gateway also provides DNS. See Microsoft's [ipconfig](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ipconfig) and [Get-DnsClientServerAddress](https://learn.microsoft.com/en-us/powershell/module/dnsclient/get-dnsclientserveraddress) references.
+
+To test a lookup using the default DNS server:
+
+```powershell
+nslookup www.example.com
+```
+
+**Illustrative output only:** The angle-bracketed values below are placeholders, not real addresses or literal command arguments.
+
+```text
+Server:  UnKnown
+Address: <router-IP>
+
+Non-authoritative answer:
+Name:    www.example.com
+Address: <website-IP>
+```
+
+- **`<router-IP>`:** The DNS endpoint queried in this example. A home router commonly forwards queries to an upstream resolver; matching the gateway and DNS addresses indicates these roles share an endpoint, not how it resolves names internally.
+- **`UnKnown`:** The DNS server's name could not be resolved; this alone does not mean the requested lookup failed.
+- **`Non-authoritative answer`:** The response is not marked authoritative for the queried name. It does not establish whether the answer was just fetched or already cached.
+- **`<website-IP>`:** An address returned for the requested name; actual output may contain several IPv4 or IPv6 addresses.
+
+These outputs do **not necessarily reveal the router's upstream DNS provider**. Browsers using their own secure-DNS configuration may follow a different resolution path. The lookup example is diagnostic, not a change to DNS settings. See Microsoft's [nslookup reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/nslookup).
+
+> **Mental model:** Computer → router's DNS service → upstream resolver if needed → answer. The router may answer from its cache instead of forwarding every query.
+
+> **Sharing safely:** Publish placeholders or a minimal example, not a raw configuration dump. Omit machine-specific addresses, hostnames, MAC addresses, adapter identifiers, and other identifying network details.
 
 ### Resource Records
 
