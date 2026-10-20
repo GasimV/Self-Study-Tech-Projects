@@ -37,6 +37,8 @@
   - [Where Balancing Happens](#where-balancing-happens)
     - [Load Balancer Placement](#load-balancer-placement)
     - [Layer 4 vs. Layer 7](#layer-4-vs-layer-7)
+      - [TCP Connection: A Simple Mental Model](#tcp-connection-a-simple-mental-model)
+      - [Why One TCP Connection Stays on One Backend](#why-one-tcp-connection-stays-on-one-backend)
     - [Local vs. Global Traffic Distribution](#local-vs-global-traffic-distribution)
       - [DNS-Based Global Load Balancing](#dns-based-global-load-balancing)
   - [Backend Selection Algorithms](#backend-selection-algorithms)
@@ -746,6 +748,59 @@ Database routing needs additional care: a primary and a read replica are usually
 
 L4 can forward encrypted traffic without decrypting it. Some L4 products can also terminate TLS; *layer* and *TLS behavior* are separate design choices. L7 routing based on HTTP content requires access to the decrypted request.
 
+##### TCP Connection: A Simple Mental Model
+
+A **TCP connection** is a logical, two-way communication channel between two software endpoints. It is **not a dedicated physical cable**: the endpoints remember information about their conversation, usually through their operating systems' networking stacks.
+
+The usual **three-way handshake** establishes the connection:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: SYN - start connection
+    S->>C: SYN-ACK - acknowledge
+    C->>S: ACK - confirm
+    Note over C,S: Connection established
+    C->>S: Application data
+    S->>C: Application data
+```
+
+- The application writes **bytes**; TCP divides them into segments carried in IP packets.
+- **Sequence numbers and acknowledgments** track progress, supporting ordered delivery and retransmission of missing data.
+- Each endpoint keeps **connection state**, including sequence numbers and buffers. TCP can send data in both directions.
+- A connection can close normally or fail. Reliability does not mean TCP can deliver through a permanently broken network.
+
+See the [TCP specification, RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.html).
+
+> **Connection ≠ request ≠ user session.** HTTP over TCP can reuse one connection for several requests. TCP itself does not encrypt data; HTTPS over TCP adds TLS. The diagram shows TCP setup, not the separate TLS handshake.
+
+##### Why One TCP Connection Stays on One Backend
+
+“Same server” means the **same selected backend for that connection**, not that the balancer and backend must share one physical machine.
+
+```text
+Connection 1 → Load balancer → Server A
+Connection 2 → Load balancer → Server B (may be selected)
+```
+
+1. When connection 1 starts, the balancer selects **A**.
+2. A holds the TCP state for that conversation. Subsequent traffic stays with A because B cannot automatically interpret it as an established connection of its own.
+3. A new connection gets its own selection: it might reach **B**, or A again.
+4. If A fails, the existing connection usually breaks. Reconnecting can select another backend; this is not seamless continuation of the old TCP conversation.
+
+The balancer can preserve its choice through a **connection table**, **stable flow hashing**, or both. A common flow identifier is the **5-tuple**:
+
+```text
+Source IP + Source port + Destination IP + Destination port + Protocol
+```
+
+Exact selection inputs vary by implementation. For example, [AWS Network Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/introduction.html) documents flow hashing and routes each TCP connection to one target for its lifetime.
+
+**Proxy qualification:** Some L4 balancers terminate the client-side TCP connection and create a **separate backend-side TCP connection**. The proxy relays bytes between them; there is not necessarily one unchanged end-to-end TCP connection. NGINX's [stream proxy](https://nginx.org/en/docs/stream/ngx_stream_proxy_module.html) is an example. This TCP behavior does not itself imply TLS termination.
+
+> **Connection affinity ≠ user/session affinity.** Preserving one connection's destination does not keep a user's new connections on the same backend. See [Session Affinity](#session-affinity) for cross-connection policies and [State in Load Balancing](#state-in-load-balancing) for state-handling choices. Reconnecting also does not automatically make replaying a request safe; see [Health Checks and Failover](#health-checks-and-failover).
+
 #### Local vs. Global Traffic Distribution
 
 | Scope | Decision | Common mechanisms |
@@ -1257,6 +1312,9 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - [RFC 8767: Serving Stale Data to Improve DNS Resiliency](https://www.rfc-editor.org/rfc/rfc8767)
 
 - [NGINX: Using nginx as HTTP load balancer](https://nginx.org/en/docs/http/load_balancing.html)
+- [RFC 9293: TCP Connections, Reliability, and Connection Establishment](https://www.rfc-editor.org/rfc/rfc9293.html)
+- [AWS: Network Load Balancer Flow Hashing and TCP Connection Routing](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/introduction.html)
+- [NGINX: TCP/UDP Stream Proxying](https://nginx.org/en/docs/stream/ngx_stream_proxy_module.html)
 - [NGINX: HTTP Selection Methods, Weights, and Session Persistence](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/)
 - [Envoy: Backend Selection Policies](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers)
 - [Google: Maglev — Software Network Load Balancing, Hashing, and Connection Tracking](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/)
