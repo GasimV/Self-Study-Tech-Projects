@@ -38,6 +38,8 @@
     - [Load Balancer Placement](#load-balancer-placement)
     - [Layer 4 vs. Layer 7](#layer-4-vs-layer-7)
       - [TCP Connection: A Simple Mental Model](#tcp-connection-a-simple-mental-model)
+      - [TCP Header: What Each Segment Carries](#tcp-header-what-each-segment-carries)
+      - [Inspecting TCP Connections and Headers](#inspecting-tcp-connections-and-headers)
       - [Why One TCP Connection Stays on One Backend](#why-one-tcp-connection-stays-on-one-backend)
     - [Local vs. Global Traffic Distribution](#local-vs-global-traffic-distribution)
       - [DNS-Based Global Load Balancing](#dns-based-global-load-balancing)
@@ -775,6 +777,102 @@ See the [TCP specification, RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.htm
 
 > **Connection ≠ request ≠ user session.** HTTP over TCP can reuse one connection for several requests. TCP itself does not encrypt data; HTTPS over TCP adds TLS. The diagram shows TCP setup, not the separate TLS handshake.
 
+##### TCP Header: What Each Segment Carries
+
+A **TCP header** carries each segment's control information:
+
+```text
+IP header | TCP header | Payload (if any)
+```
+
+Diagrams show **32-bit-wide rows**, not communication stages.
+
+**TCP wire layout (RFC 9293 base format):** Bit positions run from `0` to `31` across each row; parenthesized numbers in field labels are widths in bits.
+
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-------------------------------+-------------------------------+
+|       Sender port (16)        |      Receiver port (16)       |
++---------------------------------------------------------------+
+|                         Sequence Number (32)                  |
++---------------------------------------------------------------+
+|                      Acknowledgment Number (32)               |
++-------+-------+-+-+-+-+-+-+-+-+-------------------------------+
+|Offset | Resvd |C|E|U|A|P|R|S|F|      Receive window (16)      |
++-------+-------+-+-+-+-+-+-+-+-+-------------------------------+
+|         Checksum (16)         |      Urgent offset (16)       |
++---------------------------------------------------------------+
+|     Options and zero padding (0-40 bytes; variable rows)      |
++---------------------------------------------------------------+
+```
+
+`Offset` is the 4-bit data offset; `Resvd` is the 4-bit reserved area in this base format. Each flag occupies **one bit**, in order: `C` = CWR, `E` = ECE, `U` = URG, `A` = ACK, `P` = PSH, `R` = RST, `S` = SYN, `F` = FIN. CWR/ECE support congestion notification; PSH is the push flag. The pointer labeled `Urgent offset` is the urgent-pointer field.
+
+The first **five rows of fields are the fixed 20-byte header**. Options/padding are optional and may span several rows; payload follows the complete header and is **not part of it**. For example, data offset `5` means `5 × 4 = 20` header bytes; `8` means `32` bytes. See the [header-format specification](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.1).
+
+| Field | Simple meaning |
+| --- | --- |
+| **Source / destination ports — 16 bits each** | Identify sending and receiving software endpoints. |
+| **Sequence number — 32 bits** | First data byte's position; SYN also consumes a number. |
+| **Acknowledgment number — 32 bits** | Next byte expected from the other endpoint, when ACK is set. |
+| **Data offset — 4 bits** | Header length in 32-bit words; identifies where payload begins. |
+| **Reserved bits** | Space reserved for protocol use. |
+| **Flags** | Include SYN (establish), ACK (acknowledge), FIN (finish), and RST (reset). |
+| **Window — 16 bits** | Receive capacity for flow control; negotiated scaling extends its range. |
+| **Checksum — 16 bits** | Helps detect corrupted headers or data. |
+| **Urgent pointer — 16 bits** | Marks urgent data when URG is set; rarely used. |
+| **Options / padding** | Additional capabilities and alignment. |
+
+> **Diagram correction:** Data offset is **4 bits, not 16**. The standard header is **20–60 bytes**. IP addresses belong to the **IP header**. Payload can be empty.
+
+Reference: [RFC 9293: TCP header format](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.1).
+
+##### Inspecting TCP Connections and Headers
+
+**Connection listings describe sockets; packet captures show individual transmitted headers.** They answer different questions.
+
+**List TCP connections and listening sockets:**
+
+| System / shell | Command | Shows |
+| --- | --- | --- |
+| **Windows — PowerShell or CMD** | `netstat -ano -p tcp` | Endpoints, connection states, and process IDs |
+| **macOS — Terminal** | `netstat -an -p tcp` | Endpoints and connection states |
+| **Linux — Terminal** | `ss -tanp` | TCP sockets and states; process details where permitted |
+
+These listings do **not** display each packet's sequence number, flags, or checksum. See the [Windows netstat reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat), [Apple netstat manual](https://github.com/apple-oss-distributions/network_cmds/blob/main/netstat.tproj/netstat.1), and [Linux ss manual](https://man7.org/linux/man-pages/man8/ss.8.html).
+
+**Inspect actual packets on Windows:** Install Wireshark with **TShark** and **Npcap**. In PowerShell, list capture interfaces, then capture up to ten TCP packets with decoded fields:
+
+```powershell
+& "C:\Program Files\Wireshark\tshark.exe" -D
+& "C:\Program Files\Wireshark\tshark.exe" -i 1 -f "tcp" -c 10 -V
+```
+
+Replace `1` with the desired interface number. The path assumes Wireshark's usual installation location; adapt it if different. Capture permissions depend on the installation and organizational policy.
+
+**Inspect actual packets on macOS or Linux:** With TShark installed:
+
+```bash
+tshark -D
+sudo tshark -i 1 -f "tcp" -c 10 -V
+```
+
+Again select the correct interface; elevation is only needed when capture permissions require it. `-D` lists interfaces, `-i` selects one, `-f` filters captured traffic, `-c` limits packet count, and `-V` prints decoded details. See the [TShark manual](https://www.wireshark.org/docs/man-pages/tshark.html).
+
+**Compact alternative on macOS or Linux:** Use `tcpdump` for packet summaries rather than a full field-by-field decode:
+
+```bash
+sudo tcpdump -D
+sudo tcpdump -i INTERFACE -nn -S -v -c 10 tcp
+```
+
+Replace `INTERFACE` with an interface name from the listing. `-nn` keeps addresses and ports numeric; `-S` shows absolute TCP sequence numbers; `-v` adds detail. macOS includes `tcpdump`; Linux may require installation. See [Apple's packet-trace guide](https://developer.apple.com/documentation/network/recording-a-packet-trace).
+
+Start capture before generating TCP traffic; **Ctrl+C stops it** if ten packets have not arrived. In Wireshark's GUI, select the interface, capture traffic, filter the display with `tcp`, and expand **Transmission Control Protocol** for decoded header fields. HTTPS payloads remain encrypted without appropriate decryption material, but TCP headers are normally visible.
+
+> **Capture responsibly:** Inspect only traffic you are authorized to capture. Captures and verbose output can reveal addresses, hostnames, and sensitive data. Do not publish raw captures or machine-specific output. These are optional diagnostic examples, not instructions to change networking or security policy.
+
 ##### Why One TCP Connection Stays on One Backend
 
 “Same server” means the **same selected backend for that connection**, not that the balancer and backend must share one physical machine.
@@ -1313,6 +1411,11 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 
 - [NGINX: Using nginx as HTTP load balancer](https://nginx.org/en/docs/http/load_balancing.html)
 - [RFC 9293: TCP Connections, Reliability, and Connection Establishment](https://www.rfc-editor.org/rfc/rfc9293.html)
+- [Microsoft: netstat](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netstat)
+- [Apple: netstat Manual](https://github.com/apple-oss-distributions/network_cmds/blob/main/netstat.tproj/netstat.1)
+- [Linux: ss Manual](https://man7.org/linux/man-pages/man8/ss.8.html)
+- [Wireshark: TShark Command-Line Manual](https://www.wireshark.org/docs/man-pages/tshark.html)
+- [Apple: Recording a Packet Trace](https://developer.apple.com/documentation/network/recording-a-packet-trace)
 - [AWS: Network Load Balancer Flow Hashing and TCP Connection Routing](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/introduction.html)
 - [NGINX: TCP/UDP Stream Proxying](https://nginx.org/en/docs/stream/ngx_stream_proxy_module.html)
 - [NGINX: HTTP Selection Methods, Weights, and Session Persistence](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/)
