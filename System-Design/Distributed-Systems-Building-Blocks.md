@@ -53,6 +53,7 @@
     - [Reverse Proxy vs. API Gateway](#reverse-proxy-vs-api-gateway)
   - [CDNs and Origin Traffic](#cdns-and-origin-traffic)
   - [TLS Termination](#tls-termination)
+    - [SSL vs. TLS: Naming and Versions](#ssl-vs-tls-naming-and-versions)
     - [Certificate Authorities: The Digital Notary](#certificate-authorities-the-digital-notary)
     - [Public and Private CAs](#public-and-private-cas)
     - [Certificate Issuance vs. Connection Verification](#certificate-issuance-vs-connection-verification)
@@ -1170,6 +1171,32 @@ Client ── HTTPS/TLS ──► Proxy or load balancer ── HTTP or new HTTP
                       (client TLS connection ends here)
 ```
 
+#### SSL vs. TLS: Naming and Versions
+
+**TLS (Transport Layer Security) is the modern successor to SSL (Secure Sockets Layer), but not every TLS version is suitable today.** The familiar phrase **“SSL certificate”** is a legacy industry label for a certificate used with TLS; it does not mean SSL should be enabled or that the certificate selects the protocol version.
+
+| Protocol | Practical guidance |
+| --- | --- |
+| **SSL—all versions** | Obsolete and unsafe; do not enable |
+| **TLS 1.0 / 1.1** | Deprecated; do not enable |
+| **TLS 1.2** | Supported for compatibility when securely configured |
+| **TLS 1.3** | Preferred modern version where supported |
+
+See the [SSL 3.0 deprecation](https://www.rfc-editor.org/rfc/rfc7568.html), [TLS 1.0/1.1 deprecation](https://www.rfc-editor.org/rfc/rfc8996.html), and [secure-TLS recommendations](https://www.rfc-editor.org/rfc/rfc9325.html). A protocol name alone does not guarantee security: enabled algorithms, certificate validation, implementations, and key handling also matter.
+
+Important improvements and qualifications:
+
+- **Cryptography:** TLS 1.3 removes legacy choices and uses authenticated encryption, such as AES-GCM or ChaCha20-Poly1305.
+- **Handshake latency:** A normal full TLS 1.3 handshake needs fewer round trips than TLS 1.2; resumption behaves differently.
+- **Forward secrecy:** Normal certificate-based TLS 1.3 handshakes protect recordings against later theft of the certificate's private key, assuming ephemeral/session secrets remain protected and are erased. Compromised session keys or endpoints remain a risk.
+- **Alerts:** Encryption depends on connection state; early errors can be plaintext. “SSL alerts are unencrypted; TLS alerts are encrypted” is not a valid blanket distinction.
+
+**Pre-shared-key-only (PSK-only)** exchanges lack the same forward-secrecy guarantee; optional **0-RTT early data** lacks full forward secrecy and introduces replay risks. See the [TLS 1.3 specification](https://www.rfc-editor.org/rfc/rfc8446.html).
+
+**Key derivation:** TLS 1.3 uses **HKDF** (HMAC-based key derivation); TLS 1.2 uses a different **PRF-based construction** (pseudorandom function). Do not infer that an older construction is insecure merely because it differs. See [TLS 1.3 key derivation](https://www.rfc-editor.org/rfc/rfc8446.html#section-7.1) and [TLS 1.2's PRF](https://www.rfc-editor.org/rfc/rfc5246.html#section-5).
+
+> **Remember:** The certificate identifies the endpoint; the negotiated TLS version and cryptographic configuration determine how the connection is protected. “SSL” in a product label is not a reason to enable an obsolete protocol.
+
 #### Certificate Authorities: The Digital Notary
 
 A **Certificate Authority (CA)** acts like a digital notary: after specified checks, it signs a certificate binding a **public key** to an identity, such as a domain name. The CA is a certificate-issuing system operated by an organization or individual, not necessarily a separate physical server.
@@ -1637,6 +1664,10 @@ For system-design interviews, be prepared to explain **placement, request flow, 
 - [Let's Encrypt: Chains of Trust](https://letsencrypt.org/certificates/)
 - [RFC 5280: Certificate-Path Validation](https://www.rfc-editor.org/rfc/rfc5280.html#section-6)
 - [RFC 8446: TLS 1.3 Authentication](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4)
+- [RFC 7568: Deprecating SSL 3.0](https://www.rfc-editor.org/rfc/rfc7568.html)
+- [RFC 8996: Deprecating TLS 1.0 and TLS 1.1](https://www.rfc-editor.org/rfc/rfc8996.html)
+- [RFC 9325: Recommendations for Secure TLS Use](https://www.rfc-editor.org/rfc/rfc9325.html)
+- [RFC 5246: TLS 1.2 Pseudorandom Function](https://www.rfc-editor.org/rfc/rfc5246.html#section-5)
 - [NGINX: Configuring HTTPS Servers](https://nginx.org/en/docs/http/configuring_https_servers.html)
 - [AWS: HTTPS listeners for Application Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html)
 - [NGINX: HTTP health checks](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-health-check/)
