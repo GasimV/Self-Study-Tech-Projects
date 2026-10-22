@@ -1397,12 +1397,20 @@ flowchart TB
     L7B --> APP
 ```
 
-1. **DNS/global policy:** Supplies an entry-point address; it does not forward the HTTP request.
-2. **Network distribution:** Routing can spread flows across available balancer instances. ECMP means *equal-cost multipath*; it commonly hashes flow fields rather than simply rotating individual packets.
-3. **L4 layer:** Selects a transport destination and preserves flow consistency as required by the design.
-4. **L7 layer:** Applies HTTP routing and selects ready application backends, with TLS terminated at or before HTTP inspection.
+**What each tier does in this example:**
+
+1. **Tier 0 — DNS/global policy:** Supplies an entry-point IP address, potentially selecting between data centers. DNS is a **lookup step, not a forwarding hop**: after receiving an address, the client connects through the network; its HTTP traffic does not pass through DNS.
+2. **Tier 1 — Routers:** Distribute incoming traffic across available L4 balancer instances. ECMP means *equal-cost multipath*; it commonly hashes flow fields rather than rotating individual packets.
+3. **Tier 2 — L4 load balancers:** Select an L7 balancer using transport information such as IP addresses, ports, and connection information. Preserve each TCP connection's backend choice—not necessarily every connection belonging to one user. See [Why One TCP Connection Stays on One Backend](#why-one-tcp-connection-stays-on-one-backend).
+4. **Tier 3 — L7 load balancers:** Inspect HTTP requests, route them to the appropriate service, and select an eligible, healthy application instance. HTTP inspection requires TLS to terminate at or before this layer.
+
+**Why use multiple tiers?** Each forwarding tier can distribute work across multiple instances of the next tier, allowing the balancing infrastructure itself to scale. With suitable redundancy, routing, and spare capacity, traffic can avoid some failed instances. This does not guarantee that an established connection survives failure or that every request completes.
 
 This is an **illustration, not a required four-tier standard**. Products can combine roles, managed services can hide layers, and smaller applications can omit most of them. Every extra hop adds latency, operating cost, and a failure surface. Changes in routing or backend membership must account for existing flows. [Maglev](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/) is one example of routing distributing traffic across software network balancers, not a template every application must follow.
+
+Smaller applications may use **one proxy/load-balancer component instead of separate tiers**, or no load balancer when only one application instance is needed. See [Single-Server Deployments](#single-server-deployments).
+
+> **Mental model:** DNS selects an entry point. After that lookup, traffic is progressively distributed—from network entry points, through the balancing layers used by the design, to individual application servers. Tier 0–3 are labels for this example, not universal infrastructure tiers.
 
 ### Implementation Options
 
