@@ -69,9 +69,19 @@
   - [Design Checklist](#design-checklist)
   - [Key Takeaways](#key-takeaways)
 - [Application Gateways](#application-gateways)
+  - [Role and Request Flow](#role-and-request-flow)
+  - [Features and Capabilities](#features-and-capabilities)
+  - [Design Considerations](#design-considerations)
 - [Microservices Architectures](#microservices-architectures)
+  - [Gateway Support for Microservices](#gateway-support-for-microservices)
+  - [Routing vs. Aggregation](#routing-vs-aggregation)
+  - [External vs. Internal Traffic](#external-vs-internal-traffic)
 - [Cloud-Native Implementations](#cloud-native-implementations)
+  - [Managed Cloud Services](#managed-cloud-services)
+  - [Kubernetes Gateways and Ingress](#kubernetes-gateways-and-ingress)
 - [On-Premises Options](#on-premises-options)
+  - [Self-Hosted Gateway Options](#self-hosted-gateway-options)
+  - [Operational Responsibilities](#operational-responsibilities)
 - [Summary](#summary)
 - [Further Reading](#further-reading)
 
@@ -1429,23 +1439,147 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 
 ## Application Gateways
 
-> Study notes to be added.
+An **application gateway** is an application-aware intermediary that routes traffic and applies shared policies in front of backend services. An **API gateway** focuses on exposing and managing APIs. Terminology varies by product: these are overlapping roles, not universal product categories.
+
+### Role and Request Flow
+
+A gateway works as a reverse proxy and may also load-balance requests. L7 load balancers can provide many of the same capabilities; the distinction is **the policies and API-management functions required**, not simply “basic balancer versus advanced gateway.” See [Reverse Proxy vs. API Gateway](#reverse-proxy-vs-api-gateway).
+
+```mermaid
+flowchart TB
+    CLIENT["Client"] --> ENTRY["Routing and shared policies"]
+    subgraph GATEWAY["Logical API gateway"]
+        ENTRY
+    end
+    ENTRY -->|"/users"| USER["User Service"]
+    ENTRY -->|"/prices"| PRICE["Pricing Service"]
+    USER --> EXT["External identity provider"]
+    PRICE --> DB[("Pricing database")]
+```
+
+The diagram shows **possible routes, not a broadcast**: a `/prices` request normally goes to Pricing Service, not both services. The external identity provider is an illustrative User Service dependency; its involvement depends on the operation and authentication design. Each service owns its downstream interactions.
+
+One **logical entry point** can be backed by several gateway replicas and multiple endpoints. It need not be the first physical network hop: DNS, a CDN, DDoS protection, or a separate load balancer may precede it. Gateways also work with monoliths, internal APIs, and on-premises applications—not only cloud microservices.
+
+### Features and Capabilities
+
+Support depends on the product, edition, plugins, integrations, and configuration. A gateway need not implement every capability below.
+
+| Capability | Purpose and example | Important boundary |
+| --- | --- | --- |
+| **Request routing** | Match host, path, headers, or source-network rules to select a service | A route is not permission to access its data |
+| **Authentication (AuthN)** | **Who are you?** Validate a token, certificate, or other credential | Validate issuer, audience, signature, and expiry as applicable |
+| **Authorization (AuthZ)** | **What may you do?** Enforce API scopes or route access | Services must still enforce object ownership and business rules |
+| **Rate limits and quotas** | Bound request rates or consumer usage | Cluster-wide limits may require coordinated counters; neither guarantees spare capacity |
+| **TLS handling** | Terminate client TLS and optionally establish backend TLS | Manage certificates and validate upstream identity; see [TLS Termination](#tls-termination) |
+| **WAF integration** | Filter known malicious request patterns | A web application firewall is not complete DDoS protection or a replacement for secure code |
+| **Caching** | Reuse selected safe responses | Include identity/tenant context where needed, or exclude private responses |
+| **Compression** | Reduce suitable response sizes | Costs CPU and requires appropriate security and content policies |
+| **Connection management** | Reuse backend connections and bound concurrent work | Respect timeouts, protocol behavior, and backend limits |
+| **Observability** | Record request/error rates, latency, access logs, and trace context | Gateway visibility does not replace instrumentation inside services |
+| **Adaptation** | Transform headers or payloads; translate supported protocols for legacy services | Preserve contract semantics, error behavior, and trust boundaries |
+
+For example, validating a user's token at the gateway does **not** establish that the user may read every account ID accepted by a backend. Object-level authorization remains essential. [OWASP: Broken Object-Level Authorization](https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/)
+
+### Design Considerations
+
+1. **Capacity and redundancy:** Size for connections, throughput, TLS, filters, and failure headroom. Replicate across appropriate failure domains; avoid making one gateway host the sole entry point.
+2. **Timeouts and retries:** Budget end-to-end deadlines, bound retries, and account for whether requests can be replayed. Protect writes with appropriate idempotency; see [Health Checks and Failover](#health-checks-and-failover).
+3. **Overload and caching:** Apply admission controls, concurrency limits, and backpressure. Define cache keys, expiry, and invalidation without leaking one user's response to another.
+4. **Trust boundaries:** Restrict unintended direct backend access, validate forwarded identity, and retain service-level authorization. TLS termination or a WAF alone does not prevent all attacks; DDoS protection also depends on upstream capacity and defenses.
+5. **Safe change management:** Validate configuration and policy changes, stage rollouts, monitor outcomes, and retain rollback paths. Keep API versions compatible during mixed deployments.
+6. **Certificates and telemetry:** Protect signing/endpoint keys, renew certificates, and verify backend TLS. Correlate logs and traces while redacting tokens, credentials, and sensitive payloads.
+
+> **Recall:** A gateway centralizes selected shared policies, not all application intelligence. Keep core business rules in services and make the gateway layer resilient itself.
 
 ## Microservices Architectures
 
-> Study notes to be added.
+**Microservices** organize an application into services designed for independent deployment around explicit responsibilities and interfaces. They can communicate through HTTP APIs, gRPC, or asynchronous messaging; REST is one option, not a requirement. Independent deployment requires compatible contracts and appropriate ownership of data and behavior—not merely separate processes.
+
+### Gateway Support for Microservices
+
+| Need | Gateway contribution | What services and teams still provide |
+| --- | --- | --- |
+| **Stable public API** | Expose a consistent hostname and API surface while internal endpoints change | Compatible contracts, versioning, and migration plans |
+| **Discovery and instance selection** | Use configured destinations, DNS, platform discovery, or registry integration to reach eligible instances | Accurate membership and readiness signals |
+| **Shared policies** | Apply common authentication, limits, and telemetry conventions | Business authorization, validation, and internal observability |
+| **Independent releases** | Update routing or policies separately from backend binaries | Compatibility tests and coordination when contracts change |
+| **Independent scaling** | Distribute incoming traffic to the relevant service pool | Capacity management for each service and its dependencies |
+
+A gateway can reduce client coupling to internal topology and repeated infrastructure code, but **does not itself create service independence**. Small systems or independently exposed services may not need a shared gateway.
+
+### Routing vs. Aggregation
+
+- **Routing:** `/users/42` selects User Service; `/prices/item7` selects Pricing Service. The gateway forwards a request to its chosen destination.
+- **Aggregation:** A `/dashboard` operation might obtain user and pricing information and combine the results. This requires multiple calls, deadlines, and explicit partial-failure behavior.
+
+Aggregation is **optional**, not what every routed request does. Complex composition often belongs in a dedicated aggregation service or **backend for frontend (BFF)** rather than an increasingly business-heavy gateway. See [Microsoft's API-gateway architecture discussion](https://learn.microsoft.com/en-us/azure/architecture/microservices/design/gateway).
+
+### External vs. Internal Traffic
+
+**North–south traffic** enters or leaves the application environment; an ingress/API gateway often handles this boundary. **East–west traffic** runs between internal services. It may use direct calls, messaging, client libraries, or a service mesh rather than returning through the public gateway.
+
+A **service mesh** can supply service-to-service transport security, routing, and telemetry. It is not interchangeable with a public API-management platform, although a mesh may include ingress gateways. Neither approach removes application-level correctness requirements. See the [Istio ingress-gateway example](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/).
 
 ## Cloud-Native Implementations
 
-> Study notes to be added.
+Cloud platforms offer several complementary entry-point services. **A managed API gateway, an L7 load balancer, a WAF, and a CDN are not equivalent products**, even when integrated in one architecture.
+
+### Managed Cloud Services
+
+| Platform | API-focused service | Complementary traffic services | Distinction |
+| --- | --- | --- | --- |
+| **AWS** | [Amazon API Gateway](https://docs.aws.amazon.com/apigateway/latest/developerguide/welcome.html): publish and manage HTTP, REST, or WebSocket APIs | [Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html): HTTP(S) routing and backend distribution | API type and integrations determine policies; ALB is not a substitute for every API-management feature |
+| **Azure** | [API Management](https://learn.microsoft.com/en-us/azure/api-management/api-management-key-concepts): API policies and lifecycle management | [Application Gateway](https://learn.microsoft.com/en-us/azure/application-gateway/overview): L7 web traffic balancing, TLS, and WAF integration | Application Gateway is not another name for API Management; they can be combined |
+| **Google Cloud** | [API Gateway](https://docs.cloud.google.com/api-gateway/docs/about-api-gateway) and [Apigee](https://docs.cloud.google.com/apigee/docs/api-platform/get-started/what-apigee): different API-serving/management offerings | [Application Load Balancing](https://docs.cloud.google.com/load-balancing/docs/application-load-balancer), [Cloud Armor](https://docs.cloud.google.com/armor/docs/cloud-armor-overview), and [Cloud CDN](https://docs.cloud.google.com/cdn/docs/overview) | Armor supplies protection policies; CDN supplies edge caching. Neither is a standalone API gateway |
+
+These are **role examples, not interchangeable feature lists or purchasing recommendations**. Check supported combinations, API types, regional scope, quotas, identity integrations, and service tiers. Do not assume every service is serverless or automatically autoscaling; provisioning and scaling models differ. Managed operation also does not remove responsibility for backend readiness, authorization, capacity, or safe configuration.
+
+### Kubernetes Gateways and Ingress
+
+An **Ingress resource** declares routing rules; an **Ingress controller** implements them. **Gateway API** provides Kubernetes resources such as `GatewayClass`, `Gateway`, and `HTTPRoute` for configuring network traffic. A compatible controller and data plane are still needed. **Gateway API is not itself an API-gateway product.** See the [Kubernetes Ingress documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/) and [Gateway API introduction](https://gateway-api.sigs.k8s.io/docs/introduction/).
+
+| Implementation | Role and qualification |
+| --- | --- |
+| **Kong** | [Kong Ingress Controller](https://developer.konghq.com/kubernetes-ingress-controller/) translates supported Kubernetes routing resources into Kong Gateway configuration; gateway features depend on edition and plugins |
+| **Traefik** | [Traefik Proxy](https://doc.traefik.io/traefik/) provides ingress/reverse-proxy routing and middleware; distinguish it from additional API-management products |
+| **Istio** | [Istio ingress gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/) provide an entry boundary into a service-mesh environment; Istio is not merely an Ingress controller |
+| **Emissary-Ingress** | [Emissary-Ingress](https://emissary-ingress.dev/docs/4.1/about/why-ambassador/) provides Envoy-based Kubernetes ingress/API routing; authentication and rate-limit designs may use external services |
+
+Controller support and policy extensions vary. Declaring a resource does not automatically enable every security, analytics, or API-management capability. For the existing NGINX example and naming distinctions, see [NGINX, Ingress, and Kubernetes Service](#nginx-ingress-and-kubernetes-service).
 
 ## On-Premises Options
 
-> Study notes to be added.
+Gateways can run in an organization's data center, on a VM, on bare metal, or in containers. **Self-hosted does not mean on-premises only**: the same software can run in cloud infrastructure, while the team retains operational responsibilities.
+
+### Self-Hosted Gateway Options
+
+| Software | Main role | Capabilities and qualifications |
+| --- | --- | --- |
+| **[Kong Gateway](https://developer.konghq.com/gateway/)** | API gateway | Routing and extensible policy plugins; edition, plugin, and licensing choices affect available features |
+| **[Tyk Gateway](https://tyk.io/docs/tyk-open-source)** | API gateway with an open-source core | API access controls, routing, and traffic policies; management dashboards and developer portals are separate platform components, not automatically part of the open-source gateway |
+| **[NGINX](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)** | Web server, reverse proxy, and load balancer | Can implement gateway policies through configuration and integrations; distinguish open-source modules from commercial products and extensions |
+| **[HAProxy](https://www.haproxy.org/)** | TCP/HTTP proxy and load balancer | Provides L4/L7 application delivery and traffic controls; a complete API-management experience may require additional components |
+
+**Kong Gateway and [Kong Mesh](https://developer.konghq.com/mesh/) are different components**: the first focuses on API gateway functions; the latter manages a service mesh across services. Do not assume either is included merely because the other is deployed.
+
+### Operational Responsibilities
+
+For self-hosted gateways, plan installation and upgrades, security patching, redundant placement, discovery integration, certificates, configuration backups, monitoring, and capacity testing. If policies use shared counters or external authentication services, those dependencies need their own availability and timeout plans.
+
+Open-source availability does not imply that every dashboard, portal, analytics service, or enterprise plugin is free or bundled. Check the relevant component's documentation and license. Choose the smallest set of components that meets the requirements rather than assembling every product into one request path.
+
+> **Deployment model ≠ gateway role.** Public cloud, private infrastructure, and hybrid environments can use the same architectural patterns with different operating responsibilities.
 
 ## Summary
 
-> Study notes to be added.
+**DNS, load balancers, and application gateways solve complementary problems in a request's journey.** DNS resolves names through a distributed hierarchy; caching reduces lookup latency and DNS traffic, while TTLs affect how quickly changes become visible. Load balancers distribute connections or requests among eligible backends using policies suited to their workload. L4 balancing uses transport information; L7 balancing can inspect application requests. Application/API gateways provide a unified entry point with routing and configurable shared policies such as authentication, rate limiting, observability, and adaptation.
+
+These components can improve scalability, performance, and resilience, but their guarantees depend on configuration, healthy capacity, and application correctness. Gateways are useful for microservices and other architectures—not exclusively cloud systems. DNS cache expiry, connection affinity, safe retries, certificate trust, and service-level authorization remain separate concerns that must work together.
+
+For system-design interviews, be prepared to explain **placement, request flow, trade-offs, and failure behavior**, not merely product names.
+
+> **DNS finds an endpoint; load balancing selects a backend; a gateway applies routing and application policies. One product may perform several roles.**
 
 ## Further Reading
 
@@ -1509,3 +1643,24 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - [AWS: Target health checks and draining](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html)
 - [AWS: DNS failover and TTL](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-values-failover.html)
 - [Cloudflare: CDN caching basics](https://developers.cloudflare.com/cache/get-started/)
+- [Microsoft Architecture Center: API Gateway Roles and Aggregation](https://learn.microsoft.com/en-us/azure/architecture/microservices/design/gateway)
+- [OWASP: Broken Object-Level Authorization](https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/)
+- [AWS: Amazon API Gateway](https://docs.aws.amazon.com/apigateway/latest/developerguide/welcome.html)
+- [AWS: Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html)
+- [Azure: API Management](https://learn.microsoft.com/en-us/azure/api-management/api-management-key-concepts)
+- [Azure: Application Gateway](https://learn.microsoft.com/en-us/azure/application-gateway/overview)
+- [Google Cloud: API Gateway](https://docs.cloud.google.com/api-gateway/docs/about-api-gateway)
+- [Google Cloud: Apigee](https://docs.cloud.google.com/apigee/docs/api-platform/get-started/what-apigee)
+- [Google Cloud: Application Load Balancing](https://docs.cloud.google.com/load-balancing/docs/application-load-balancer)
+- [Google Cloud: Cloud Armor](https://docs.cloud.google.com/armor/docs/cloud-armor-overview)
+- [Google Cloud: Cloud CDN](https://docs.cloud.google.com/cdn/docs/overview)
+- [Kubernetes: Gateway API Introduction](https://gateway-api.sigs.k8s.io/docs/introduction/)
+- [Kong: Gateway](https://developer.konghq.com/gateway/)
+- [Kong: Ingress Controller](https://developer.konghq.com/kubernetes-ingress-controller/)
+- [Kong: Mesh](https://developer.konghq.com/mesh/)
+- [Tyk: Open-Source Gateway and Platform Components](https://tyk.io/docs/tyk-open-source)
+- [Traefik: Proxy Documentation](https://doc.traefik.io/traefik/)
+- [Istio: Ingress Gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/)
+- [Emissary-Ingress: Architecture and Purpose](https://emissary-ingress.dev/docs/4.1/about/why-ambassador/)
+- [NGINX: HTTP Proxy Module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+- [HAProxy: Project and Documentation](https://www.haproxy.org/)
