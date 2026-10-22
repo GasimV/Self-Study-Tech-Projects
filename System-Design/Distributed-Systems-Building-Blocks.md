@@ -82,6 +82,7 @@
   - [Kubernetes Gateways and Ingress](#kubernetes-gateways-and-ingress)
 - [On-Premises Options](#on-premises-options)
   - [Self-Hosted Gateway Options](#self-hosted-gateway-options)
+  - [Self-Hosted AI Gateways](#self-hosted-ai-gateways)
   - [Operational Responsibilities](#operational-responsibilities)
 - [Summary](#summary)
 - [Further Reading](#further-reading)
@@ -1598,6 +1599,35 @@ Gateways can run in an organization's data center, on a VM, on bare metal, or in
 
 **Kong Gateway and [Kong Mesh](https://developer.konghq.com/mesh/) are different components**: the first focuses on API gateway functions; the latter manages a service mesh across services. Do not assume either is included merely because the other is deployed.
 
+### Self-Hosted AI Gateways
+
+**AI gateways are software gateways specialized for AI/model traffic.** They apply familiar gateway ideas—routing, authentication, traffic policies, and observability—to model inference calls. An **LLM gateway** focuses on language-model calls; some AI gateways also handle other model types or related tool traffic.
+
+| Example | Main purpose |
+| --- | --- |
+| **[LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy)** | Self-hosted model-provider interface with routing, fallbacks, access controls, budgets, and token/cost tracking |
+| **[Portkey AI Gateway](https://github.com/Portkey-AI/gateway)** | Open-source gateway that can run locally or in containers, providing provider integration, routing, retries, fallbacks, and guardrail integrations |
+| **[Agent Router](https://theagentrouter.ai/docs/)** — formerly **Envoy AI Gateway** | Envoy-based, open-source AI traffic infrastructure with routing, permissions, quotas, and failover capabilities |
+
+Traditional gateway platforms can also offer AI-specific capabilities; **[Kong AI Gateway](https://developer.konghq.com/ai-gateway/)** is one example. Deployment modes, features, plugins, and licensing vary: do not assume every hosted or enterprise capability is included in an open-source deployment.
+
+The distinction is mainly **specialization**, not an entirely different kind of infrastructure:
+
+- **General API gateway:** Routes application requests and applies authentication, request limits, and general traffic policies.
+- **AI gateway:** Additionally handles model/provider selection, token usage, inference costs, streaming responses, and provider-specific formats, depending on implementation.
+
+A possible request path is:
+
+```text
+Client → API gateway → Application / agent → AI gateway → Hosted or local model
+```
+
+These need not all be separate components. The application owns its workflow; the AI gateway manages access to model backends rather than deciding how the agent should reason. For the shared-interface pattern and its trade-offs, see [LLM Gateway](AI-Systems-Design.md#llm-gateway).
+
+> **Self-hosted gateway ≠ self-hosted model.** A gateway running on your infrastructure can still send prompts to an external provider. Check allowed destinations, logging, credentials, and data policies.
+
+> **Traffic control ≠ answer correctness.** Guardrails, model routing, and fallbacks do not guarantee correct answers or eliminate hallucinations. A fallback model can behave differently; validate it for the task rather than treating providers as semantically interchangeable.
+
 ### Operational Responsibilities
 
 For self-hosted gateways, plan installation and upgrades, security patching, redundant placement, discovery integration, certificates, configuration backups, monitoring, and capacity testing. If policies use shared counters or external authentication services, those dependencies need their own availability and timeout plans.
@@ -1703,3 +1733,7 @@ For system-design interviews, be prepared to explain **placement, request flow, 
 - [Emissary-Ingress: Architecture and Purpose](https://emissary-ingress.dev/docs/4.1/about/why-ambassador/)
 - [NGINX: HTTP Proxy Module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 - [HAProxy: Project and Documentation](https://www.haproxy.org/)
+- [LiteLLM: Self-Hosted AI Gateway](https://docs.litellm.ai/docs/simple_proxy)
+- [Portkey: Open-Source AI Gateway](https://github.com/Portkey-AI/gateway)
+- [Agent Router: Formerly Envoy AI Gateway](https://theagentrouter.ai/docs/)
+- [Kong: AI Gateway](https://developer.konghq.com/ai-gateway/)
