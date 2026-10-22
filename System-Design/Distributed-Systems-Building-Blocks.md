@@ -53,6 +53,9 @@
     - [Reverse Proxy vs. API Gateway](#reverse-proxy-vs-api-gateway)
   - [CDNs and Origin Traffic](#cdns-and-origin-traffic)
   - [TLS Termination](#tls-termination)
+    - [Certificate Authorities: The Digital Notary](#certificate-authorities-the-digital-notary)
+    - [Public and Private CAs](#public-and-private-cas)
+    - [Certificate Issuance vs. Connection Verification](#certificate-issuance-vs-connection-verification)
     - [How It Works](#how-it-works)
     - [Connection to the Backend](#connection-to-the-backend)
   - [Session Affinity](#session-affinity)
@@ -1157,6 +1160,70 @@ Client ── HTTPS/TLS ──► Proxy or load balancer ── HTTP or new HTTP
                       (client TLS connection ends here)
 ```
 
+#### Certificate Authorities: The Digital Notary
+
+A **Certificate Authority (CA)** acts like a digital notary: after specified checks, it signs a certificate binding a **public key** to an identity, such as a domain name. The CA is a certificate-issuing system operated by an organization or individual, not necessarily a separate physical server.
+
+The analogy has limits: a certificate does **not** certify that a website's content, business, or proposed actions are trustworthy. For public TLS server certificates, common validation categories are:
+
+| Category | What is checked |
+| --- | --- |
+| **Domain Validation (DV)** | Control of the requested domain, using an approved method such as a DNS or HTTP challenge |
+| **Organization Validation (OV)** | Domain control and verified organization identity information |
+| **Extended Validation (EV)** | Domain control plus additional prescribed organization, existence, and authorization checks |
+
+These describe **identity-validation differences, not stronger encryption levels**. See the [CA/Browser Forum Baseline Requirements](https://cabforum.org/working-groups/server/baseline-requirements/requirements/) and [EV explanation](https://cabforum.org/working-groups/server/extended-validation/about/).
+
+#### Public and Private CAs
+
+| Aspect | Public CA | Private / local CA |
+| --- | --- | --- |
+| **Trust** | Depends on inclusion in applicable browser, OS, or application trust programs | Depends on administrators explicitly configuring client trust |
+| **Typical use** | Public-facing HTTPS services | Development, internal applications, VPNs, and device authentication |
+| **Operation** | Multiple independent operators, including commercial and nonprofit organizations | An organization or developer can operate one, even on a laptop |
+| **Examples** | DigiCert or Let's Encrypt, subject to client trust-store support | An enterprise PKI or a developer's local CA |
+
+Public CAs are **not one global monopoly or an immutable list**. Browser and OS providers maintain root programs with admission, auditing, and continuing-trust requirements. Root keys can be relatively long-lived, but roots can be replaced or distrusted; individual service certificates are renewed on their own lifecycle. See the [Chrome Root Program policy](https://googlechrome.github.io/chromerootprogram/crp/policy/).
+
+A private CA works only for clients that trust its root certificate or another appropriately configured trust anchor. **Being on the same LAN, VPN, laptop, or private network does not automatically create that trust.** The relevant application may use a different trust store from the OS. A root's self-signature alone does not make it trustworthy.
+
+Public deployments commonly use **root CA → intermediate CA → server certificate**. An intermediate issues the server certificate, while the root key can remain offline. The client connects the presented certificate chain to a locally trusted anchor; trust is not established simply by the server sending a root certificate. See [Let's Encrypt's chain-of-trust explanation](https://letsencrypt.org/certificates/).
+
+> **Private CA safety:** Distribute the public CA certificate as needed, not the CA's private key. Protect the signing key: whoever controls it can issue certificates within that CA's authority. No trust-store changes are required to study this example.
+
+#### Certificate Issuance vs. Connection Verification
+
+Consider **Application A**, a server, and **Application B**, its client. Issuance and connection verification are different phases:
+
+```mermaid
+sequenceDiagram
+    participant B as Client B
+    participant A as Server A
+    participant CA as Issuing CA
+    Note over A,CA: Phase 1 - certificate issuance
+    A->>A: Generate server key pair
+    A->>CA: CSR with public key and requested identity
+    CA->>CA: Validate request and sign certificate
+    CA-->>A: Signed certificate and intermediate chain
+    Note over B,A: Phase 2 - certificate-based TLS connection
+    Note over B: CA trust configured beforehand
+    B->>A: Begin TLS handshake
+    A-->>B: Present certificate chain
+    B->>B: Validate identity and trust chain
+    A-->>B: Prove possession of server private key
+    Note over B,A: Complete handshake if checks succeed
+```
+
+**Issuance:** A generates its key pair and submits a **Certificate Signing Request (CSR)** containing its public key and requested identity. The CSR is signed with A's corresponding private key, which **does not leave A** in this example. The CA checks authorization and identity, then signs the certificate with its **existing CA signing key**, often an intermediate's key. It does not generate a new CA key for each request or receive A's private key. [Issuance example: Let's Encrypt](https://letsencrypt.org/how-it-works/)
+
+**Connection verification:** B checks the certificate chain against its configured trust anchors, the requested hostname, validity period, permitted use, and applicable security policies. In a certificate-based TLS handshake, A proves possession of its matching private key; presenting a copied certificate alone is insufficient. B can then complete the handshake if all required checks succeed. See [certificate-path validation, RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-6) and [TLS authentication, RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4).
+
+Ordinary HTTPS does **not** require B to have its own client certificate. **Mutual TLS (mTLS)** additionally authenticates the client using its certificate and proof of the associated private key. This is separate from application-level user login and authorization.
+
+> **The CA signs the certificate; the client verifies it.** The CA does not approve every HTTPS request. Depending on client policy, certificate-status or chain-retrieval services may still be consulted; that is not per-request permission from a notary.
+
+When **NGINX terminates TLS**, NGINX is the client-facing TLS endpoint in this example: it presents the certificate and uses the associated private key, rather than requiring the backend to handle that client connection. Protect that key and automate certificate renewal as appropriate. Re-encryption creates a separate backend TLS connection with its own validation requirements. See the [NGINX HTTPS configuration guide](https://nginx.org/en/docs/http/configuring_https_servers.html) and [Connection to the Backend](#connection-to-the-backend).
+
 #### How It Works
 
 1. **Handshake:** The client establishes a TLS connection with the intermediary, which presents its certificate and proves its identity using the associated private key.
@@ -1429,6 +1496,14 @@ This architecture improves resilience, but it cannot promise zero downtime. A da
 - [Kubernetes: Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Kubernetes: Service](https://kubernetes.io/docs/concepts/services-networking/service/)
 - [F5: What is SSL termination?](https://www.f5.com/glossary/ssl-termination)
+- [CA/Browser Forum: Public TLS Baseline Requirements](https://cabforum.org/working-groups/server/baseline-requirements/requirements/)
+- [CA/Browser Forum: Extended Validation](https://cabforum.org/working-groups/server/extended-validation/about/)
+- [Chrome: Root Program Policy](https://googlechrome.github.io/chromerootprogram/crp/policy/)
+- [Let's Encrypt: Certificate Issuance and Domain Validation](https://letsencrypt.org/how-it-works/)
+- [Let's Encrypt: Chains of Trust](https://letsencrypt.org/certificates/)
+- [RFC 5280: Certificate-Path Validation](https://www.rfc-editor.org/rfc/rfc5280.html#section-6)
+- [RFC 8446: TLS 1.3 Authentication](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4)
+- [NGINX: Configuring HTTPS Servers](https://nginx.org/en/docs/http/configuring_https_servers.html)
 - [AWS: HTTPS listeners for Application Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html)
 - [NGINX: HTTP health checks](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-health-check/)
 - [AWS: Target health checks and draining](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html)
