@@ -304,6 +304,7 @@ The later sections above reserve space for deeper study of particular families a
 
 ## Related Notes
 
+- [Data engineering pipelines and analytical architectures](Data-Engineering-for-Solution-Architecture.md)
 - [System design at different scales](Understanding-System-Design.md#system-design-at-different-scales)
 - [Distributed consistency](Distributed-System-Attributes.md#consistency)
 - [CAP theorem](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem)
