@@ -19,6 +19,11 @@
   - [Relational and NoSQL Trade-Offs](#relational-and-nosql-trade-offs)
     - [Database Selection Checklist](#database-selection-checklist)
 - [Key-Value Stores](#key-value-stores)
+  - [What Is a Key-Value Store?](#what-is-a-key-value-store)
+  - [Why Use Key-Value Stores in Distributed Systems?](#why-use-key-value-stores-in-distributed-systems)
+  - [Functional Requirements and a Simple API](#functional-requirements-and-a-simple-api)
+  - [Non-Functional Requirements and Trade-Offs](#non-functional-requirements-and-trade-offs)
+  - [Design Topics to Study Next](#design-topics-to-study-next)
 - [Amazon DynamoDB](#amazon-dynamodb)
 - [Column-Family Databases](#column-family-databases)
 - [Apache HBase](#apache-hbase)
@@ -270,7 +275,108 @@ Use [CAP](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem) and [
 
 ## Key-Value Stores
 
-> Study notes to be added.
+### What Is a Key-Value Store?
+
+A **key-value store** associates a unique **key** with a **value** within a defined namespace. The key identifies what to retrieve or change, much like a dictionary:
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `cart:42` | `book` | A simplified shopping-cart value |
+| `theme:42` | `dark` | A user's display preference |
+| `product:7` | `{"name":"Notebook","price":5}` | A serialized product record |
+
+The key is the lookup identifier; the value may be text, bytes, a serialized document, or a product-supported data structure. The application must still define formats, validation, and compatibility. Flexible values do not remove the need for a data model.
+
+**A key-value store is not necessarily distributed.** It can be embedded, run on one server, or span several servers. A **distributed hash table (DHT)** distributes key-based lookup and ownership using hashing; it is one approach to building a distributed key-value system, not a synonym for every key-value database.
+
+The basic mental model exposes one current value per key. Replication and concurrent updates can introduce internal copies or competing versions; the store's consistency and conflict rules determine what a read returns. [Redis strings](https://redis.io/docs/latest/develop/data-types/strings/) illustrate basic key-based storage and retrieval, while Redis also supports richer types.
+
+> **Mental model:** You know the key and ask for its value. How the system locates, stores, replicates, and protects that value is a separate design problem.
+
+### Why Use Key-Value Stores in Distributed Systems?
+
+| Benefit | How it can help | Important limit |
+| --- | --- | --- |
+| **Scalability** | Partition different keys across nodes to spread storage and traffic | Hot keys, skew, and rebalancing can still limit scaling |
+| **Performance** | Direct key access can avoid unnecessary scans or joins | Network hops, value size, storage, load, and coordination affect latency |
+| **Flexible values** | Store records with different payload shapes | Readers and writers must agree on their meaning and format |
+| **Fault tolerance** | Keep replicas so another node may serve a key after a failure | Partitioning alone does not create a backup copy; failover needs adequate replicas and a defined protocol |
+
+Typical uses include sessions, preferences, shopping carts, and cached objects. Suitability depends on required durability, consistency, expiry, and access controls. Key lookup alone does not provide arbitrary searches, joins, or multi-key transactions; additional capabilities depend on the engine.
+
+```mermaid
+flowchart TB
+    APP["Application"] --> ROUTE["Key-based routing"]
+    ROUTE --> A["Partition A<br/>Some keys"]
+    ROUTE --> B["Partition B<br/>Other keys"]
+    A -.-> AR["Replica of A"]
+    B -.-> BR["Replica of B"]
+
+    classDef client fill:#fff3cd,stroke:#111,color:#111
+    classDef data fill:#dbeafe,stroke:#111,color:#111
+    class APP,ROUTE client
+    class A,B,AR,BR data
+```
+
+The routing arrows show alternative destinations for a key, not a broadcast to every partition. Dotted arrows show replication relationships; they do not prescribe synchronous or asynchronous acknowledgments. Routing can reside in a client or service. **Partitioning divides data; replication copies it.** The diagram does not define a complete failover protocol.
+
+### Functional Requirements and a Simple API
+
+For an illustrative design, define these operations explicitly:
+
+| Operation | Intended behavior | Illustrative result |
+| --- | --- | --- |
+| **`Put(key, value)`** | Insert a new key or replace its current value | Success under the chosen write-acknowledgment policy, or an operation error |
+| **`Get(key)`** | Retrieve the value visible under the selected read guarantee | Value, `NotFound`, or an operation error |
+| **`Delete(key)`** | Remove the key's logical value | `Deleted`, `NotFound`, or an operation error |
+
+These names describe a conceptual API, not commands shared by every database. Here a put replaces the whole value; field updates, conditional writes, and multi-key operations need separate contracts. Missing-key deletion behavior varies: an API may report `NotFound` or treat an already-absent key as successful deletion.
+
+**Sequential walkthrough**, with no concurrent writers and reads that observe completed writes:
+
+| Request | Result |
+| --- | --- |
+| `Put("cart:42", "book")` | Success; create the key |
+| `Get("cart:42")` | `"book"` |
+| `Put("cart:42", "book, pen")` | Success; replace the value |
+| `Get("cart:42")` | `"book, pen"` |
+| `Delete("cart:42")` | `Deleted` |
+| `Get("cart:42")` | `NotFound` |
+
+`NotFound` is distinct from a stored empty value, a timeout, or an authorization failure. A timeout does not prove that the key is absent or that a write failed; the request may have completed before its reply was lost. Define safe retry behavior accordingly.
+
+### Non-Functional Requirements and Trade-Offs
+
+| Requirement | What to specify | Design implication |
+| --- | --- | --- |
+| **Scalability** | Data size, growth, key distribution, and peak traffic | Plan capacity, partitioning, hot-key handling, and rebalancing |
+| **Performance** | Read/write latency percentiles at a stated load and value size | Measure routing, storage, network, and coordination costs; do not promise constant latency as the system grows |
+| **Durability** | Which acknowledged writes survive which failures | Define persistence, replication acknowledgments, recovery, and backup procedures |
+| **Consistency** | What each read may observe and how concurrent writes are ordered or reconciled | Choose a read/write protocol and explicit conflict semantics |
+| **Availability** | Which operations must complete during covered failures | Provide healthy capacity and replicas; some failures can still prevent progress |
+| **Partition behavior** | How each side behaves when nodes cannot communicate | Decide which operations wait, fail, or proceed with weaker coordination |
+
+If a per-key operation is **linearizable**, a read observes the latest write in a single order consistent with real-time completion; concurrent operations can be ordered within their overlap. This is a possible requirement, not an inherent key-value-store property. Eventually consistent reads may return an older value; [DynamoDB documents different read options and their scope](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html).
+
+**These requirements cannot all be unconditional.** During a network partition, a system cannot guarantee both linearizable behavior and successful completion of every request at every reachable node. It may reject or delay operations that cannot coordinate, or allow operations under weaker consistency rules. See [CAP](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem) and [PACELC](Distributed-Systems-Theorems-and-Data-Structures.md#pacelc-theorem).
+
+Replication does not automatically establish durable storage or consistent reads, and it is not a substitute for backup. Likewise, “low latency” is a workload target, not a guarantee under arbitrary network delays and failures.
+
+### Design Topics to Study Next
+
+The introductory requirements lead to these design questions:
+
+| Topic | Question to resolve |
+| --- | --- |
+| **Partitioning and scalability** | Which node owns a key, and what moves when membership changes? See [consistent hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing). |
+| **Replication** | How many copies are kept, where, and which acknowledgments are required? See [quorum reads and writes](Distributed-System-Attributes.md#quorum-reads-and-writes). |
+| **Versioning and conflicts** | How are concurrent changes detected, ordered, merged, or exposed to the application? |
+| **Configurability** | Which consistency, replication, and durability choices are supported, and which combinations are valid? |
+| **Fault tolerance and failure detection** | How does the store suspect failures, route around them, recover data, and safely rejoin nodes? A timeout can indicate delay as well as failure. |
+
+The original [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) is a concrete example combining partitioning, replication, versioning, and application-assisted conflict handling. **Dynamo is the historical system described in that paper; Amazon DynamoDB is a separate managed product.** These techniques and their guarantees must be evaluated together rather than assumed from the key-value model.
+
+> **Recall:** A simple key-based API can hide a complex distributed design. Specify what success, missing data, concurrent updates, and failures mean before choosing the mechanisms.
 
 ## Amazon DynamoDB
 
@@ -326,6 +432,8 @@ The later sections above reserve space for deeper study of particular families a
 - [DynamoDB: Transactions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transactions.html)
 - [DynamoDB: Read Consistency](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html)
 - [Redis: Data Types](https://redis.io/docs/latest/develop/data-types/)
+- [Redis: String Values and Key-Based Operations](https://redis.io/docs/latest/develop/data-types/strings/)
+- [Dynamo: Amazon's Highly Available Key-Value Store — Original 2007 Paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf)
 - [Apache CouchDB: Technical Overview](https://docs.couchdb.org/en/stable/intro/overview.html)
 - [Apache Cassandra: Architecture Overview](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html)
 - [Apache HBase: Data Model](https://hbase.apache.org/docs/datamodel/)
