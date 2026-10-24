@@ -24,6 +24,13 @@
   - [Functional Requirements and a Simple API](#functional-requirements-and-a-simple-api)
   - [Non-Functional Requirements and Trade-Offs](#non-functional-requirements-and-trade-offs)
   - [Design Topics to Study Next](#design-topics-to-study-next)
+  - [Scalability: Partitioning and Consistent Hashing](#scalability-partitioning-and-consistent-hashing)
+  - [Replication Models and Replica Placement](#replication-models-and-replica-placement)
+  - [Coordinating Reads and Writes](#coordinating-reads-and-writes)
+  - [Temporary Failures: Sloppy Quorums and Hinted Handoff](#temporary-failures-sloppy-quorums-and-hinted-handoff)
+  - [Replica Repair and Merkle Trees](#replica-repair-and-merkle-trees)
+  - [Membership, Gossip, and Failure Detection](#membership-gossip-and-failure-detection)
+  - [Design Review and Interview Checklist](#design-review-and-interview-checklist)
 - [Amazon DynamoDB](#amazon-dynamodb)
 - [Column-Family Databases](#column-family-databases)
 - [Apache HBase](#apache-hbase)
@@ -368,15 +375,246 @@ The introductory requirements lead to these design questions:
 
 | Topic | Question to resolve |
 | --- | --- |
-| **Partitioning and scalability** | Which node owns a key, and what moves when membership changes? See [consistent hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing). |
-| **Replication** | How many copies are kept, where, and which acknowledgments are required? See [quorum reads and writes](Distributed-System-Attributes.md#quorum-reads-and-writes). |
-| **Versioning and conflicts** | How are concurrent changes detected, ordered, merged, or exposed to the application? |
-| **Configurability** | Which consistency, replication, and durability choices are supported, and which combinations are valid? |
-| **Fault tolerance and failure detection** | How does the store suspect failures, route around them, recover data, and safely rejoin nodes? A timeout can indicate delay as well as failure. |
+| **Partitioning and scalability** | [Place keys and handle membership changes](#scalability-partitioning-and-consistent-hashing). |
+| **Replication** | [Choose copies, physical owners, and replication behavior](#replication-models-and-replica-placement). |
+| **Versioning and conflicts** | [Interpret concurrent versions](#coordinating-reads-and-writes); detailed reconciliation algorithms remain further study. |
+| **Configurability** | [Specify R/W thresholds and their limits](#coordinating-reads-and-writes). |
+| **Fault tolerance and failure detection** | [Handle temporary failures](#temporary-failures-sloppy-quorums-and-hinted-handoff), [repair replicas](#replica-repair-and-merkle-trees), and [manage membership](#membership-gossip-and-failure-detection). |
 
 The original [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) is a concrete example combining partitioning, replication, versioning, and application-assisted conflict handling. **Dynamo is the historical system described in that paper; Amazon DynamoDB is a separate managed product.** These techniques and their guarantees must be evaluated together rather than assumed from the key-value model.
 
 > **Recall:** A simple key-based API can hide a complex distributed design. Specify what success, missing data, concurrent updates, and failures mean before choosing the mechanisms.
+
+### Scalability: Partitioning and Consistent Hashing
+
+**Partitioning assigns different keys to different storage nodes.** Hash-based placement can spread keys, but the mapping must remain understandable to clients and coordinators when membership changes.
+
+**Modulo routing:** For `m` nodes with zero-based indexes `0` through `m - 1`, select `index = hash(key) % m`:
+
+| Hash result | Node count | Calculation | Selected index |
+| --- | --- | --- | --- |
+| 10 | 4 | `10 % 4 = 2` | 2 |
+| 10 | 5 | `10 % 5 = 0` | 0 |
+
+```mermaid
+flowchart TB
+    KEY["Key"] --> HASH["Hash = 10"]
+    HASH --> M4["Modulo 4"]
+    HASH --> M5["Modulo 5"]
+    M4 --> I2["Node index 2"]
+    M5 --> I0["Node index 0"]
+
+    classDef step fill:#fff3cd,stroke:#111,color:#111
+    classDef node fill:#dbeafe,stroke:#111,color:#111
+    class KEY,HASH,M4,M5 step
+    class I2,I0 node
+```
+
+The hash stays the same; changing the divisor changes placement. Many other keys can also move, including keys whose old owners remain healthy. A uniform hash can spread **keys** approximately evenly, but does not make four nodes receive exactly 25% of requests each: some keys may be much more popular or larger than others.
+
+**Consistent hashing:** Place node tokens and key hashes in the same circular hash space. Select the first eligible token clockwise, wrapping around when necessary. In this illustrative ring, the key hash `60` belongs to N3 at token `70`:
+
+```mermaid
+flowchart LR
+    N1["N1: token 20"] --> N2["N2: token 45"]
+    N2 --> N3["N3: token 70"]
+    N3 --> N4["N4: token 90"]
+    N4 --> N1
+    KEY["Key hash 60"] -.-> N3
+
+    classDef node fill:#dbeafe,stroke:#111,color:#111
+    classDef selected fill:#fff3cd,stroke:#111,stroke-width:2px,color:#111
+    class N1,N2,N4 node
+    class KEY,N3 selected
+```
+
+The arrows represent logical clockwise token order, not a network topology or a required circular rendering. If N5 joins at token `65`, keys in `(45, 65]` move from N3 to N5 in this **single-token, primary-placement example**. Other primary ranges remain unchanged. Virtual nodes and replication can involve additional ranges and replica transfers; do not generalize this example into “only one physical neighbor is ever affected.”
+
+**Virtual nodes** give a physical server several token positions. One hash function is sufficient: `h("nodeA#0")`, `h("nodeA#1")`, and `h("nodeA#2")` identify different tokens for the same machine. A placement policy can assign more tokens or weight to greater capacity. Multiple tokens can improve range balance and spread reassignment among neighbors, but also add metadata and maintenance work.
+
+Virtual nodes do not add hardware, create independent replicas, or distribute a single hot key across multiple owners by themselves. Membership changes also need data transfer and a safe routing transition; a new owner cannot recreate data if no copy survives.
+
+See [Consistent Hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing), [Virtual Nodes](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server), and the existing [C++ teaching example](examples/consistent_hashing/README.md). [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html) illustrates token-based placement; its implementation is not a universal specification for every key-value store.
+
+### Replication Models and Replica Placement
+
+**Replication keeps copies of the same data.** A distributed store can partition data first and then replicate each partition; it need not copy every key to every server.
+
+| Model | Where client writes are handled | Main design questions |
+| --- | --- | --- |
+| **Primary-secondary / single-leader** | The current primary for that partition orders writes; secondaries apply replicated changes | Replication lag, acknowledgment rules, promotion, and preventing competing primaries |
+| **Leaderless** | A coordinator sends operations to the key's replica set without a permanent per-key write leader | Response thresholds, concurrent versions, reconciliation, and replica repair |
+
+**Primary-secondary example:**
+
+```mermaid
+flowchart TB
+    CLIENT["Client writes"] --> PRIMARY["Primary"]
+    PRIMARY --> S1["Secondary 1"]
+    PRIMARY --> S2["Secondary 2"]
+    READ["Optional replica reads"] --> S2
+
+    classDef primary fill:#fff3cd,stroke:#111,color:#111
+    classDef replica fill:#dbeafe,stroke:#111,color:#111
+    class PRIMARY primary
+    class S1,S2 replica
+```
+
+The primary-to-secondary arrows carry replication updates. A secondary applies those updates but does not normally accept independent client writes in this single-leader model. The primary can also serve reads; secondary reads depend on product capabilities and can be stale when replication lags.
+
+With **asynchronous replication**, the primary may acknowledge before secondaries have the update. A failure can therefore lose acknowledged updates not yet protected elsewhere. **Synchronous replication** waits for the configured replica acknowledgment condition; whether that means received, persisted, or applied must be specified. Waiting improves the covered guarantee but introduces coordination costs and can block progress.
+
+A failed primary can be replaced through a designed failover process; primary-secondary replication is not inherently limited to permanent loss of write service. Promotion must select an eligible replica, redirect clients, and prevent the old primary from continuing as a writer—often through **fencing**, which blocks an obsolete writer. See [PostgreSQL replication](https://www.postgresql.org/docs/current/warm-standby.html) and [failover guidance](https://www.postgresql.org/docs/current/warm-standby-failover.html). Consensus-based designs such as [Raft](Distributed-Systems-Theorems-and-Data-Structures.md#raft) provide another context for safe leadership and replicated history.
+
+**Leaderless example for one key:**
+
+```mermaid
+flowchart TB
+    CLIENT["Client"] --> COORD["Request coordinator"]
+    COORD <--> A["Replica A"]
+    COORD <--> B["Replica B"]
+    COORD <--> C["Replica C"]
+
+    classDef coordinator fill:#fff3cd,stroke:#111,color:#111
+    classDef replica fill:#dbeafe,stroke:#111,color:#111
+    class COORD coordinator
+    class A,B,C replica
+```
+
+The coordinator is a **request-handling role**, not necessarily a permanent leader or a separate machine. A storage node can coordinate a request and hold a replica. Different requests may use different coordinators. The diagram shows request/reply paths; it does not require all cluster nodes to exchange every write.
+
+Let **N** be the total intended replicas of a key, including its first owner. It differs from **m**, the total physical-node count used in the modulo example. For `N = 3`, a clockwise preference scan such as `A#0 → A#1 → B#0 → C#0 → D#0` selects intended physical owners **A, B, C**: A's second token does not count as another copy. Later candidates such as D can be considered by a fallback policy.
+
+Place replicas across suitable failure domains, such as racks or availability zones, where the deployment supports it. Three copies in one rack do not protect against loss of that rack. Neither replication model automatically provides unlimited availability or durability; persistence, routing, failure assumptions, and recovery remain necessary.
+
+### Coordinating Reads and Writes
+
+Clients can reach the storage system through different paths:
+
+| Approach | Benefit | Responsibility |
+| --- | --- | --- |
+| **Generic router / load balancer** | Keeps placement knowledge out of the client | The selected node may need to forward to the key's replicas |
+| **Partition-aware client** | Can avoid an unnecessary forwarding hop | Must refresh placement information and handle stale routes and failures |
+
+For this **Dynamo-style teaching model**, the coordinator contacts intended replicas in parallel and waits for configured response thresholds. These are conceptual operations, not a complete implementation protocol.
+
+- **N:** Intended replica count for the key.
+- **W:** Distinct replica acknowledgments required for write success.
+- **R:** Distinct valid replica responses required for a read.
+
+For ordinary fixed-set operations, assume `1 <= R, W <= N`. Count physical replicas once, not repeated replies or multiple virtual nodes on one host. A read must interpret returned versions according to the protocol; receiving R responses alone does not establish which value to return.
+
+**Example: N = 3, R = 2, W = 2, intended replicas A/B/C.**
+
+1. A coordinator sends a versioned put to A, B, and C.
+2. A and B acknowledge under the configured persistence policy. The coordinator can report write success after those two acknowledgments; C may complete later or require repair.
+3. A subsequent read requests the replicas in parallel. Suppose B and C provide the first two valid responses.
+4. B can report the completed write even if C is stale. The coordinator must select or reconcile versions correctly rather than return an arbitrary response.
+5. Outstanding propagation and repair are separate from the client's completed response.
+
+For subsets of the **same fixed N-replica set**, `R + W > N` guarantees that every qualifying read set intersects every qualifying write set:
+
+| N | R | W | Read/write overlap guaranteed? | Completion requirement and trade-off |
+| --- | --- | --- | --- | --- |
+| 3 | 2 | 1 | **No:** `2 + 1 = 3` | A read can miss the sole acknowledged writer; smaller write threshold |
+| 3 | 2 | 2 | **Yes:** `2 + 2 = 4` | Both operations need two responses; one unreachable replica need not prevent completion |
+| 3 | 3 | 1 | **Yes:** `3 + 1 = 4` | Reads need all three; writes need one |
+| 3 | 1 | 3 | **Yes:** `1 + 3 = 4` | Writes need all three; reads need one |
+
+“Guaranteed overlap” is a set-intersection property, **not a standalone guarantee of linearizability**. Correct version selection, concurrent-write handling, incomplete-operation behavior, and operation ordering still matter. Even overlapping write sets do not resolve concurrent updates by arithmetic alone. Compare [Quorum Reads and Writes](Distributed-System-Attributes.md#quorum-reads-and-writes), including its consistency caveat.
+
+**Latency and availability:** With parallel fan-out to all N eligible replicas, the waiting component is typically determined by the R-th valid read response or W-th qualifying write acknowledgment, plus coordination and processing. It is not necessarily the slowest of all replicas contacted. Increasing R or W generally requires more reachable responses and can increase latency or reduce operation availability; there is no configuration that tolerates arbitrary failures.
+
+**Conflict example:** Two writers read the same cart version, then independently add `book` and `pen`. Returning one later-timestamped replacement could discard the other addition. The system needs an explicit ordering, conditional-update, or reconciliation policy. Version metadata can identify relevant relationships, but automatic merging is application-dependent. Replica counts alone do not solve this problem.
+
+### Temporary Failures: Sloppy Quorums and Hinted Handoff
+
+A **strict replica-set quorum** requires qualifying responses from a key's designated replicas. In a **sloppy quorum**, a Dynamo-style system may substitute other eligible healthy nodes from its preference list when intended replicas are unreachable. This can allow more operations to complete, but changes the participating sets.
+
+**Example:** Intended replicas are **A, B, C**, with `N = 3` and `W = 2`. A is unreachable, C is slow, and D is an eligible fallback. Q is the request coordinator, shown separately for clarity.
+
+```mermaid
+sequenceDiagram
+    participant Q as Coordinator Q
+    participant A as Intended A
+    participant B as Intended B
+    participant C as Intended C
+    participant D as Fallback D
+
+    Note over Q,D: Stage 1 - A unreachable, C slow
+    Q->>B: Put v2
+    Q->>C: Put v2
+    Q->>D: Store v2 with hint for A
+    B-->>Q: Stored
+    D-->>Q: Stored
+    Note over Q: W = 2 satisfied by B and D
+    Note over Q,D: Stage 2 - A recovers
+    D->>A: Deliver hinted update v2
+    A-->>D: Update durably handled
+    Note over D: Remove temporary hinted copy
+```
+
+D stores the **key, value/update, version metadata, and intended destination A** under the fallback policy—not merely a request ID. After A recovers, D delivers the update. Once A has safely handled it, D removes the corresponding temporary copy. D must not discard unrelated data it owns. The request to C may still be pending; the diagram does not assume C has stored v2.
+
+**Why overlap can fail:** Before handoff completes, A could return with its old value while C is still stale. A read receiving replies from **A and C** can miss the successful write acknowledged by **B and D**. Although `R + W = 4 > 3` numerically, those two sets are disjoint because D lies outside the intended A/B/C set.
+
+Hints require safe replay so retries do not duplicate logical effects or overwrite newer versions incorrectly. Deletion/version information must survive the required recovery window. Hint storage, retention, and reachability are finite; D can also fail. Hinted handoff therefore **does not guarantee that every read/write succeeds or that every missed update is repaired**. Additional replica synchronization is needed when hints cannot finish.
+
+This example follows the **historical Dynamo-style fallback placement** described in the [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf). [Cassandra's documented hints](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/hints.html) are stored by coordinators for unavailable replicas; they are not an identical implementation of temporary replica substitution. Cassandra describes hints as best effort and not a replacement for repair.
+
+### Replica Repair and Merkle Trees
+
+**Anti-entropy repair** compares replica state and transfers missing or differing data. It is useful after prolonged outages, incomplete propagation, or replacement; it is not limited to permanently failed nodes. A replacement needs data from surviving replicas or a suitable backup.
+
+A **Merkle tree** summarizes a dataset through hashes: leaves summarize records or ranges, and each parent summarizes its children. Compare equivalent key ranges using compatible ordering, encoding, and version/snapshot rules. Conceptually, record hashes must cover the **key, value, and relevant version/deletion state**, not only the key name; equal names with different values must be distinguishable.
+
+| Comparison for keys k1–k4 | Observation | Next action |
+| --- | --- | --- |
+| Whole-range roots | Different | Compare the two subranges |
+| Left subtree: k1–k2 | Equal | Skip this subtree under the hash assumptions |
+| Right subtree: k3–k4 | Different | Compare its children |
+| Record k3 | Different | Exchange state and apply reconciliation rules |
+| Record k4 | Equal | No repair needed for that record |
+
+With suitable collision-resistant hashes and equivalent tree construction, matching roots indicate matching summarized state with the usual negligible collision risk. Different roots tell us **where to investigate**, not which replica has the correct version. Reconciliation rules determine the retained state; a newer deletion marker may need to suppress an older value.
+
+Comparing only differing branches can reduce transferred data. Building and maintaining trees still costs storage/CPU/I/O, and extensive differences can require substantial transfer. Changed ownership ranges may require rebuilding affected trees, depending on the implementation.
+
+Merkle trees cannot recover a value whose every copy is gone, establish business correctness, or replace version handling. See [Cassandra's repair explanation](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html) for an implementation using range comparisons and Merkle trees.
+
+### Membership, Gossip, and Failure Detection
+
+Keep these concepts separate:
+
+| Concept | What it describes |
+| --- | --- |
+| **Token ownership** | Which physical nodes own particular hash ranges and their replicas |
+| **Membership** | Which nodes belong to the cluster, including controlled additions and removals |
+| **Reachability / liveness estimate** | Which peers a node currently believes it can contact |
+
+**Gossip** spreads selected cluster information through repeated peer exchanges. For example, A exchanges membership information with B; B later exchanges with C, allowing C to learn about A. Bootstrap contacts or seed nodes help a joining node discover the existing cluster. Token assignment and ownership policy are distinct from merely choosing peers to contact.
+
+This is control information, **not automatic replication of every application write**. Message contents, persisted membership records, and liveness detectors depend on the system. The Dynamo paper, for example, separates explicit membership changes from local reachability judgments. Do not assume every gossip design has one globally agreed failure view.
+
+A timeout means “no acceptable response arrived in time.” The node could be slow, partitioned, or unreachable only from one observer. Two healthy nodes can therefore disagree about a third node's liveness. During a partition, gossip cannot instantly reconcile views across the broken link.
+
+A brief outage need not trigger permanent removal and full redistribution. Define when to keep placement stable and route around a suspected failure, when to rebuild replicas, and when to change membership. Planned joins/removals need controlled data movement, routing updates, and adequate copies throughout the transition. Returning nodes may need repair before their stale data can safely participate in particular operations.
+
+> **Failure detection guides a response; it does not prove a node is permanently dead. Membership changes and data recovery require their own rules.**
+
+### Design Review and Interview Checklist
+
+1. **Requirements:** Define key/value sizes, operations, growth, workload skew, latency targets, and required failure behavior.
+2. **Placement:** Explain routing, partition ownership, membership changes, and hot-key handling.
+3. **Replication:** Choose N, distinct physical owners, failure domains, and persistence/acknowledgment semantics.
+4. **Consistency:** Define what reads may observe, how R/W are used, and which operations must stop when coordination is unavailable.
+5. **Concurrency:** Explain version handling and what happens to competing writes; do not claim quorum overlap supplies a complete protocol.
+6. **Temporary failures:** Describe routing, fallback policy, hint limits, retry safety, and client-visible uncertainty.
+7. **Recovery:** Explain anti-entropy, replacement, deletion handling, backup, and what happens if no copy survives.
+8. **Membership and operations:** Cover discovery, suspicion, controlled changes, safe rejoining, and monitoring of lag, hints, capacity, and repair.
+9. **Justification:** State why this design fits the workload, what it cannot guarantee, and how requirements or configuration may evolve.
+
+> **Recall:** Hashing places keys; replication preserves copies; response thresholds control participation; version rules interpret writes; hints and repair restore missed state; membership and failure detection guide routing and recovery. The guarantees come from the complete design.
 
 ## Amazon DynamoDB
 
@@ -436,6 +674,11 @@ The later sections above reserve space for deeper study of particular families a
 - [Dynamo: Amazon's Highly Available Key-Value Store — Original 2007 Paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf)
 - [Apache CouchDB: Technical Overview](https://docs.couchdb.org/en/stable/intro/overview.html)
 - [Apache Cassandra: Architecture Overview](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html)
+- [Apache Cassandra: Token Placement, Replication, and Membership](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
+- [Apache Cassandra: Hints and Hinted Handoff](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/hints.html)
+- [Apache Cassandra: Replica Repair and Merkle Trees](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html)
+- [PostgreSQL: Primary-Standby and Synchronous Replication](https://www.postgresql.org/docs/current/warm-standby.html)
+- [PostgreSQL: Failover and Preventing Competing Primaries](https://www.postgresql.org/docs/current/warm-standby-failover.html)
 - [Apache HBase: Data Model](https://hbase.apache.org/docs/datamodel/)
 - [ClickHouse: Column-Oriented Database Overview](https://clickhouse.com/docs/get-started/about/intro)
 - [Neo4j: Graph Database Concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/)
