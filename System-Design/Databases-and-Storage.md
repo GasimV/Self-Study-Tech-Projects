@@ -340,24 +340,51 @@ These are starting points with overlapping capabilities. ClickHouse supports joi
 
 ### Transactions and ACID
 
-A transaction groups related database operations so the application can commit them or abandon their uncommitted effects. ACID describes four important properties:
+A **database transaction** groups one or more operations, such as SQL `INSERT`, `UPDATE`, or `DELETE`, into a **single logical unit of work**. Its transactional data changes are committed together or discarded on rollback. **Rollback cancels this transaction's uncommitted changes**; other transactions may still change the database.
+
+ACID describes four important properties:
 
 | Property | Meaning | Transfer example |
 | --- | --- | --- |
-| **Atomicity** | The transaction's changes take effect together or not at all | Do not retain only the debit without the corresponding credit |
-| **Consistency** | Correct transaction logic and enforced rules preserve defined invariants | Preserve the combined balance and any required balance constraints |
-| **Isolation** | Controls how concurrent transactions interact and what they can observe | Concurrent transfers must not produce forbidden outcomes under the chosen isolation strategy |
-| **Durability** | Committed changes survive the failures covered by the configured guarantee | Retain the committed transfer through the covered crash/recovery scenario |
+| **Atomicity — all or nothing** | Commit the transaction's data changes together, or commit none of them | Do not retain only the debit without the corresponding credit |
+| **Consistency — preserve rules** | Correct transaction logic and enforced constraints keep the data within defined rules | Preserve the combined balance and any required balance constraints |
+| **Isolation — control concurrency** | The isolation level determines how simultaneous transactions interact and what they can see | Concurrent transfers must not produce forbidden outcomes under the chosen isolation strategy |
+| **Durability — keep committed changes** | Committed changes survive the failures covered by the configured guarantee | Retain the committed transfer through the covered crash/recovery scenario |
 
 #### Account Transfer Example
 
 For a simplified transfer of **20 units from A to B**, with no fees or other balance changes:
+
+The transfer has two steps:
+
+1. **Deduct 20** from Account A.
+2. **Add 20** to Account B.
+
+Grouping them in one transaction prevents committing only half of the transfer.
 
 | Account | Before | After a successful commit |
 | --- | --- | --- |
 | A | 100 | 80 |
 | B | 50 | 70 |
 | **Combined** | **150** | **150** |
+
+**Short PostgreSQL example:** Assume the table is `accounts(account_id, balance)`, A and B each identify one existing account, and the application correctly enforces the required funds and authorization rules.
+
+```sql
+BEGIN;  -- Start one transaction
+
+UPDATE accounts
+SET balance = balance - 20
+WHERE account_id = 'A';
+
+UPDATE accounts
+SET balance = balance + 20
+WHERE account_id = 'B';
+
+COMMIT; -- Commit both balance changes together
+```
+
+After a successful commit, **A = 80 and B = 70**. To cancel the open transaction, execute **`ROLLBACK;` instead of `COMMIT;`**. The uncommitted balance changes are discarded, leaving **A = 100 and B = 50**, assuming no other transactions changed them. Rollback does not undo an already committed transfer.
 
 The application checks the relevant rules and groups the debit and credit within one transaction. On rollback, those uncommitted changes do not become the completed transfer. A database transaction does not automatically make unrelated external API calls atomic. See the [transaction introduction](https://www.postgresql.org/docs/current/tutorial-transactions.html).
 
