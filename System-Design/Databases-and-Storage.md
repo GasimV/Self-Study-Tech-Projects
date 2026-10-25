@@ -10,6 +10,10 @@
     - [Customers and Orders Example](#customers-and-orders-example)
     - [Normalization and Indexes](#normalization-and-indexes)
     - [Greenplum: Relational Analytics with MPP](#greenplum-relational-analytics-with-mpp)
+      - [Parallelism: Business-Card Analogy](#parallelism-business-card-analogy)
+      - [Cluster Components and Shared-Nothing Architecture](#cluster-components-and-shared-nothing-architecture)
+      - [Query Walkthrough](#query-walkthrough)
+      - [Availability and Practical Limits](#availability-and-practical-limits)
   - [Transactions and ACID](#transactions-and-acid)
     - [Account Transfer Example](#account-transfer-example)
     - [What ACID Does Not Promise](#what-acid-does-not-promise)
@@ -162,19 +166,96 @@ These are **workload categories, not rigid product boundaries**. PostgreSQL also
 
 **MPP mental model:** The coordinator accepts SQL and plans/distributes work. Segment instances process their data portions in parallel; results are combined and returned through the coordinator. See the [archived Greenplum architecture documentation](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md).
 
+##### Parallelism: Business-Card Analogy
+
+Suppose you must inspect **1,200 business cards** and find everyone working for one company. At one card per second, one worker needs **1,200 seconds = 20 minutes**. Divide the cards into ten equal piles and let ten workers inspect them simultaneously:
+
+| Workers | Cards per worker | Ideal inspection time |
+| --- | --- | --- |
+| 1 | 1,200 | 1,200 seconds = 20 minutes |
+| 10 | 120 | 120 seconds = 2 minutes |
+
+This is an **ideal tenfold speedup**, assuming independent work at the same rate and ignoring the time to distribute cards, coordinate workers, and collect matches. Unequal piles or slower workers change the result.
+
+In the regional-sales example, primary segments similarly process different portions of the orders dataset. Their partial results must then be combined; real queries also incur storage, network, and coordination costs.
+
+##### Cluster Components and Shared-Nothing Architecture
+
+These notes use **coordinator**; older Greenplum material calls it the **master**. A cluster combines PostgreSQL-derived database instances with Greenplum's distributed planning and execution.
+
+| Component | Responsibility |
+| --- | --- |
+| **Coordinator** | Client entry point; authenticates connections, handles SQL planning, coordinates execution, and returns results. Its global catalog contains metadata; user-table data resides on segments. |
+| **Standby coordinator** | Optional coordinator redundancy, maintained through log replication and activated through the deployment's recovery procedure. It is distinct from a segment mirror. |
+| **Segment host** | A server or VM running segment instances. Several instances can use the same host's operating system, memory, and disks. |
+| **Primary segment** | A database instance that stores and processes its assigned user-data portion. Different primaries normally work on different portions of a distributed table. |
+| **Mirror segment** | A redundant copy of a corresponding primary segment, placed on another host and eligible to take over under the supported failover conditions. |
+| **Interconnect** | The networking/communication layer used by the distributed execution system, including intermediate data exchange between segments. |
+
+**Shared-nothing** describes separate host resources and distributed data ownership. It does not require a separate physical computer, operating system, or disk for every segment instance. A host contributes execution, memory, and storage resources that its segment instances share. The number of instances per host is a configuration decision based on resources and workload.
+
+The following **illustrative layout** has two primary data portions and cross-host mirrors:
+
 ```mermaid
 flowchart TB
     CLIENT["Analyst / BI client"] --> COORD["Coordinator"]
-    COORD --> S1["Segment 1<br/>Data portion A"]
-    COORD --> S2["Segment 2<br/>Data portion B"]
-    COORD --> S3["Segment 3<br/>Data portion C"]
+    COORD --> NET["Logical interconnect"]
+    COORD -.->|"Logs"| STANDBY["Optional standby coordinator"]
+
+    subgraph HOST_A["Segment host A"]
+        direction TB
+        P1["Primary S1<br/>Data portion 1"]
+        M2["Mirror S2<br/>Copy of portion 2"]
+    end
+
+    subgraph HOST_B["Segment host B"]
+        direction TB
+        P2["Primary S2<br/>Data portion 2"]
+        M1["Mirror S1<br/>Copy of portion 1"]
+    end
+
+    NET --> P1
+    NET --> P2
+    P1 -.-> M1
+    P2 -.-> M2
+
+    classDef coordinator fill:#fff3cd,stroke:#111,color:#111
+    classDef primary fill:#dbeafe,stroke:#111,color:#111
+    classDef mirror fill:#dcfce7,stroke:#111,color:#111
+    class COORD,STANDBY,NET coordinator
+    class P1,P2 primary
+    class M1,M2 mirror
 ```
 
-The arrows show query-work distribution. These segments process **different portions of a distributed table**, rather than merely identical replicas. Segment instances are database processes; multiple instances can share a host.
+Solid arrows show the client/query-work path; dotted arrows show coordinator-log or segment-data replication. **Primary S1 and Primary S2 process different data portions; Mirror S1 and Mirror S2 hold redundant copies.** The standby is shown separately from the segment hosts; an actual deployment must choose its host and failure domain.
+
+The interconnect box represents a communication layer, not necessarily one dedicated switch. Segment-to-segment exchanges and replication also use networking; the diagram simplifies those paths. Network capacity and isolation affect performance, but there is no single Ethernet speed appropriate to every deployment. See the [archived Greenplum architecture documentation (historical)](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md).
+
+##### Query Walkthrough
+
+1. **Connect:** An application or BI tool connects to the coordinator using a supported interface, such as JDBC, ODBC, or the `psql` client.
+2. **Authenticate and plan:** The coordinator authenticates the connection, processes the SQL, and handles planning and distribution of query work. Its global catalog describes the database; it does not replace the user-table data on segments.
+3. **Process in parallel:** Primary segments scan and compute over their assigned portions. The plan may require intermediate data exchange between segments, such as redistributing rows for a join or aggregation.
+4. **Combine and return:** Intermediate results are combined according to the plan, and the coordinator presents the final result to the client. Not every computation must happen on the coordinator.
 
 **Example:** To calculate annual sales totals by region across a large orders dataset, each segment filters its portion to the requested year and computes partial totals. Combining those totals produces the final regional totals. Depending on data distribution and the query plan, intermediate results may move between segments.
 
+##### Availability and Practical Limits
+
+Coordinator redundancy and segment redundancy protect different roles:
+
+| Failure | Recovery role and condition |
+| --- | --- |
+| **Coordinator failure** | A configured, suitably synchronized standby can be activated through the supported recovery procedure. Activation and client reconnection are deployment-dependent; they are not universally automatic. |
+| **Primary-segment or segment-host failure** | A healthy, eligible mirror on another host can take over the affected data portion through segment failover. Continued service requires the needed data portions, coordinator, and communication paths to remain available. |
+
+In the diagram, if **Host A fails**, Mirror S1 on Host B can become the active copy of portion 1, while Primary S2 still holds portion 2. Host B then carries more active work and redundancy is reduced until recovery restores the missing copies. This assumes the remaining infrastructure and capacity support continued operation. Losing both copies of a required portion prevents normal access to that portion.
+
+Mirrors must reside on different hosts from their corresponding primaries. A standby coordinator protects the coordinator role; it does not hold backup copies of every segment's user data. Treat standby capacity as part of the recovery design rather than assuming it is spare ETL capacity. See [Broadcom's coordinator-activation guidance](https://knowledge.broadcom.com/external/article/296354/failover-to-standby.html) for a vendor example of an explicit activation procedure.
+
 **Storage layout is a separate choice:** Greenplum supports row-oriented heap tables and append-optimized tables with row or column orientation. Columnar storage does not make a database NoSQL. See the [provider's Greenplum storage explanation](https://yandex.cloud/en/docs/managed-greenplum/concepts/tables).
+
+Greenplum can participate in a larger data platform and process data used for reporting or analytical models. That participation does not make the relational DBMS a data lake by itself. Capacity depends on the deployment, data layout, and workload; a fixed “hundreds of TB” ceiling is not a general definition.
 
 **Trade-offs:** Distribution-key choices affect balance and data movement. Skew can leave one segment doing much more work; joins and aggregations may require inter-segment transfers. Network costs and cluster operations also matter, so adding nodes does not guarantee linear speedup. See the [provider's data-distribution explanation](https://yandex.cloud/en/docs/managed-greenplum/concepts/sharding).
 
@@ -685,5 +766,6 @@ The later sections above reserve space for deeper study of particular families a
 - [Spanner: Schemas and Data Distribution](https://docs.cloud.google.com/spanner/docs/schema-and-data-model)
 - [Greenplum Project Repository — Archived Historical Material](https://github.com/greenplum-db/gpdb-archive)
 - [Greenplum Architecture — Archived Historical Documentation](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md)
+- [Broadcom: Greenplum Standby Coordinator Activation](https://knowledge.broadcom.com/external/article/296354/failover-to-standby.html)
 - [Yandex Cloud: Greenplum Storage Layouts](https://yandex.cloud/en/docs/managed-greenplum/concepts/tables)
 - [Yandex Cloud: Greenplum Data Distribution](https://yandex.cloud/en/docs/managed-greenplum/concepts/sharding)
