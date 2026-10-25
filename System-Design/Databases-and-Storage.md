@@ -14,6 +14,9 @@
       - [Cluster Components and Shared-Nothing Architecture](#cluster-components-and-shared-nothing-architecture)
       - [Query Walkthrough](#query-walkthrough)
       - [Availability and Practical Limits](#availability-and-practical-limits)
+      - [When Greenplum Is a Good Fit](#when-greenplum-is-a-good-fit)
+      - [Greenplum vs. ClickHouse](#greenplum-vs-clickhouse)
+      - [Quick Selection: PostgreSQL, Greenplum, or ClickHouse](#quick-selection-postgresql-greenplum-or-clickhouse)
   - [Transactions and ACID](#transactions-and-acid)
     - [Account Transfer Example](#account-transfer-example)
     - [What ACID Does Not Promise](#what-acid-does-not-promise)
@@ -258,6 +261,69 @@ Mirrors must reside on different hosts from their corresponding primaries. A sta
 Greenplum can participate in a larger data platform and process data used for reporting or analytical models. That participation does not make the relational DBMS a data lake by itself. Capacity depends on the deployment, data layout, and workload; a fixed “hundreds of TB” ceiling is not a general definition.
 
 **Trade-offs:** Distribution-key choices affect balance and data movement. Skew can leave one segment doing much more work; joins and aggregations may require inter-segment transfers. Network costs and cluster operations also matter, so adding nodes does not guarantee linear speedup. See the [provider's data-distribution explanation](https://yandex.cloud/en/docs/managed-greenplum/concepts/sharding).
+
+##### When Greenplum Is a Good Fit
+
+Greenplum is a candidate when distributed SQL analytics fits the workload and the team can operate the resulting system:
+
+| Workload | Illustrative use | What to validate |
+| --- | --- | --- |
+| **Enterprise warehouses** | Combine historical orders, customers, and refunds from several operational systems | Source integration, history, ingestion windows, and consistent business definitions |
+| **Complex SQL analytics** | Run joins, regional aggregations, reports, and exploratory queries over distributed datasets | Query plans, distribution keys, data movement, and concurrent users |
+| **Predictive-analytics preparation** | Prepare historical datasets and features for forecasting, risk analysis, or fraud-model development | Data quality, reproducibility, processing deadlines, and integration with modeling tools |
+| **Financial analytics** | Produce reconciled financial reports and analytical risk calculations | Correct rules, suitable transaction boundaries, traceability, and access controls |
+
+Financial reporting and model preparation are different workloads from processing payments or maintaining transactional account balances. Neither SQL transaction support nor handling financial data automatically makes an analytical DBMS the right operational transaction system.
+
+**Suitability is workload-dependent.** Query patterns, concurrency, ingestion, freshness, distribution/skew, operating skills, and total cost matter. There is no universal **“larger than 1 TB”** rule that establishes the best performance or ownership cost. Capacity alone does not select an architecture.
+
+**PostgreSQL compatibility helps integration, but is not universal compatibility.** Familiar SQL and supported drivers can simplify BI/ETL connections. Check the selected tool's driver, SQL dialect, data types, authentication, and supported Greenplum version rather than assuming every PostgreSQL integration works unchanged.
+
+##### Greenplum vs. ClickHouse
+
+**ClickHouse is a column-oriented SQL analytical DBMS** used for OLAP queries; see its [official overview](https://clickhouse.com/docs/get-started/about/intro). Its workloads overlap with Greenplum's. The following comparison identifies evaluation questions rather than declaring a universal winner.
+
+Greenplum references here include the **archived historical documentation** cited above. ClickHouse references describe evolving documented capabilities. Validate the exact release, table engine, settings, and deployment when applying the comparison.
+
+| Dimension | Greenplum | ClickHouse |
+| --- | --- | --- |
+| **Workload emphasis** | Often evaluated for enterprise warehouses, multi-table analysis, and reporting | Often evaluated for analytical serving, event aggregation, and frequently refreshed dashboards; can also support warehouse workloads |
+| **Storage and execution** | MPP execution with supported row-oriented and append-optimized row/column storage | Column-oriented analytical execution; schema, sorting, and indexing influence the work required |
+| **SQL and joins** | Supports SQL joins across distributed data; placement and data movement affect plans | Supports [SQL joins](https://clickhouse.com/docs/reference/statements/select/join), with algorithms offering different memory, disk, and execution trade-offs |
+| **Transactions and concurrency** | Supports SQL transactions; check isolation and operation/table-type boundaries for the selected release | Provides documented insert guarantees and restricted experimental multi-statement transactions; these are different scopes |
+| **Updates and deletes** | Supports changes through SQL; table layout, version, concurrency, and maintenance affect behavior and cost | Supports [updates](https://clickhouse.com/docs/reference/statements/update) and [deletes](https://clickhouse.com/docs/reference/statements/delete); mechanism, visibility, and physical cleanup differ |
+| **Ingestion and freshness** | Evaluate loading and correction workflows alongside analytical query concurrency | Evaluate insert batching, merging, corrections, and query concurrency against freshness targets |
+| **Scaling and operations** | Segment placement, expansion/rebalancing, skew, interconnect traffic, and recovery need planning | Shard/data placement, replica strategy, redistribution, capacity, and background maintenance need planning |
+| **Security and recovery** | Configure database permissions and recovery; standby/mirroring do not replace backups and tested restoration | Supports [RBAC](https://clickhouse.com/docs/concepts/features/security/access-rights) and [backup/restore](https://clickhouse.com/docs/concepts/features/backup-restore/overview); replication and encryption choices depend on deployment |
+
+**Transaction scope matters:** ClickHouse documents transactional properties for qualifying inserts into a single partition of a MergeTree-family table; an insert into a distributed table is not transactional across all shards as a whole. Its documented multi-statement transaction support is **experimental and restricted**, not a general replacement for transactional application requirements. Check [ClickHouse's transaction documentation](https://clickhouse.com/docs/concepts/features/operations/insert/transactions) for conditions and limits.
+
+For Greenplum, do not assume every transaction always runs at Serializable isolation. Isolation behavior is release-dependent and must be selected and verified for the operation. The vendor's [historical explanation of transaction snapshots](https://blogs.vmware.com/tanzu/improving-backup-performance-and-reliability-with-distributed-snapshots/) illustrates distinct isolation behaviors. See [Transactions and ACID](#transactions-and-acid) for the broader guarantees and application responsibilities.
+
+**Changing a value and physically removing bytes are different events.** ClickHouse's documented lightweight updates use patch parts that queries can read before physical consolidation; lightweight deletes can hide rows before later storage cleanup. Supported engines/settings and synchronization behavior matter. Do not interpret either capability as identical to every OLTP update/delete implementation, or assume that a row hidden from queries has already disappeared from all retained copies.
+
+Both systems require deliberate permissions, TLS/encryption decisions, recovery procedures, and restore testing. Greenplum's [availability explanation](#availability-and-practical-limits) covers coordinator/segment redundancy; that is one part of recovery, not proof that backups or disaster recovery are unnecessary.
+
+**Two illustrative workload questions:**
+
+| Scenario | Questions to evaluate |
+| --- | --- |
+| **Prepare a multi-source financial report** | How are source cutoffs, transaction boundaries, corrections, joins, and reconciliation handled? What must be reproducible and auditable? |
+| **Serve frequently refreshed event dashboards** | What freshness and query-latency targets must hold at the expected ingestion rate and concurrency? How do late events, updates, and background work affect them? |
+
+Both are evaluation scenarios, not guaranteed product winners. Check representative queries, changes, concurrency, and failure behavior on the intended version and deployment; product labels alone do not establish correctness or performance.
+
+##### Quick Selection: PostgreSQL, Greenplum, or ClickHouse
+
+| Choose | When you need | Simple example |
+| --- | --- | --- |
+| **PostgreSQL** | An application database with frequent record changes and multi-step transactions | Process orders, update inventory, and transfer account balances |
+| **Greenplum** | A large analytical warehouse combining related datasets through complex SQL and joins | Analyze yearly profit using orders, customers, products, and refunds |
+| **ClickHouse** | Frequently refreshed analytical queries over large event datasets | Show website clicks, application errors, or sensor metrics (IoT, robotics, etc.) on dashboards |
+
+**Start with PostgreSQL when it meets your operational and reporting requirements.** Evaluate specialized analytical systems when the workload justifies them.
+
+These are starting points with overlapping capabilities. ClickHouse supports joins, updates, deletes, and [scoped transaction guarantees](https://clickhouse.com/docs/concepts/features/operations/insert/transactions). **Correctness matters in all three; transaction scope and workload fit differ.**
 
 > **Relational describes the data model; columnar describes a storage layout; MPP describes parallel processing across instances.**
 
@@ -762,6 +828,13 @@ The later sections above reserve space for deeper study of particular families a
 - [PostgreSQL: Failover and Preventing Competing Primaries](https://www.postgresql.org/docs/current/warm-standby-failover.html)
 - [Apache HBase: Data Model](https://hbase.apache.org/docs/datamodel/)
 - [ClickHouse: Column-Oriented Database Overview](https://clickhouse.com/docs/get-started/about/intro)
+- [Greenplum Transaction Snapshots — Historical Vendor Explanation](https://blogs.vmware.com/tanzu/improving-backup-performance-and-reliability-with-distributed-snapshots/)
+- [ClickHouse: SQL JOIN Support](https://clickhouse.com/docs/reference/statements/select/join)
+- [ClickHouse: Transactional Insert Guarantees and Experimental Transactions](https://clickhouse.com/docs/concepts/features/operations/insert/transactions)
+- [ClickHouse: UPDATE](https://clickhouse.com/docs/reference/statements/update)
+- [ClickHouse: DELETE](https://clickhouse.com/docs/reference/statements/delete)
+- [ClickHouse: Access Control and RBAC](https://clickhouse.com/docs/concepts/features/security/access-rights)
+- [ClickHouse: Backup and Restore](https://clickhouse.com/docs/concepts/features/backup-restore/overview)
 - [Neo4j: Graph Database Concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/)
 - [Spanner: Schemas and Data Distribution](https://docs.cloud.google.com/spanner/docs/schema-and-data-model)
 - [Greenplum Project Repository — Archived Historical Material](https://github.com/greenplum-db/gpdb-archive)
