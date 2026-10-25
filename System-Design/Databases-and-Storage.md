@@ -190,12 +190,23 @@ These notes use **coordinator**; older Greenplum material calls it the **master*
 | --- | --- |
 | **Coordinator** | Client entry point; authenticates connections, handles SQL planning, coordinates execution, and returns results. Its global catalog contains metadata; user-table data resides on segments. |
 | **Standby coordinator** | Optional coordinator redundancy, maintained through log replication and activated through the deployment's recovery procedure. It is distinct from a segment mirror. |
-| **Segment host** | A server or VM running segment instances. Several instances can use the same host's operating system, memory, and disks. |
+| **Segment host** | Traditionally a server or VM running segment instances. In supported containerized deployments, instances can run inside containers or Kubernetes pods, using the underlying host's resources and configured persistent storage. Several instances can share host resources. |
 | **Primary segment** | A database instance that stores and processes its assigned user-data portion. Different primaries normally work on different portions of a distributed table. |
 | **Mirror segment** | A redundant copy of a corresponding primary segment, placed on another host and eligible to take over under the supported failover conditions. |
 | **Interconnect** | The networking/communication layer used by the distributed execution system, including intermediate data exchange between segments. |
 
 **Shared-nothing** describes separate host resources and distributed data ownership. It does not require a separate physical computer, operating system, or disk for every segment instance. A host contributes execution, memory, and storage resources that its segment instances share. The number of instances per host is a configuration decision based on resources and workload.
+
+**Containerized deployments:** A segment instance can run in a container, including within a Kubernetes pod, when supported by the selected Greenplum deployment. The layers are:
+
+```text
+Physical server or VM (Kubernetes worker node)
+  -> Pod
+     -> Container
+        -> Greenplum segment instance(s)
+```
+
+A pod contains one or more containers and runs on a worker node. **Separate pods on the same worker node share that node's failure risk.** Primary/mirror placement must therefore consider the underlying nodes and failure domains, not just different pod names. See the vendor's [Greenplum on Kubernetes explanation](https://blogs.vmware.com/tanzu/greenplum-on-kubernetes/).
 
 The following **illustrative layout** has two primary data portions and cross-host mirrors:
 
@@ -840,5 +851,6 @@ The later sections above reserve space for deeper study of particular families a
 - [Greenplum Project Repository — Archived Historical Material](https://github.com/greenplum-db/gpdb-archive)
 - [Greenplum Architecture — Archived Historical Documentation](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md)
 - [Broadcom: Greenplum Standby Coordinator Activation](https://knowledge.broadcom.com/external/article/296354/failover-to-standby.html)
+- [Tanzu: Greenplum on Kubernetes](https://blogs.vmware.com/tanzu/greenplum-on-kubernetes/)
 - [Yandex Cloud: Greenplum Storage Layouts](https://yandex.cloud/en/docs/managed-greenplum/concepts/tables)
 - [Yandex Cloud: Greenplum Data Distribution](https://yandex.cloud/en/docs/managed-greenplum/concepts/sharding)
