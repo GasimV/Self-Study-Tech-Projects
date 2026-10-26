@@ -258,16 +258,31 @@ The existing notes cover the details without repeating them here:
 Each row below represents **32 bits**. Each field occupies **16 bits**, for a total of `4 × 16 = 64 bits = 8 bytes`. Payload follows the header and is not included in those eight bytes. [RFC 768](https://datatracker.ietf.org/doc/html/rfc768)
 
 ```text
- 0                   15 16                  31
-+----------------------+----------------------+
-|     Source port      |   Destination port   |
-+----------------------+----------------------+
-|        Length        |       Checksum       |
-+----------------------+----------------------+
-                  Payload follows
+UDP header: 8 bytes (64 bits)
+ 0                       15 16                      31
++--------------------------+--------------------------+
+|       Source port        |     Destination port     |
+|    2 bytes (16 bits)     |    2 bytes (16 bits)     |
++--------------------------+--------------------------+
+|          Length          |         Checksum         |
+|    2 bytes (16 bits)     |    2 bytes (16 bits)     |
++--------------------------+--------------------------+
+
++-----------------------------------------------------+
+|             Application Data (Payload)              |
+|        Variable size; outside the UDP header        |
++-----------------------------------------------------+
 ```
 
-The columns are a bit-width illustration, not one text character per bit.
+**What do 0, 15, 16, and 31 mean?** They label **bit positions across a 32-bit row**, counting from zero:
+
+- **0–15:** The first 16-bit field, from its first bit to its last.
+- **16–31:** The second 16-bit field, from its first bit to its last.
+- The same column positions apply to the next row: **Length** occupies its first 16 bits, and **Checksum** its last 16 bits.
+
+These numbers are **positions, not port values or byte counts**. Each row contains 32 bits (4 bytes), so the two header rows total **64 bits (8 bytes)**. The drawing is schematic; one text character does not represent one bit.
+
+**Application Data (Payload)** follows the header and can vary in size. It contains what UDP carries for the application or a higher-level protocol, such as QUIC. It is **not part of the eight-byte UDP header**, but it is included in the UDP datagram's length.
 
 | Field | Meaning |
 | --- | --- |
