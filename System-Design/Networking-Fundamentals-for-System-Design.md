@@ -18,6 +18,7 @@
 - [TCP, UDP, and the UDP Header](#tcp-udp-and-the-udp-header)
   - [Choosing Transport Behavior](#choosing-transport-behavior)
   - [The Eight-Byte UDP Base Header](#the-eight-byte-udp-base-header)
+  - [Worked Example: A Sensor Sends a Temperature Reading](#worked-example-a-sensor-sends-a-temperature-reading)
 - [HTTP Connection Reuse and the AI Gateway Example](#http-connection-reuse-and-the-ai-gateway-example)
   - [Connections, Requests, Sessions, and Conversations](#connections-requests-sessions-and-conversations)
   - [Reusing a Connection](#reusing-a-connection)
@@ -292,6 +293,30 @@ These numbers are **positions, not port values or byte counts**. Each row contai
 | **Checksum** | Detects certain corruptions using the UDP header, data, and an IP pseudo-header. It is not authentication or encryption. |
 
 For example, **12 bytes of application data produce a UDP length of 20**: 8 header bytes plus 12 data bytes. The IP header and link framing add separate overhead. A checksum cannot establish that a sender is trusted or that a command is authorized.
+
+### Worked Example: A Sensor Sends a Temperature Reading
+
+Suppose a sensor reports its temperature to a monitoring application using UDP. These ports are illustrative; the receiving application is configured to listen on UDP port `9000`.
+
+```text
+Sensor -> Monitoring server
+
+Source port:      50000
+Destination port: 9000
+Payload:          "temp=23.5"
+Payload size:     9 bytes (UTF-8)
+UDP length:       17 bytes = 8-byte header + 9-byte payload
+Checksum:         Calculated by the networking stack
+```
+
+The quotation marks identify the text; they are not transmitted. This example includes no trailing newline or string terminator. IP headers and link framing add separate overhead beyond the 17-byte UDP datagram.
+
+1. **Send:** The sensor's application supplies the nine-byte message and the server's destination address and port. Its networking stack sends one UDP datagram using source port `50000`.
+2. **Receive:** If the datagram arrives and is accepted, the server's networking stack delivers its payload to the application listening on UDP port `9000`. The application interprets `temp=23.5` as a temperature reading.
+3. **No automatic confirmation:** UDP itself sends no delivery acknowledgment and performs no automatic retransmission. The receiving application could send a reply, but that would be an additional application-defined message.
+4. **Handle loss according to the task:** If periodic readings are sufficient, the application may tolerate a missing reading and use the next one. It should track freshness rather than assuming a new reading will arrive. Applications requiring confirmed delivery need appropriate reliability mechanisms or a suitable higher-level protocol. [UDP usage guidelines, RFC 8085](https://datatracker.ietf.org/doc/html/rfc8085)
+
+> **One UDP datagram carries one message. Successful sending does not prove successful receipt.**
 
 ## HTTP Connection Reuse and the AI Gateway Example
 
