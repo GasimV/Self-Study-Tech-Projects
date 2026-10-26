@@ -66,31 +66,40 @@ The **OSI model** separates communication responsibilities into seven conceptual
 | **1 — Physical** | Transmission of bits as signals. | Copper, fiber, radio. |
 
 ```mermaid
+---
+config:
+  htmlLabels: true
+  flowchart:
+    rankSpacing: 6
+    padding: 8
+---
 flowchart TB
-    L7["7. Application<br/>HTTP, DNS, SMTP"] --> L6["6. Presentation<br/>Representation and encoding"]
-    L6 --> L5["5. Session<br/>Managing a dialogue"]
-    L5 --> L4["4. Transport<br/>TCP, UDP, ports"]
-    L4 --> L3["3. Network<br/>IP addressing and routing"]
-    L3 --> L2["2. Data Link<br/>Frames and MAC addresses"]
-    L2 --> L1["1. Physical<br/>Signals over copper, fiber, radio"]
+    subgraph OSI["The 7 OSI layers"]
+        direction TB
+        L7("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>7</span><div style='flex:0 0 470px;padding-left:12px'><b>Application</b><br/><span style='font-size:12px'>Application-level/User-facing network services</span></div><div style='font-size:12px;line-height:16px'>HTTP, DNS, SMTP</div></div>")
+        L6("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>6</span><div style='flex:0 0 470px;padding-left:12px'><b>Presentation</b><br/><span style='font-size:12px'>Data formatting, encryption, encoding</span></div><div style='font-size:12px;line-height:16px'>TLS, JSON<br/>(conceptually)</div></div>")
+        L5("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>5</span><div style='flex:0 0 470px;padding-left:12px'><b>Session</b><br/><span style='font-size:12px'>Managing communication sessions</span></div><div style='font-size:12px;line-height:16px'>Session<br/>establishment</div></div>")
+        L4("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>4</span><div style='flex:0 0 470px;padding-left:12px'><b>Transport</b><br/><span style='font-size:12px'>End-to-end data delivery, ports</span></div><div style='font-size:12px;line-height:16px'>TCP, UDP</div></div>")
+        L3("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>3</span><div style='flex:0 0 470px;padding-left:12px'><b>Network</b><br/><span style='font-size:12px'>IP addressing and routing</span></div><div style='font-size:12px;line-height:16px'>IPv4, IPv6, routers</div></div>")
+        L2("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>2</span><div style='flex:0 0 470px;padding-left:12px'><b>Data Link</b><br/><span style='font-size:12px'>Local network frame delivery</span></div><div style='font-size:12px;line-height:16px'>Ethernet, MAC,<br/>switches</div></div>")
+        L1("<div style='display:flex;align-items:center;width:680px;height:48px;text-align:left;line-height:18px'><span style='display:inline-block;flex:0 0 32px;height:32px;line-height:32px;text-align:center;background:#fff;border-radius:6px'>1</span><div style='flex:0 0 470px;padding-left:12px'><b>Physical</b><br/><span style='font-size:12px'>Transmitting bits as signals</span></div><div style='font-size:12px;line-height:16px'>Cables, fiber, radio</div></div>")
 
-    classDef application fill:#dceaff,stroke:#526b8a,color:#111
-    classDef presentation fill:#e1e4ff,stroke:#666a95,color:#111
-    classDef session fill:#eee7ff,stroke:#806b9c,color:#111
-    classDef transport fill:#d1f7e6,stroke:#4e826e,color:#111
-    classDef network fill:#fff5c4,stroke:#9a884b,color:#111
-    classDef link fill:#ffecd1,stroke:#a17a49,color:#111
-    classDef physical fill:#ffe2e2,stroke:#a36565,color:#111
-    class L7 application
-    class L6 presentation
-    class L5 session
-    class L4 transport
-    class L3 network
-    class L2 link
-    class L1 physical
+        L7 ~~~ L6 ~~~ L5 ~~~ L4 ~~~ L3 ~~~ L2 ~~~ L1
+    end
+
+    classDef row stroke-width:0px,color:#172c44
+    class L7,L6,L5,L4,L3,L2,L1 row
+    style L7 fill:#dceaff
+    style L6 fill:#e1e4ff
+    style L5 fill:#eee7ff
+    style L4 fill:#d1f7e6
+    style L3 fill:#fff5c4
+    style L2 fill:#ffecd1
+    style L1 fill:#ffe2e2
+    style OSI fill:transparent,stroke:#ddd,stroke-width:1px,rx:12,ry:12
 ```
 
-The arrows show **conceptual downward encapsulation when sending**. Receiving reverses the process. TLS and JSON do not implement an independent OSI presentation layer in every system; real protocol stacks combine and overlap these responsibilities.
+The rows run from **Layer 7 at the top to Layer 1 at the bottom**. Sending conceptually moves down the stack; receiving reverses the process. TLS and JSON do not implement an independent OSI presentation layer in every system; real protocol stacks combine and overlap these responsibilities.
 
 ### Mapping to TCP/IP
 
