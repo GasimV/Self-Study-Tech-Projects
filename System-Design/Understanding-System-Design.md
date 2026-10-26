@@ -421,6 +421,8 @@ Networking is essential to distributed systems, but these disciplines usually fo
 
 System design **does not assume that networking always works**. It designs communication around network limitations and failures. Network engineering goes deeper into the infrastructure that makes that communication possible; both disciplines address performance, reliability, and security at their respective levels.
 
+For addresses, subnets, OSI/TCP/IP layers, transport protocols, and firewalls, see [Networking Fundamentals for System Design](Networking-Fundamentals-for-System-Design.md).
+
 ### Example: Scaling an E-Commerce Platform
 
 Consider an online store with an illustrative target of **one million concurrent users**. A simplified architecture could be:

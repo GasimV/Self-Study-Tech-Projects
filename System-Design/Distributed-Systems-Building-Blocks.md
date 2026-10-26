@@ -91,6 +91,8 @@
 
 Distributed systems need a way to **find services, distribute traffic, and apply request policies**. DNS, load balancers, and application gateways provide complementary building blocks.
 
+For addressing, subnetting, transport protocols, and connection reuse, see [Networking Fundamentals for System Design](Networking-Fundamentals-for-System-Design.md).
+
 | Building block | Main question | Example |
 | --- | --- | --- |
 | **DNS** | Which address or other record belongs to this name? | Resolve `www.example.com` to an address for an application entry point. |
