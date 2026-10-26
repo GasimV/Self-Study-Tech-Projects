@@ -35,6 +35,8 @@
 
 Networking makes communication possible; system design decides **which components communicate, what they exchange, and how the application handles delay or failure**. A small application and a large distributed platform both rely on these foundations.
 
+The two transport protocols compared here are **TCP (Transmission Control Protocol)** and **UDP (User Datagram Protocol)**.
+
 | Concept | Simple meaning | Why it matters in system design |
 | --- | --- | --- |
 | **IP address** | A network-layer address assigned to an interface; virtual service addresses also exist. | Identify a destination and route packets toward it. An address is not a permanent identity for a person or service. |
