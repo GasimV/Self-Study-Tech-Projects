@@ -36,6 +36,7 @@
 - [Customers, Partners, and Workload Identities](#customers-partners-and-workload-identities)
   - [Customer and Partner Access](#customer-and-partner-access)
   - [Human and Workload Identities](#human-and-workload-identities)
+    - [Example: Vault Supplies Database Credentials](#example-vault-supplies-database-credentials)
   - [Service Identities and AI Agents](#service-identities-and-ai-agents)
 - [IAM Architecture and Failure Handling](#iam-architecture-and-failure-handling)
   - [Centralized Identity, Distributed Enforcement](#centralized-identity-distributed-enforcement)
@@ -95,7 +96,7 @@ flowchart TB
         APP["Delivery platform apps and APIs<br/>Sessions and access enforcement"]
         DATA["Protected resources<br/>Orders, refunds, reports"]
         WORK["Services and jobs"]
-        CREDS["Workload identity<br/>and secrets management"]
+        CREDS["Workload identity<br/>and secrets management<br/>Example: HashiCorp Vault"]
 
         PEOPLE -->|Use app| APP
         PEOPLE -.->|Sign-in| IDP
@@ -148,6 +149,7 @@ The optional directory can be replaced by an IdP's local user store. Employee, c
 | Governance and privileged access | Who approves, reviews, and removes extra access? | [Access changes, privileges, and governance](#access-changes-privileges-and-governance) |
 | Audit logs and SIEM | What happened, and what deserves investigation? | [Accounting, monitoring, and risk](#accounting-monitoring-and-risk) |
 | Customers, partners, services, and jobs | How do other identities differ from employees? | [Customers, partners, and workload identities](#customers-partners-and-workload-identities) |
+| Secrets management / Vault | How does a service obtain permitted database credentials? | [Vault example](#example-vault-supplies-database-credentials) |
 | Operational dependencies | What happens when identity infrastructure fails? | [IAM architecture and failure handling](#iam-architecture-and-failure-handling) |
 
 ## Identity, Directories, and Provisioning
@@ -436,6 +438,26 @@ For example, the order service calls a payment API, while a reporting job reads 
 
 A **secrets manager** protects and controls retrieval of credentials such as passwords and API keys. Prefer appropriate short-lived workload credentials where supported; protect bootstrap access and plan rotation/revocation. Secrets management does not itself decide what the service may do once authenticated. See [OWASP secrets-management guidance](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html).
 
+#### Example: Vault Supplies Database Credentials
+
+**HashiCorp Vault** is a secrets-management product. Alongside storing secrets, its database secrets engine can generate credentials dynamically for supported databases, using configured roles. [Vault database secrets engine](https://developer.hashicorp.com/vault/docs/secrets/databases)
+
+In the delivery company, the reporting service needs read-only access to approved reporting tables:
+
+1. **Authenticate:** The service authenticates to Vault using a configured method that verifies its workload identity.
+2. **Check secret access:** Vault checks whether its policy permits the service to request credentials for the configured reporting role.
+3. **Issue credentials:** Vault's database integration creates database credentials with the configured permissions and a lease—a managed validity period.
+4. **Use the database:** The service connects **directly to the database** with those credentials. Vault does not proxy each query; the database enforces the account's grants.
+5. **Manage the lifetime:** The service renews or replaces credentials when permitted. Vault manages revocation through the database integration when the lease expires or is revoked; existing database-session behavior depends on that integration and database. [Vault leases](https://developer.hashicorp.com/vault/docs/concepts/lease)
+
+| Component | Responsibility in this example |
+| --- | --- |
+| **Keycloak** | Helps Sarah sign in to employee applications. |
+| **Vault** | Controls which credentials the reporting service may obtain. |
+| **Database and application** | Enforce database grants and applicable business/resource permissions. |
+
+> **Permission to obtain a secret and permission to act on business data are separate checks.** Vault policies govern Vault access; they do not replace application authorization. [Vault policies](https://developer.hashicorp.com/vault/docs/concepts/policies)
+
 ### Service Identities and AI Agents
 
 A service acting for a user may need both **its own identity** and the user's delegated authority; one does not imply the other.
@@ -509,6 +531,7 @@ Use this section after following the story. It groups the names by responsibilit
 | **AD DS — Active Directory Domain Services** | Directory/domain-services implementation | Manages directory objects and supports enterprise authentication and access control. |
 | **OpenLDAP** | Directory software | Implements LDAP directory services. |
 | **Keycloak** | IAM/IdP software | Provides login, SSO, protocol integration, local users, and configurable federation. |
+| **HashiCorp Vault** | Secrets-management software | Controls access to secrets and can issue leased database credentials through configured integrations. |
 | **Microsoft Entra ID** | Cloud identity service | Provides identity and application-access capabilities; distinct from AD DS. |
 
 **MFA, SSO, JIT, PAM, IGA, CIAM, and SIEM** name authentication capabilities, access approaches, or broader responsibility areas. They are not all wire protocols or interchangeable products. OAuth is the framework's name; use its specified behavior rather than relying on an assumed expansion of that name.
@@ -592,6 +615,9 @@ Then explain why a restaurant's accounting integration needs delegated API acces
 - [Microsoft: Privileged Identity Management Overview](https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure)
 - [NIST SP 800-92: Guide to Computer Security Log Management](https://csrc.nist.gov/pubs/sp/800/92/final)
 - [OWASP: Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)
+- [HashiCorp Vault: Database Secrets Engine](https://developer.hashicorp.com/vault/docs/secrets/databases)
+- [HashiCorp Vault: Policies](https://developer.hashicorp.com/vault/docs/concepts/policies)
+- [HashiCorp Vault: Lease, Renew, and Revoke](https://developer.hashicorp.com/vault/docs/concepts/lease)
 
 **Supplementary learning:**
 
