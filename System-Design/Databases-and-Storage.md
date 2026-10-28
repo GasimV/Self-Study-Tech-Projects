@@ -23,6 +23,12 @@
   - [NoSQL Databases](#nosql-databases)
     - [Schemas, Transactions, and Consistency](#schemas-transactions-and-consistency)
     - [Wide-Column vs. Analytical Columnar Storage](#wide-column-vs-analytical-columnar-storage)
+  - [MongoDB: Document Modeling and Queries](#mongodb-document-modeling-and-queries)
+    - [Documents, Collections, and BSON](#documents-collections-and-bson)
+    - [The Same Profile in Two Models](#the-same-profile-in-two-models)
+    - [MongoDB Query Language: A Short Walkthrough](#mongodb-query-language-a-short-walkthrough)
+    - [Embedding, References, and Practical Selection](#embedding-references-and-practical-selection)
+    - [Schemas, Atomicity, and Design Limits](#schemas-atomicity-and-design-limits)
   - [Relational and NoSQL Trade-Offs](#relational-and-nosql-trade-offs)
     - [Database Selection Checklist](#database-selection-checklist)
 - [Key-Value Stores](#key-value-stores)
@@ -405,7 +411,7 @@ The application checks the relevant rules and groups the debit and credit within
 | Family | Main organization | Simple access-pattern example | Representative systems |
 | --- | --- | --- | --- |
 | **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, Amazon DynamoDB |
-| **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | MongoDB, Apache CouchDB |
+| **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | [MongoDB](#mongodb-document-modeling-and-queries), Apache CouchDB |
 | **Column-family / wide-column** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, Apache HBase |
 | **Graph** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | Neo4j, Amazon Neptune |
 
@@ -429,6 +435,276 @@ The terms sound similar but describe different ideas:
 Do not infer an analytical columnar layout merely from the label “column-family.” These model and storage-layout concepts can overlap in some systems, but are not synonyms. Compare [HBase's data model](https://hbase.apache.org/docs/datamodel/) with the [ClickHouse column-oriented overview](https://clickhouse.com/docs/get-started/about/intro).
 
 The relational [Greenplum example](#greenplum-relational-analytics-with-mpp) shows the distinction: its append-optimized tables can use columnar storage while retaining the relational/SQL model.
+
+### MongoDB: Document Modeling and Queries
+
+**MongoDB is a document database.** Its document model is useful when a record's nested structure matches how the application reads and updates it. Compare the same user profile in two possible designs before choosing a model.
+
+#### Documents, Collections, and BSON
+
+| Concept | Meaning | Profile example |
+| --- | --- | --- |
+| **Document** | A record made of fields and values, including nested documents and arrays | Jane's name, address, and hobbies |
+| **Collection** | A group of documents | A `users` collection containing user profiles |
+| **BSON — Binary JSON** | MongoDB's binary document representation, with types beyond plain JavaScript Object Notation (JSON), such as dates and ObjectIds | The stored representation of a profile |
+| **`_id`** | A document's identifier | Use numeric `1` for Jane in this example |
+
+In this unsharded example, `_id` is unique within the collection. When it is omitted on insertion, MongoDB commonly uses an automatically generated **ObjectId**. BSON is not simply a JSON text file; the JSON below is a readable illustration of document contents. See [MongoDB documents](https://www.mongodb.com/docs/manual/core/document/).
+
+Documents in a collection can have different fields, but the application still depends on their meanings and types. Plan the model and validation deliberately.
+
+#### The Same Profile in Two Models
+
+Suppose an e-commerce application displays Jane's profile, including her current address and hobbies.
+
+**Relational design:** Use three tables, with `user_id` foreign keys referring to `Users.id`. This example has one current address per profile and multiple hobbies. An appropriate unique constraint on `Addresses.user_id` can prevent multiple address rows for the same user; other requirements could instead allow several addresses.
+
+**Users**
+
+| id | first_name | last_name | email |
+| --- | --- | --- | --- |
+| 1 | Jane | Doe | jane@example.com |
+
+**Addresses**
+
+| id | user_id (FK) | street | city | zipcode |
+| --- | --- | --- | --- | --- |
+| 101 | 1 | 123 Main St | New York | 10001 |
+
+**UserHobbies**
+
+| id | user_id (FK) | hobby_name |
+| --- | --- | --- |
+| 501 | 1 | Hiking |
+| 502 | 1 | Reading |
+
+Here **FK** means foreign key. The address and hobby row identifiers are relational bookkeeping; the nested profile below represents the same business information without needing separate child-row identifiers.
+
+A Structured Query Language (SQL) query can combine the rows:
+
+```sql
+SELECT u.id, u.first_name, u.last_name, u.email,
+       a.street, a.city, a.zipcode, h.hobby_name
+FROM Users AS u
+JOIN Addresses AS a ON a.user_id = u.id
+JOIN UserHobbies AS h ON h.user_id = u.id
+WHERE u.id = 1
+ORDER BY h.hobby_name;
+```
+
+**Result:**
+
+| id | first_name | last_name | email | street | city | zipcode | hobby_name |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Jane | Doe | jane@example.com | 123 Main St | New York | 10001 | Hiking |
+| 1 | Jane | Doe | jane@example.com | 123 Main St | New York | 10001 | Reading |
+
+The join produces **one row per hobby**. Application code can assemble these rows into a nested profile. This inner-join example assumes the related address and hobby rows exist; profiles with optional related records may need outer joins or separate reads.
+
+**MongoDB design:** Store the bounded profile information together in one document within `users`:
+
+```json
+{
+  "_id": 1,
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "email": "jane@example.com",
+  "address": {
+    "street": "123 Main St",
+    "city": "New York",
+    "zipcode": "10001"
+  },
+  "hobbies": ["Hiking", "Reading"]
+}
+```
+
+Jane's address is an **embedded document**, and her hobbies are an **array**. Postal codes remain strings so leading zeros can be preserved.
+
+```mermaid
+flowchart LR
+    PROFILE["Jane's profile"] --> U
+    PROFILE --> D
+
+    subgraph REL["Relational model"]
+        U["Users: Jane"] -->|"user_id"| A["Addresses: one row"]
+        U -->|"user_id"| H["UserHobbies: two rows"]
+    end
+
+    subgraph DOC["Document model"]
+        D["One users document<br/>Jane + address + hobbies"]
+    end
+
+    style REL fill:#eef2ff,stroke:#8795b5,color:#111
+    style DOC fill:#ecf8f0,stroke:#80a98d,color:#111
+```
+
+These are **modeling choices, not mandatory layouts**. Relational databases do not force every design to be normalized, and MongoDB does not require every relationship to be embedded. Normalization addresses particular redundancies and update anomalies, not every repeated value or empty cell. Relational systems can denormalize and store JSON, as [PostgreSQL's JSON types](https://www.postgresql.org/docs/current/datatype-json.html) demonstrate.
+
+#### MongoDB Query Language: A Short Walkthrough
+
+**MongoDB Query Language (MQL)** expresses operations through filter documents, operators, and aggregation stages. **MongoDB Shell (`mongosh`)** exposes JavaScript-style methods such as `db.users.findOne(...)`. The surrounding shell syntax is not SQL or plain JSON; drivers expose corresponding operations in other programming languages.
+
+The following illustrative snippets assume `db` refers to an example database with an **initially empty `users` collection**. Follow them in order, with deletion last. Result excerpts show the relevant fields; other metadata or shell formatting can vary.
+
+**1. Create Jane's profile.**
+
+```javascript
+db.users.insertOne({
+  _id: 1,
+  first_name: "Jane",
+  last_name: "Doe",
+  email: "jane@example.com",
+  address: {
+    street: "123 Main St",
+    city: "New York",
+    zipcode: "10001"
+  },
+  hobbies: ["Hiking", "Reading"]
+});
+```
+
+Relevant result:
+
+```json
+{ "insertedId": 1 }
+```
+
+This inserts one complete document; inserting the same `_id` again into this collection would conflict with its identifier constraint. [`insertOne` reference](https://www.mongodb.com/docs/manual/reference/method/db.collection.insertOne/)
+
+**2. Read one profile.**
+
+```javascript
+db.users.findOne({ _id: 1 });
+```
+
+This returns Jane's complete document shown above. If no document matches, `findOne` returns `null`. [`findOne` reference](https://www.mongodb.com/docs/manual/reference/method/db.collection.findOne/)
+
+**3. Filter nested fields and arrays, then select fields.**
+
+```javascript
+db.users.find(
+  { "address.city": "New York", hobbies: "Reading" },
+  { _id: 0, first_name: 1 }
+).toArray();
+```
+
+Result:
+
+```json
+[{ "first_name": "Jane" }]
+```
+
+The filter requires **both conditions**. Dot notation addresses the nested `city` field; `hobbies: "Reading"` matches an array containing that value. The second argument is a **projection**: return `first_name` and explicitly exclude `_id`.
+
+`find()` ordinarily returns a **cursor**, rather than an array. Here `.toArray()` collects the small result for illustration; large result sets may need incremental cursor processing. [`find` reference](https://www.mongodb.com/docs/manual/reference/method/db.collection.find/)
+
+**4. Update the address and add a hobby.**
+
+```javascript
+db.users.updateOne(
+  { _id: 1 },
+  {
+    $set: {
+      "address.city": "Boston",
+      "address.zipcode": "02108"
+    },
+    $addToSet: { hobbies: "Cycling" }
+  }
+);
+```
+
+Relevant result for this first update:
+
+```json
+{ "matchedCount": 1, "modifiedCount": 1 }
+```
+
+`$set` changes the named fields rather than replacing the whole document. `$addToSet` adds Cycling only if it is absent; it does not remove pre-existing duplicates or promise array ordering. Repeating this same update matches Jane but makes no further change. See [`updateOne`](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/) and [`$addToSet`](https://www.mongodb.com/docs/manual/reference/operator/update/addToSet/).
+
+**5. Verify the changed profile.**
+
+```javascript
+db.users.findOne({ _id: 1 });
+```
+
+Jane's identity fields and street remain unchanged. The result now contains:
+
+| Field | Value after the update |
+| --- | --- |
+| `address.city` | `"Boston"` |
+| `address.zipcode` | `"02108"` |
+| `hobbies` | Hiking, Reading, and Cycling; array order is not asserted here |
+
+**6. Aggregate profiles by hobby.**
+
+```javascript
+db.users.aggregate([
+  { $unwind: "$hobbies" },
+  { $group: { _id: "$hobbies", profiles: { $sum: 1 } } },
+  { $sort: { _id: 1 } }
+]).toArray();
+```
+
+Result:
+
+```json
+[
+  { "_id": "Cycling", "profiles": 1 },
+  { "_id": "Hiking", "profiles": 1 },
+  { "_id": "Reading", "profiles": 1 }
+]
+```
+
+`$unwind` produces a working record per hobby, `$group` counts them, and `$sort` orders the result by hobby name. These are computed results, not changes to Jane's stored document.
+
+This dataset contains each hobby once per profile, so the counts also represent profiles. If input arrays contain duplicates, this pipeline counts those occurrences too; deduplicate per profile when distinct-profile counts are required. [Aggregation pipelines](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/)
+
+**7. Add a lookup index.**
+
+```javascript
+db.users.createIndex({ "address.city": 1 });
+```
+
+The default index name is `"address.city_1"`; `1` requests ascending index order. It provides an additional access path for suitable city queries, not a guarantee that every query becomes faster. Indexes consume storage and add write work; selectivity and query plans matter. See [`createIndex`](https://www.mongodb.com/docs/manual/reference/method/db.collection.createIndex/) and the existing [index explanation](#normalization-and-indexes).
+
+**8. Delete Jane's example document last.**
+
+```javascript
+db.users.deleteOne({ _id: 1 });
+```
+
+Relevant result:
+
+```json
+{ "deletedCount": 1 }
+```
+
+A subsequent `db.users.findOne({ _id: 1 })` returns `null`. Deleting an embedded profile removes its embedded address and hobbies with that document; separate referenced records would require an explicit lifecycle policy. [`deleteOne` reference](https://www.mongodb.com/docs/manual/reference/method/db.collection.deleteOne/)
+
+#### Embedding, References, and Practical Selection
+
+| Requirement | Modeling direction | Concrete example |
+| --- | --- | --- |
+| **Bounded information accessed and updated together** | Consider embedding in one document | Jane's current address and small hobby list |
+| **Shared or independently changing entities** | Consider references and separate records | Many profiles refer to the same organization, whose details change independently |
+| **Continuously growing related data** | Keep separate records or another bounded design | Store order history as separate orders rather than an indefinitely growing profile array |
+| **Interconnected data with database-enforced foreign keys and substantial cross-entity querying** | Consider relational modeling | Customers, orders, payments, and accounting relationships with explicit constraints |
+| **Aggregate-shaped records benefiting from nested representation** | Consider a document model | Product descriptions with category-specific nested attributes, accessed as a product record |
+
+MongoDB supports references and **`$lookup`**, an aggregation stage that can join related collection data. Embedding can avoid that extra lookup for a particular read; it does not make joins impossible or unnecessary for every workload. Shared duplicated data still needs an update policy. See [modeling best practices](https://www.mongodb.com/docs/manual/data-modeling/best-practices/) and [`$lookup`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/).
+
+Relational foreign keys can enforce referenced-row existence. A MongoDB reference field does not automatically supply the equivalent constraint; transactions alone do not create that rule. Define the application workflows and checks needed to preserve such relationships.
+
+#### Schemas, Atomicity, and Design Limits
+
+- **Schema validation:** MongoDB can validate types, required fields, and other rules. Flexible documents still require compatibility, validation, and migration planning; schema changes are not automatically disruption-free. [Schema validation](https://www.mongodb.com/docs/manual/core/schema-validation/)
+- **Atomic writes:** A single-document write is atomic, including updates to several fields. This does not mean a sequence of separate application operations is automatically one transaction. [Atomicity and transactions](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/)
+- **Multi-document transactions:** Supported deployments provide them, subject to documented boundaries and costs. Choose appropriate transaction scope and read/write settings; do not infer every guarantee from the word NoSQL. See [MongoDB transactions](https://www.mongodb.com/docs/manual/core/transactions/), [ACID](#transactions-and-acid), and [consistency considerations](#schemas-transactions-and-consistency).
+- **Document growth:** The maximum BSON document size is **16 MiB**. Avoid unbounded embedding even before reaching that limit. [MongoDB limits](https://www.mongodb.com/docs/manual/reference/limits/)
+- **Scaling and selection:** Relational systems can scale horizontally; MongoDB's sharding also requires appropriate design and operation. Neither model universally guarantees better speed, consistency, scalability, or financial-system suitability. Use the [database selection checklist](#database-selection-checklist).
+
+> **Recall:** Choose the record boundaries from the reads, writes, relationships, and invariants. One document can simplify an aggregate-shaped operation; linked tables or referenced documents can better fit other requirements.
+
 
 ### Relational and NoSQL Trade-Offs
 
@@ -852,6 +1128,20 @@ The later sections above reserve space for deeper study of particular families a
 - [MySQL: InnoDB Error Handling and Rollback Scope](https://dev.mysql.com/doc/refman/8.4/en/innodb-error-handling.html)
 - [MongoDB: Data Modeling](https://www.mongodb.com/docs/manual/data-modeling/)
 - [MongoDB: Transactions](https://www.mongodb.com/docs/manual/core/transactions/)
+- [MongoDB: Documents, BSON, and Identifiers](https://www.mongodb.com/docs/manual/core/document/)
+- [MongoDB: Schema Validation](https://www.mongodb.com/docs/manual/core/schema-validation/)
+- [MongoDB: Single-Document Atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/)
+- [MongoDB: insertOne](https://www.mongodb.com/docs/manual/reference/method/db.collection.insertOne/)
+- [MongoDB: findOne](https://www.mongodb.com/docs/manual/reference/method/db.collection.findOne/)
+- [MongoDB: find and Projections](https://www.mongodb.com/docs/manual/reference/method/db.collection.find/)
+- [MongoDB: updateOne](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/)
+- [MongoDB: $addToSet](https://www.mongodb.com/docs/manual/reference/operator/update/addToSet/)
+- [MongoDB: deleteOne](https://www.mongodb.com/docs/manual/reference/method/db.collection.deleteOne/)
+- [MongoDB: Aggregation Pipelines](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/)
+- [MongoDB: createIndex](https://www.mongodb.com/docs/manual/reference/method/db.collection.createIndex/)
+- [MongoDB: Modeling Best Practices](https://www.mongodb.com/docs/manual/data-modeling/best-practices/)
+- [MongoDB: $lookup](https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/)
+- [MongoDB: Limits and Document Size](https://www.mongodb.com/docs/manual/reference/limits/)
 - [DynamoDB: Transactions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transactions.html)
 - [DynamoDB: Read Consistency](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html)
 - [Redis: Data Types](https://redis.io/docs/latest/develop/data-types/)
