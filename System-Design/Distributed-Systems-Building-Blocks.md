@@ -78,6 +78,7 @@
   - [Routing vs. Aggregation](#routing-vs-aggregation)
   - [External vs. Internal Traffic](#external-vs-internal-traffic)
   - [Consul: Service Discovery and Service Mesh](#consul-service-discovery-and-service-mesh)
+    - [Why Microservices Introduce These Challenges](#why-microservices-introduce-these-challenges)
     - [Example: Order Service Calls Payment Service](#example-order-service-calls-payment-service)
     - [Responsibilities and Practical Limits](#responsibilities-and-practical-limits)
     - [Consul, Keycloak, Vault, and Application Permissions](#consul-keycloak-vault-and-application-permissions)
@@ -1567,6 +1568,21 @@ A **service mesh** can supply service-to-service transport security, routing, an
 
 **HashiCorp Consul** is service-networking software for discovering services and, when configured as a service mesh, securing and controlling their communication. It can connect workloads on Kubernetes, virtual machines, and bare-metal servers. Discovery and mesh deployment are separate choices; registering a service alone does not encrypt its traffic. [Consul overview](https://developer.hashicorp.com/consul/docs/intro)
 
+#### Why Microservices Introduce These Challenges
+
+Splitting a monolith into Order Service, Payment Service, and other independently deployable services can let teams release changes at different cadences. That independence still requires compatible interfaces and appropriate coordination. Communication that previously stayed within a process can now cross network and deployment boundaries.
+
+| Pillar | Typical monolith | Question for distributed services |
+| --- | --- | --- |
+| **Discovery** | Calls between application modules often stay within one process. | Where is an eligible remote service instance? |
+| **Configuration** | Fewer application processes need configuration. | Which settings should each instance use, and how will changes be applied? |
+| **Segmentation** | Internal modules share a process boundary. | Which services may communicate across network boundaries? |
+
+Monoliths also have external dependencies; the comparison concerns modules that become separate services. Consul addresses these operational concerns, rather than making independent deployments automatically compatible or reliable.
+
+A registry can support destination discovery and integrate with existing load balancers. Load balancers can be redundant and automatically configured; they are not necessarily single points of failure, and an extra intermediary does not imply a universal doubling of latency.
+
+
 #### Example: Order Service Calls Payment Service
 
 In the food-delivery application, **Order Service** needs to call **Payment Service**, which has three instances. Instances can be replaced or scaled without keeping permanent addresses in Order Service's code.
@@ -1578,6 +1594,17 @@ In the food-delivery application, **Order Service** needs to call **Payment Serv
 5. **Secure the mesh path:** In the illustrated mesh deployment, Envoy proxies authenticate the participating services and protect proxy-to-proxy traffic with **mutual TLS (mTLS)**. The destination proxy enforces the configured service-access policy.
 
 For example, an intention can allow `order → payment` while denying `reporting → payment`. Payment Service still checks whether the requested payment operation is valid and authorized. [Service discovery](https://developer.hashicorp.com/consul/docs/discover), [mesh intentions](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
+
+**Identity, encryption, and authorization are separate responsibilities:**
+
+| Mechanism | Question answered |
+| --- | --- |
+| **Service certificate and proof of its private key** | Is the peer authenticated as the claimed service identity under the configured trust model? |
+| **mTLS-protected connection** | Are both peers authenticated and the proxy-to-proxy traffic protected in transit? |
+| **Intention policy** | Is this authenticated service permitted to communicate with that destination under the configured rules? |
+
+The [certificate-authority explanation](#certificate-authorities-the-digital-notary) covers certificate trust. Authentication alone does not grant permission, and an allowed connection does not authorize every business action. Proxies can enforce cached policy; this does not require a synchronous Consul-server lookup on every call. [Intention enforcement and caching](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
+
 
 ```mermaid
 flowchart LR
@@ -1610,7 +1637,22 @@ Consul servers do **not** forward each ordinary application request. The mTLS la
 | **Configuration key-value (KV) store** | Store nonsecret settings and metadata, such as `payment/request_timeout_ms = 2000` | Applications or integrations must read/watch and apply changes; existing environment variables do not update themselves |
 | **Consul access controls** | Access Control Lists (ACLs) protect supported Consul API and KV operations | Configure access and protect credentials; these controls have a different scope from mesh intentions |
 
+**Service-level segmentation** restricts communication according to logical service identities. A **service graph** is the logical map of relationships such as `order → payment`. The logical rule can remain the same as instances scale.
+
+For example, 50 Order Service instances and five Payment Service instances create **50 × 5 = 250 possible caller–destination pairs**. That does not necessarily require 250 firewall rules: network controls can also use groups, ranges, or other abstractions. The useful distinction is expressing the desired relationship between services rather than maintaining every instance pair individually.
+
+
 Consul's KV store is intended for configuration and metadata, rather than replacing a general application database. **Each datacenter has its own KV store, without built-in replication between datacenters.** A watch or template integration can consume changes, but does not guarantee that every application can reload every setting without a restart. Use a secrets-management system for sensitive credentials. [KV overview](https://developer.hashicorp.com/consul/docs/automate/kv), [KV API and datacenter scope](https://developer.hashicorp.com/consul/api-docs/kv)
+
+**Configuration example: maintenance mode.** Suppose the application defines a nonsecret `maintenance_mode` flag:
+
+1. An operator changes the centrally stored value from `false` to `true`.
+2. Services observe the change through configured reads, watches, or template integrations and apply their maintenance behavior.
+3. Each required writer stops admitting new writes and handles in-flight work according to the application's procedure.
+4. Before database maintenance begins, verify that the relevant services, background jobs, and in-flight writes have reached the required safe state.
+
+Instances can observe or apply the update at different times. **Changing the flag is not proof that every write has stopped**, and centralized configuration does not itself coordinate the entire maintenance procedure. [Consul KV integrations](https://developer.hashicorp.com/consul/docs/automate/kv)
+
 
 **Distributed does not mean leaderless.** Consul server nodes use [Raft](Distributed-Systems-Theorems-and-Data-Structures.md#raft) to agree on server state; new committed updates require a server quorum. Agent gossip supports membership and failure information, a different responsibility from Raft log agreement. [Consul consensus](https://developer.hashicorp.com/consul/docs/concept/consensus), [control-plane architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
 
