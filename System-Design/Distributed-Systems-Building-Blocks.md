@@ -1312,7 +1312,7 @@ sequenceDiagram
 
 **Private-key proof means proving possession, not sending the private key.** Each verifier checks the relevant identity, certificate trust, validity, and permitted use. When client-certificate authentication is required, a missing or invalid client credential must not grant access to the protected operation. See [TLS CertificateRequest](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.3.2).
 
-**Simple selection rule:** Use usual HTTPS when visitors need to verify your website and sign in through the application. Consider mTLS when both endpoints must prove their identities with certificates—for example, two internal services or a managed device and its API.
+**Simple selection rule:** Use usual HTTPS when visitors need to verify your website and sign in through the application - *requiring every visitor to install a client certificate is impractical*. Consider mTLS when both endpoints must prove their identities with certificates—for example, two internal services where you are *securing service-to-service (microservices) communication inside a cluster or cloud network*, or a managed device and its API where you are *connecting non-human or IoT devices that cannot use a standard human login flow*.
 
 These are common choices, not mandatory rules. A service API can also use TLS with a suitable token scheme. **mTLS can support zero-trust designs, but zero trust is a broader approach, not a protocol that always requires mTLS.**
 
