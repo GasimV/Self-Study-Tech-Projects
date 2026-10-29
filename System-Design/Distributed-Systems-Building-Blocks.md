@@ -57,6 +57,7 @@
     - [Certificate Authorities: The Digital Notary](#certificate-authorities-the-digital-notary)
     - [Public and Private CAs](#public-and-private-cas)
     - [Certificate Issuance vs. Connection Verification](#certificate-issuance-vs-connection-verification)
+    - [TLS vs. mTLS: Who Authenticates Whom?](#tls-vs-mtls-who-authenticates-whom)
     - [How It Works](#how-it-works)
     - [Connection to the Backend](#connection-to-the-backend)
   - [Session Affinity](#session-affinity)
@@ -1263,11 +1264,63 @@ sequenceDiagram
 
 **Connection verification:** B checks the certificate chain against its configured trust anchors, the requested hostname, validity period, permitted use, and applicable security policies. In a certificate-based TLS handshake, A proves possession of its matching private key; presenting a copied certificate alone is insufficient. B can then complete the handshake if all required checks succeed. See [certificate-path validation, RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-6) and [TLS authentication, RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4).
 
-Ordinary HTTPS does **not** require B to have its own client certificate. **Mutual TLS (mTLS)** additionally authenticates the client using its certificate and proof of the associated private key. This is separate from application-level user login and authorization.
+Ordinary HTTPS does **not** require B to have its own client certificate. **[Mutual TLS (mTLS)](#tls-vs-mtls-who-authenticates-whom)** additionally authenticates the client using its certificate and proof of the associated private key. This is separate from application-level user login and authorization.
 
 > **The CA signs the certificate; the client verifies it.** The CA does not approve every HTTPS request. Depending on client policy, certificate-status or chain-retrieval services may still be consulted; that is not per-request permission from a notary.
 
 When **NGINX terminates TLS**, NGINX is the client-facing TLS endpoint in this example: it presents the certificate and uses the associated private key, rather than requiring the backend to handle that client connection. Protect that key and automate certificate renewal as appropriate. Re-encryption creates a separate backend TLS connection with its own validation requirements. See the [NGINX HTTPS configuration guide](https://nginx.org/en/docs/http/configuring_https_servers.html) and [Connection to the Backend](#connection-to-the-backend).
+
+#### TLS vs. mTLS: Who Authenticates Whom?
+
+**Mutual TLS (mTLS) is TLS with mutual authentication, not a separate TLS version.** Compare ordinary **server-authenticated TLS** with **certificate-based mTLS**: both protect data in transit, while mTLS also authenticates the client using its certificate and proof of the matching private key. It does not inherently use stronger encryption. [TLS authentication](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4)
+
+| Question | Server-authenticated TLS | Certificate-based mTLS |
+| --- | --- | --- |
+| **Client verifies server?** | Yes | Yes |
+| **Server verifies a client certificate?** | No | Yes |
+| **Certificates used for endpoint authentication?** | Server certificate | Server and client certificates |
+| **Application traffic protected in transit?** | Yes | Yes |
+| **Typical example** | Sarah's browser → support portal | Order Service → Payment Service |
+| **Application authorization still required?** | Yes | Yes |
+
+Without a client certificate, the client is **not certificate-authenticated by TLS**; it can still authenticate at the application layer using a login session or token. For standardized user sign-in, [OIDC](Identity-and-Access-Management.md#oidc-login-walkthrough) supplies an identity layer on OAuth 2.0; OAuth alone is not a standardized end-user login protocol.
+
+The following comparison simplifies normal full certificate-based handshakes. Routine messages are omitted; session resumption and pre-shared-key flows differ.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    alt Server-authenticated TLS
+        C->>S: Begin TLS handshake
+        S-->>C: Server certificate and private-key proof
+        C->>C: Validate server identity and trust
+        Note over C,S: Complete handshake if required checks succeed
+    else Certificate-based mTLS
+        C->>S: Begin TLS handshake
+        S-->>C: Request client certificate
+        S-->>C: Server certificate and private-key proof
+        C->>C: Validate server identity and trust
+        C->>S: Client certificate and private-key proof
+        S->>S: Validate client identity and trust
+        Note over C,S: Complete handshake if required checks succeed
+    end
+    C->>S: Protected application request
+    S->>S: Enforce application authorization
+```
+
+**Private-key proof means proving possession, not sending the private key.** Each verifier checks the relevant identity, certificate trust, validity, and permitted use. When client-certificate authentication is required, a missing or invalid client credential must not grant access to the protected operation. See [TLS CertificateRequest](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.3.2).
+
+**Which fits the application?**
+
+- **Public support portal:** Server-authenticated HTTPS lets visitors connect without first receiving client certificates. Sarah's login and resource permissions are handled separately by the application and its IdP integration.
+- **Service-to-service communication:** mTLS can identify Order Service to Payment Service as well as the reverse. [Consul intentions](#consul-service-discovery-and-service-mesh) can then constrain permitted communication; the payment application still enforces business rules.
+- **Managed devices or partners:** mTLS can fit when client identities and certificate provisioning are controlled. Other authentication mechanisms may fit other deployments; microservices, devices, or zero-trust architecture do not universally require mTLS.
+
+Both approaches need appropriate server-certificate management. mTLS adds client-certificate issuance, renewal, trust, and removal/revocation responsibilities, often supported by automation. Choose from the identity requirements and the ability to operate that lifecycle.
+
+> **Recall:** TLS: “Prove which server you are.” mTLS: “Both endpoints prove their identities.” Neither alone decides every permitted business action.
+
 
 #### How It Works
 
@@ -1591,7 +1644,7 @@ In the food-delivery application, **Order Service** needs to call **Payment Serv
 2. **Check health:** Configured checks report instance health. Checks can test different things; a successful TCP check does not prove the complete payment workflow works.
 3. **Discover:** A client or proxy obtains eligible endpoints through the configured discovery integration. Consul supports DNS and HTTP API discovery; **DNS returns information rather than forwarding the payment request**.
 4. **Select and connect:** The client, proxy, or integrated load balancer selects a destination. Health-aware consumers can avoid unsuitable instances after health information and their own view update.
-5. **Secure the mesh path:** In the illustrated mesh deployment, Envoy proxies authenticate the participating services and protect proxy-to-proxy traffic with **mutual TLS (mTLS)**. The destination proxy enforces the configured service-access policy.
+5. **Secure the mesh path:** In the illustrated mesh deployment, Envoy proxies authenticate the participating services and protect proxy-to-proxy traffic with **[mutual TLS (mTLS)](#tls-vs-mtls-who-authenticates-whom)**. The destination proxy enforces the configured service-access policy.
 
 For example, an intention can allow `order → payment` while denying `reporting → payment`. Payment Service still checks whether the requested payment operation is valid and authorized. [Service discovery](https://developer.hashicorp.com/consul/docs/discover), [mesh intentions](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
 
