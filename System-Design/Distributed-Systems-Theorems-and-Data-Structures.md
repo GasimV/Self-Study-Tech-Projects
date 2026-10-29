@@ -588,7 +588,7 @@ Servers persist the current term, their vote, and log entries before the relevan
 
 - **Distributed databases and key-value stores:** Replicate commands and maintain an agreed history; etcd is a documented Raft-based example.
 - **Filesystem metadata services:** A Raft-based metadata service can agree on namespace updates or leadership; the specific filesystem's implementation must be checked.
-- **Cluster coordination and service discovery:** Agree on configuration, membership, service registrations, or locks. Consul uses Raft for its server state.
+- **Cluster coordination and service discovery:** Agree on configuration, membership, service registrations, or locks. [Consul](Distributed-Systems-Building-Blocks.md#consul-service-discovery-and-service-mesh) uses Raft for its server state.
 - **Replicated state machines and consensus-based services:** Apply an agreed sequence of commands to maintain consistent application state.
 - **Cloud infrastructure management:** Coordinate resource allocations or control-plane decisions; this is a possible use of Raft, not proof that every infrastructure platform uses it.
 

@@ -38,6 +38,7 @@
   - [Human and Workload Identities](#human-and-workload-identities)
     - [Example: Vault Supplies Database Credentials](#example-vault-supplies-database-credentials)
   - [Service Identities and AI Agents](#service-identities-and-ai-agents)
+    - [Consul and Service-to-Service Identity](#consul-and-service-to-service-identity)
 - [IAM Architecture and Failure Handling](#iam-architecture-and-failure-handling)
   - [Centralized Identity, Distributed Enforcement](#centralized-identity-distributed-enforcement)
   - [Failures and Operational Responsibilities](#failures-and-operational-responsibilities)
@@ -465,6 +466,13 @@ A service acting for a user may need both **its own identity** and the user's de
 If an AI agent proposes a refund, that proposal is not authorization. The application must enforce the requesting user's permissions, resource scope, and permitted tool operations outside the model. Generating a tool call does not justify a broad shared administrator credential. See [AI security controls](AI-Systems-Design.md#threats-and-controls).
 
 For service transport and certificates, see [TLS termination](Distributed-Systems-Building-Blocks.md#tls-termination) and [certificate authorities](Distributed-Systems-Building-Blocks.md#certificate-authorities-the-digital-notary). A trusted service certificate does not define every business permission.
+
+#### Consul and Service-to-Service Identity
+
+In the delivery platform, **Consul** can discover service endpoints and use a configured service mesh to authenticate communicating services with mTLS and enforce service-access rules called intentions. For example, Order Service may connect to Payment Service, while an unrelated service is denied. See [Consul service networking](Distributed-Systems-Building-Blocks.md#consul-service-discovery-and-service-mesh) for the architecture and limits.
+
+**Keycloak helps Sarah sign in; Vault controls access to credentials; Consul manages configured service connectivity.** The payment application still decides whether Sarah or a calling service may perform a particular operation. An authenticated mesh connection does not grant every end-user or business permission.
+
 
 ## IAM Architecture and Failure Handling
 

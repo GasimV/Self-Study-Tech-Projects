@@ -77,6 +77,10 @@
   - [Gateway Support for Microservices](#gateway-support-for-microservices)
   - [Routing vs. Aggregation](#routing-vs-aggregation)
   - [External vs. Internal Traffic](#external-vs-internal-traffic)
+  - [Consul: Service Discovery and Service Mesh](#consul-service-discovery-and-service-mesh)
+    - [Example: Order Service Calls Payment Service](#example-order-service-calls-payment-service)
+    - [Responsibilities and Practical Limits](#responsibilities-and-practical-limits)
+    - [Consul, Keycloak, Vault, and Application Permissions](#consul-keycloak-vault-and-application-permissions)
 - [Cloud-Native Implementations](#cloud-native-implementations)
   - [Managed Cloud Services](#managed-cloud-services)
   - [Kubernetes Gateways and Ingress](#kubernetes-gateways-and-ingress)
@@ -1559,6 +1563,73 @@ Aggregation is **optional**, not what every routed request does. Complex composi
 
 A **service mesh** can supply service-to-service transport security, routing, and telemetry. It is not interchangeable with a public API-management platform, although a mesh may include ingress gateways. Neither approach removes application-level correctness requirements. See the [Istio ingress-gateway example](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/).
 
+### Consul: Service Discovery and Service Mesh
+
+**HashiCorp Consul** is service-networking software for discovering services and, when configured as a service mesh, securing and controlling their communication. It can connect workloads on Kubernetes, virtual machines, and bare-metal servers. Discovery and mesh deployment are separate choices; registering a service alone does not encrypt its traffic. [Consul overview](https://developer.hashicorp.com/consul/docs/intro)
+
+#### Example: Order Service Calls Payment Service
+
+In the food-delivery application, **Order Service** needs to call **Payment Service**, which has three instances. Instances can be replaced or scaled without keeping permanent addresses in Order Service's code.
+
+1. **Register:** Agents or platform integrations register Payment Service instances and their endpoints in the Consul service catalog.
+2. **Check health:** Configured checks report instance health. Checks can test different things; a successful TCP check does not prove the complete payment workflow works.
+3. **Discover:** A client or proxy obtains eligible endpoints through the configured discovery integration. Consul supports DNS and HTTP API discovery; **DNS returns information rather than forwarding the payment request**.
+4. **Select and connect:** The client, proxy, or integrated load balancer selects a destination. Health-aware consumers can avoid unsuitable instances after health information and their own view update.
+5. **Secure the mesh path:** In the illustrated mesh deployment, Envoy proxies authenticate the participating services and protect proxy-to-proxy traffic with **mutual TLS (mTLS)**. The destination proxy enforces the configured service-access policy.
+
+For example, an intention can allow `order → payment` while denying `reporting → payment`. Payment Service still checks whether the requested payment operation is valid and authorized. [Service discovery](https://developer.hashicorp.com/consul/docs/discover), [mesh intentions](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
+
+```mermaid
+flowchart LR
+    ORDER["Order Service"] --> OP["Order proxy<br/>Envoy"]
+    OP -->|"mTLS"| PP["Payment proxy<br/>Envoy"]
+    PP --> PAYMENT["Payment Service"]
+
+    CONSUL["Consul control plane<br/>Catalog, health, policies"]
+    CONSUL -.->|"Discovery / configuration"| OP
+    CONSUL -.->|"Discovery / configuration"| PP
+
+    classDef control fill:#eef2ff,stroke:#8795b5,color:#111
+    classDef service fill:#ecf8f0,stroke:#80a98d,color:#111
+    class CONSUL control
+    class ORDER,OP,PP,PAYMENT service
+```
+
+**Solid arrows** show an application-call path through the **data plane**. **Dotted arrows** show control-plane information supplied through Consul integrations; they do not depict a query on every call or every registration/check message. The diagram shows one selected Payment Service instance.
+
+Consul servers do **not** forward each ordinary application request. The mTLS label applies to the proxy-to-proxy segment; it does not claim encryption on every local or bypass path. Applications must be enrolled and configured appropriately, with network controls that support the intended path.
+
+#### Responsibilities and Practical Limits
+
+| Capability | Consul's contribution | What still needs design |
+| --- | --- | --- |
+| **Service discovery** | Catalog of registered endpoints, queried through DNS/API integrations | Registration accuracy, lookup behavior, caching, and destination selection |
+| **Health checking** | Update health information from configured checks | Appropriate checks and consumers that act on their results; detection is not instantaneous |
+| **Service mesh** | Supply configuration and identity-based transport security for participating workloads | Proxy/workload configuration, certificate lifecycle, network reachability, and bypass prevention |
+| **Intentions** | Allow/deny configured service-to-service connections or requests | Appropriate rules and application-level business authorization |
+| **Configuration key-value (KV) store** | Store nonsecret settings and metadata, such as `payment/request_timeout_ms = 2000` | Applications or integrations must read/watch and apply changes; existing environment variables do not update themselves |
+| **Consul access controls** | Access Control Lists (ACLs) protect supported Consul API and KV operations | Configure access and protect credentials; these controls have a different scope from mesh intentions |
+
+Consul's KV store is intended for configuration and metadata, rather than replacing a general application database. **Each datacenter has its own KV store, without built-in replication between datacenters.** A watch or template integration can consume changes, but does not guarantee that every application can reload every setting without a restart. Use a secrets-management system for sensitive credentials. [KV overview](https://developer.hashicorp.com/consul/docs/automate/kv), [KV API and datacenter scope](https://developer.hashicorp.com/consul/api-docs/kv)
+
+**Distributed does not mean leaderless.** Consul server nodes use [Raft](Distributed-Systems-Theorems-and-Data-Structures.md#raft) to agree on server state; new committed updates require a server quorum. Agent gossip supports membership and failure information, a different responsibility from Raft log agreement. [Consul consensus](https://developer.hashicorp.com/consul/docs/concept/consensus), [control-plane architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
+
+Health checks, cached discovery results, and policy propagation have delays. In particular, **L4 intentions govern new connections; changing a rule does not automatically sever an existing connection**. These mechanisms improve coordination but cannot guarantee zero downtime or replace routing, firewalls, and application recovery. [Intention enforcement](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
+
+#### Consul, Keycloak, Vault, and Application Permissions
+
+| Component | Main responsibility in the food-delivery example |
+| --- | --- |
+| **Keycloak** | Authenticate Sarah and support employee application sign-in. |
+| **Vault** | Control access to secrets and issue permitted credentials. |
+| **Consul** | Discover service endpoints and manage configured service-to-service connectivity. |
+| **Application** | Enforce resource-level permissions and business rules for the requested operation. |
+
+These responsibilities can work together; deploying one product does not automatically deploy or configure the others. See the [IAM service-identity explanation](Identity-and-Access-Management.md#consul-and-service-to-service-identity) and [Vault credential example](Identity-and-Access-Management.md#example-vault-supplies-database-credentials).
+
+> **Recall:** Discovery finds an eligible endpoint; mesh proxies secure and control the configured connection; the application decides whether the business action is permitted.
+
+
 ## Cloud-Native Implementations
 
 Cloud platforms offer several complementary entry-point services. **A managed API gateway, an L7 load balancer, a WAF, and a CDN are not equivalent products**, even when integrated in one architecture.
@@ -1739,3 +1810,10 @@ For system-design interviews, be prepared to explain **placement, request flow, 
 - [Portkey: Open-Source AI Gateway](https://github.com/Portkey-AI/gateway)
 - [Agent Router: Formerly Envoy AI Gateway](https://theagentrouter.ai/docs/)
 - [Kong: AI Gateway](https://developer.konghq.com/ai-gateway/)
+- [HashiCorp: Consul Overview](https://developer.hashicorp.com/consul/docs/intro)
+- [HashiCorp: Consul Service Discovery](https://developer.hashicorp.com/consul/docs/discover)
+- [HashiCorp: Consul Service Mesh Intentions](https://developer.hashicorp.com/consul/docs/secure-mesh/intention)
+- [HashiCorp: Consul Configuration KV Store](https://developer.hashicorp.com/consul/docs/automate/kv)
+- [HashiCorp: Consul KV API and Datacenter Scope](https://developer.hashicorp.com/consul/api-docs/kv)
+- [HashiCorp: Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
+- [HashiCorp: Consul Control-Plane Architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
