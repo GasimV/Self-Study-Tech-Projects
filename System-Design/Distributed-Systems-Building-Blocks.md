@@ -81,6 +81,7 @@
   - [Consul: Service Discovery and Service Mesh](#consul-service-discovery-and-service-mesh)
     - [Why Microservices Introduce These Challenges](#why-microservices-introduce-these-challenges)
     - [Example: Order Service Calls Payment Service](#example-order-service-calls-payment-service)
+    - [Illustrative Consul Configuration](#illustrative-consul-configuration)
     - [Responsibilities and Practical Limits](#responsibilities-and-practical-limits)
     - [Consul, Keycloak, Vault, and Application Permissions](#consul-keycloak-vault-and-application-permissions)
 - [Cloud-Native Implementations](#cloud-native-implementations)
@@ -1272,7 +1273,7 @@ When **NGINX terminates TLS**, NGINX is the client-facing TLS endpoint in this e
 
 #### TLS vs. mTLS: Who Authenticates Whom?
 
-**Mutual TLS (mTLS) is TLS with mutual authentication, not a separate TLS version.** Compare ordinary **server-authenticated TLS** with **certificate-based mTLS**: both protect data in transit, while mTLS also authenticates the client using its certificate and proof of the matching private key. It does not inherently use stronger encryption. [TLS authentication](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4)
+**TLS encrypts the connection. In usual HTTPS, the client checks the server's certificate. With mTLS, the server also checks the client's certificate.** This is mutual authentication within TLS, not a separate TLS version or automatically stronger encryption. [TLS authentication](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4)
 
 | Question | Server-authenticated TLS | Certificate-based mTLS |
 | --- | --- | --- |
@@ -1311,13 +1312,17 @@ sequenceDiagram
 
 **Private-key proof means proving possession, not sending the private key.** Each verifier checks the relevant identity, certificate trust, validity, and permitted use. When client-certificate authentication is required, a missing or invalid client credential must not grant access to the protected operation. See [TLS CertificateRequest](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.3.2).
 
-**Which fits the application?**
+**When would I use each one?**
 
-- **Public support portal:** Server-authenticated HTTPS lets visitors connect without first receiving client certificates. Sarah's login and resource permissions are handled separately by the application and its IdP integration.
-- **Service-to-service communication:** mTLS can identify Order Service to Payment Service as well as the reverse. [Consul intentions](#consul-service-discovery-and-service-mesh) can then constrain permitted communication; the payment application still enforces business rules.
-- **Managed devices or partners:** mTLS can fit when client identities and certificate provisioning are controlled. Other authentication mechanisms may fit other deployments; microservices, devices, or zero-trust architecture do not universally require mTLS.
+| Situation | Usual choice | Why |
+| --- | --- | --- |
+| **Sarah opens the public support portal** | Server-authenticated TLS (HTTPS) | Her browser checks the website. She signs in through the app/IdP; she does not need a personal client certificate. |
+| **Order Service calls Payment Service** | mTLS when both services need certificate identities | Each service proves its identity. [Consul intentions](#consul-service-discovery-and-service-mesh) can allow the connection; the app still checks the payment. |
+| **A managed device or partner connects to an API** | mTLS when you can issue and manage client certificates | The server can identify the approved client from its certificate. |
 
-Both approaches need appropriate server-certificate management. mTLS adds client-certificate issuance, renewal, trust, and removal/revocation responsibilities, often supported by automation. Choose from the identity requirements and the ability to operate that lifecycle.
+These are common choices, not mandatory rules. A service API can also use TLS with a suitable token scheme; zero trust does not universally require mTLS.
+
+Both choices need server-certificate care. mTLS adds client certificates to issue, renew, trust, and revoke. Automation helps manage that work.
 
 > **Recall:** TLS: “Prove which server you are.” mTLS: “Both endpoints prove their identities.” Neither alone decides every permitted business action.
 
@@ -1679,6 +1684,106 @@ flowchart LR
 
 Consul servers do **not** forward each ordinary application request. The mTLS label applies to the proxy-to-proxy segment; it does not claim encryption on every local or bypass path. Applications must be enrolled and configured appropriately, with network controls that support the intended path.
 
+#### Illustrative Consul Configuration
+
+Here are three small JSON/CLI examples for the same Order → Payment system. They assume Consul is already running and the CLI has the required permissions. The commands have the same form in CMD, PowerShell, and Linux/macOS terminals when the Consul CLI is available.
+
+**1. Register Payment Service and check its health.**
+
+Example file: `payment.json`. Assume Payment Service and its Consul agent run on the same host, with the app listening on port `8080`.
+
+```json
+{
+  "service": {
+    "id": "payment-1",
+    "name": "payment",
+    "port": 8080,
+    "check": {
+      "http": "http://127.0.0.1:8080/health",
+      "interval": "10s",
+      "timeout": "2s"
+    },
+    "connect": {
+      "sidecar_service": {}
+    }
+  }
+}
+```
+
+```text
+consul services register payment.json
+```
+
+| Setting | Simple meaning |
+| --- | --- |
+| `id` | This instance is called `payment-1`. Other instances need their own IDs on that agent. |
+| `name` | The shared service name is `payment`. |
+| `port` | The application listens on port `8080`. |
+| `http` | The agent calls the app's health endpoint on this host. |
+| `interval` / `timeout` | Check every 10 seconds; allow up to two seconds for a response. |
+| `sidecar_service` | Register a sidecar-proxy definition for mesh use. |
+
+**Expected:** Consul registers the instance. A `200` health response makes the HTTP check passing; a connection failure makes it critical after the check runs. Registration success alone does not mean the app is healthy.
+
+This file **does not start Payment Service or Envoy**. The sidecar proxy must also be started and connected to Consul. Remote deployments need reachable service/proxy addresses; the check's `127.0.0.1` refers only to the agent's own host. See [service definitions](https://developer.hashicorp.com/consul/docs/reference/service), [health checks](https://developer.hashicorp.com/consul/docs/register/health-check/vm), and [service registration](https://developer.hashicorp.com/consul/commands/services/register).
+
+**2. Allow Order Service to call Payment Service.**
+
+This example assumes `order` and `payment` already have working mesh proxies, certificates, and the required connection settings.
+
+Example file: `payment-intentions.json`.
+
+```json
+{
+  "Kind": "service-intentions",
+  "Name": "payment",
+  "Sources": [
+    { "Name": "order", "Action": "allow" },
+    { "Name": "*", "Action": "deny" }
+  ]
+}
+```
+
+```text
+consul config write payment-intentions.json
+```
+
+`Name: "payment"` identifies the destination. `Sources` lists callers. The specific `order` rule takes precedence over the wildcard `*` rule.
+
+| New mesh connection | Expected policy result |
+| --- | --- |
+| `order → payment` | Allowed |
+| `reporting → payment` | Denied by the wildcard rule |
+
+This policy controls service communication. Payment Service still checks whether a particular payment is allowed. See [intention configuration](https://developer.hashicorp.com/consul/docs/reference/config-entry/service-intentions) and [applying configuration entries](https://developer.hashicorp.com/consul/commands/config/write).
+
+**3. Write and read a maintenance flag.**
+
+```text
+consul kv put maintenance_mode true
+```
+
+Expected output:
+
+```text
+Success! Data written to: maintenance_mode
+```
+
+```text
+consul kv get maintenance_mode
+```
+
+Expected output:
+
+```text
+true
+```
+
+The value is stored as text. The application must read or watch it, interpret it, and apply its maintenance behavior. **Writing the key does not stop writes by itself.** See [KV put](https://developer.hashicorp.com/consul/commands/kv/put), [KV get](https://developer.hashicorp.com/consul/commands/kv/get), and the maintenance-mode walkthrough below.
+
+> **Remember:** Register tells Consul **where the service is**. A check reports **how it is doing**. An intention says **who may connect**. A KV value supplies **a setting the app must use**.
+
+
 #### Responsibilities and Practical Limits
 
 | Capability | Consul's contribution | What still needs design |
@@ -1912,3 +2017,10 @@ For system-design interviews, be prepared to explain **placement, request flow, 
 - [HashiCorp: Consul KV API and Datacenter Scope](https://developer.hashicorp.com/consul/api-docs/kv)
 - [HashiCorp: Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
 - [HashiCorp: Consul Control-Plane Architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
+- [HashiCorp: Consul Service Definition Reference](https://developer.hashicorp.com/consul/docs/reference/service)
+- [HashiCorp: Consul HTTP and Other Health Checks](https://developer.hashicorp.com/consul/docs/register/health-check/vm)
+- [HashiCorp: Register Services from a File](https://developer.hashicorp.com/consul/commands/services/register)
+- [HashiCorp: Service Intentions Configuration Reference](https://developer.hashicorp.com/consul/docs/reference/config-entry/service-intentions)
+- [HashiCorp: Write Configuration Entries](https://developer.hashicorp.com/consul/commands/config/write)
+- [HashiCorp: Write KV Values](https://developer.hashicorp.com/consul/commands/kv/put)
+- [HashiCorp: Read KV Values](https://developer.hashicorp.com/consul/commands/kv/get)
