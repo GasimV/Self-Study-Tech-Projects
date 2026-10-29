@@ -31,6 +31,7 @@
   - [Interpreting Success, Refusal, and Timeout](#interpreting-success-refusal-and-timeout)
   - [Useful Netcat Variations](#useful-netcat-variations)
   - [Linux, macOS, and Windows Comparison](#linux-macos-and-windows-comparison)
+  - [Using Telnet from Windows](#using-telnet-from-windows)
   - [Why UDP Checks Need Different Interpretation](#why-udp-checks-need-different-interpretation)
 - [Study Order](#study-order)
 - [Recall Summary](#recall-summary)
@@ -475,6 +476,7 @@ The **operating system and installed tools** determine availability; PowerShell 
 | **Windows** | Windows PowerShell | `Test-NetConnection -ComputerName 192.0.2.77 -Port 1521` | Uses the Windows `NetTCPIP` module. |
 | **Windows** | CMD invoking Windows PowerShell | `powershell.exe -NoProfile -Command "Test-NetConnection -ComputerName 192.0.2.77 -Port 1521"` | CMD launches PowerShell to perform the test; this is not a native CMD cmdlet. |
 | **Windows** | PowerShell or CMD, Ncat | `ncat -vz -w 3 192.0.2.77 1521` | Requires Nmap's Ncat to be installed and available on the executable search path. |
+| **Windows** | CMD or PowerShell, Telnet Client | `telnet 192.0.2.77 1521` | Requires the optional Telnet Client; opens an interactive TCP session rather than a zero-I/O check. |
 
 **In Windows PowerShell:**
 
@@ -505,6 +507,30 @@ ncat -vz -w 3 192.0.2.77 1521
 ```
 
 This selects TCP by default and sets a three-second connection timeout. Ncat is a separate implementation; consult its own options rather than assuming every `nc` flag matches. [Ncat reference](https://nmap.org/book/ncat-man.html)
+
+### Using Telnet from Windows
+
+The optional **Windows Telnet Client** can run from CMD or PowerShell when installed/enabled:
+
+```cmd
+telnet 192.0.2.77 1521
+```
+
+Here Telnet is used to attempt a TCP connection to the specified port. The Oracle listener does not need to be a Telnet server for this initial connection test, but it will not understand an interactive Telnet session as a database login. If the port is omitted, Telnet defaults to TCP port 23. [Microsoft Telnet documentation](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/telnet)
+
+| What you see | Interpretation |
+| --- | --- |
+| A blank screen after connecting | Can indicate an established TCP connection with no displayed application response; it does not establish database health. |
+| The connection closes immediately | The endpoint may have accepted TCP and then closed it; that alone does not prove why. |
+| “Could not open connection” | The connection attempt failed; investigate the endpoint, route, and filtering. |
+| “telnet is not recognized” | The client may not be installed/enabled or available on the executable search path. |
+
+**Unlike `nc -z`, Telnet opens an interactive session and may exchange Telnet negotiation data.** It does not validate Oracle credentials, perform a database query, or establish a TLS connection through this command.
+
+To exit using the usual escape key, press **Ctrl+]** to reach the Telnet client prompt, type **`quit`**, then press **Enter**. If the server has already closed the session, you may already be back at the shell. [Telnet quit command](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/telnet-quit)
+
+For a simple Windows TCP diagnostic with explicit success/failure output, use the `Test-NetConnection` example above; Telnet is an additional option, not a prerequisite for it.
+
 
 ### Why UDP Checks Need Different Interpretation
 
@@ -558,3 +584,5 @@ A meaningful UDP test generally needs an appropriate application-level response 
 - [Microsoft: Test-NetConnection](https://learn.microsoft.com/en-us/powershell/module/nettcpip/test-netconnection).
 - [Microsoft: Windows PowerShell Executable Arguments](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1).
 - [Oracle: Oracle Net Listener Overview](https://docs.oracle.com/en/database/oracle/oracle-database/26/netag/overview-oracle-net-listener.html).
+- [Microsoft: Telnet Client Syntax](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/telnet).
+- [Microsoft: Telnet Quit Command](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/telnet-quit).
