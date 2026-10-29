@@ -26,6 +26,12 @@
 - [Firewalls](#firewalls)
   - [Location and Inspection Capabilities](#location-and-inspection-capabilities)
   - [Firewalls, Proxies, and Application Permissions](#firewalls-proxies-and-application-permissions)
+- [Practical Connectivity Checks with Netcat](#practical-connectivity-checks-with-netcat)
+  - [Basic TCP Check](#basic-tcp-check)
+  - [Interpreting Success, Refusal, and Timeout](#interpreting-success-refusal-and-timeout)
+  - [Useful Netcat Variations](#useful-netcat-variations)
+  - [Linux, macOS, and Windows Comparison](#linux-macos-and-windows-comparison)
+  - [Why UDP Checks Need Different Interpretation](#why-udp-checks-need-different-interpretation)
 - [Study Order](#study-order)
 - [Recall Summary](#recall-summary)
 - [Related Notes](#related-notes)
@@ -410,6 +416,105 @@ Encrypted content is not automatically visible to every firewall. HTTP inspectio
 
 One product may perform several roles. A permitted TCP connection does not authorize every database query; a WAF does not know every business rule. **Firewall policy complements TLS, authentication, and application permissions.** See [reverse proxies](Distributed-Systems-Building-Blocks.md#reverse-proxy-vs-load-balancer) and [authorization in practice](Identity-and-Access-Management.md#authorization-in-practice).
 
+## Practical Connectivity Checks with Netcat
+
+**Netcat (`nc`) is a command-line networking utility**, commonly used on Linux and macOS. It can test TCP connection establishment, exchange data, and listen for connections. Windows does not include `nc` by default; Windows PowerShell provides `Test-NetConnection`, and separately installed **Nmap Ncat (`ncat`)** offers a Netcat-style tool.
+
+All remote addresses and names below are **documentation placeholders**, not reachable test services. Replace them with the intended endpoint when using the commands. These examples do not configure networking or run database queries.
+
+### Basic TCP Check
+
+```bash
+nc -vz 192.0.2.77 1521
+```
+
+| Component | Meaning |
+| --- | --- |
+| `nc` | Run Netcat. |
+| `-v` | Show verbose diagnostic output. |
+| `-z` | Check connection status without sending an application payload; do not start an interactive data session. |
+| `192.0.2.77` | Destination IPv4 address. |
+| `1521` | Destination port; TCP is the default transport for this command. |
+
+**No application payload does not mean no network traffic.** A TCP connection check still exchanges handshake packets and then closes. It does not perform a database login, a TLS handshake, or a query. See the [TCP connection explanation](Distributed-Systems-Building-Blocks.md#tcp-connection-a-simple-mental-model).
+
+TCP port **1521** is the default Oracle Net listener port, but deployments can use another port. An accepting listener is not proof that a requested database service is available or that credentials will work. A service name printed beside a port is not, by itself, verified identification of the software. [Oracle listener overview](https://docs.oracle.com/en/database/oracle/oracle-database/26/netag/overview-oracle-net-listener.html)
+
+### Interpreting Success, Refusal, and Timeout
+
+Output wording varies by implementation. Interpret these as **connection-test outcomes**, not complete application-health diagnoses.
+
+| Typical result | What it establishes | What it does not establish |
+| --- | --- | --- |
+| **Succeeded** | This client established a TCP connection to the endpoint at that time. | The database is usable, authentication succeeds, or no firewall exists. A proxy or other intermediary may accept the connection. |
+| **Connection refused** | The attempt was actively rejected. Often no service is listening; a firewall can also reject it. | That the database process itself was necessarily the source of the rejection. |
+| **Connection timed out** | No connection completed before the applicable timeout. | One definite cause: filtering, routing problems, packet loss, or an unavailable host are possibilities. |
+
+A successful test from your laptop does not prove the application server has the same connectivity. Source address, network path, policy, destination, and time can differ.
+
+### Useful Netcat Variations
+
+| Purpose | Example | Implementation note |
+| --- | --- | --- |
+| Basic TCP test | `nc -vz 192.0.2.77 1521` | Common Netcat syntax. |
+| Numeric addressing and a three-second connection timeout | `nc -nvz -w 3 192.0.2.77 1521` | OpenBSD-style `nc`: `-n` avoids name/service lookups; `-w` sets the timeout. |
+| macOS TCP connection timeout | `nc -nvz -G 3 192.0.2.77 1521` | Apple's supplied `nc` uses `-G` for this timeout; do not assume the flag has the same meaning in another implementation. |
+| Include hostname resolution | `nc -vz db.example.com 1521` | A name-resolution failure is different from a resolved endpoint refusing the connection. |
+| Force IPv4 | `nc -4 -vz 192.0.2.77 1521` | Useful when separating IPv4 from IPv6 behavior. |
+
+Netcat implementations differ. Check the installed tool with `nc -h` or `man nc`; flags and timeout behavior are not universally interchangeable. See the [OpenBSD manual](https://man.openbsd.org/nc) and [Apple's Netcat source](https://github.com/apple-oss-distributions/netcat/blob/main/netcat.c).
+
+### Linux, macOS, and Windows Comparison
+
+The **operating system and installed tools** determine availability; PowerShell and Command Prompt (CMD) are shells in which commands run. Netcat is not inherently restricted to Linux/macOS, but installing Ncat on Windows does not automatically create a command named `nc`.
+
+| Operating system | Shell / tool | Equivalent TCP check | Availability |
+| --- | --- | --- | --- |
+| **Linux** | Terminal, Netcat | `nc -vz 192.0.2.77 1521` | Requires a Netcat implementation; not installed in every distribution/image. |
+| **macOS** | Terminal, Netcat | `nc -vz 192.0.2.77 1521` | Commonly supplied by macOS; consult the local manual for its options. |
+| **Windows** | Windows PowerShell | `Test-NetConnection -ComputerName 192.0.2.77 -Port 1521` | Uses the Windows `NetTCPIP` module. |
+| **Windows** | CMD invoking Windows PowerShell | `powershell.exe -NoProfile -Command "Test-NetConnection -ComputerName 192.0.2.77 -Port 1521"` | CMD launches PowerShell to perform the test; this is not a native CMD cmdlet. |
+| **Windows** | PowerShell or CMD, Ncat | `ncat -vz -w 3 192.0.2.77 1521` | Requires Nmap's Ncat to be installed and available on the executable search path. |
+
+**In Windows PowerShell:**
+
+```powershell
+Test-NetConnection -ComputerName 192.0.2.77 -Port 1521
+```
+
+For a successful TCP test, the relevant output field is:
+
+```text
+TcpTestSucceeded : True
+```
+
+`False` means the TCP connection test did not succeed; inspect other diagnostics rather than assuming one cause. A ping failure does not necessarily mean the TCP test fails, because the two use different protocols and may face different policies.
+
+**From CMD:**
+
+```cmd
+powershell.exe -NoProfile -Command "Test-NetConnection -ComputerName 192.0.2.77 -Port 1521"
+```
+
+Typing `Test-NetConnection` directly into CMD does not invoke a PowerShell cmdlet. The command above starts Windows PowerShell without loading profile scripts. `Test-NetConnection` is not a general UDP probe or a database-authentication check. See [Microsoft's TCP-test documentation](https://learn.microsoft.com/en-us/powershell/module/nettcpip/test-netconnection) and [PowerShell executable arguments](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1).
+
+If Ncat is installed, the following executable command works from either Windows shell:
+
+```text
+ncat -vz -w 3 192.0.2.77 1521
+```
+
+This selects TCP by default and sets a three-second connection timeout. Ncat is a separate implementation; consult its own options rather than assuming every `nc` flag matches. [Ncat reference](https://nmap.org/book/ncat-man.html)
+
+### Why UDP Checks Need Different Interpretation
+
+A command using `nc -uvz` selects UDP, but UDP has **no TCP-style connection handshake**. Its apparent success is not reliable evidence that the remote application received or processed anything. OpenBSD explicitly notes that its `-uz` scanning combination reports success irrespective of the target's state. Other implementations may behave differently. [OpenBSD UDP caveat](https://man.openbsd.org/nc#CAVEATS)
+
+A meaningful UDP test generally needs an appropriate application-level response or other supporting evidence. Relate this to the [sensor example](#worked-example-a-sensor-sends-a-temperature-reading): successful sending does not establish receipt.
+
+> **A reachable port is the first checkpoint. A working application requires successful protocol negotiation, authentication, authorization, and the intended operation, as applicable to that application.**
+
+
 ## Study Order
 
 1. Learn addresses, ports, and the OSI/TCP/IP responsibilities.
@@ -447,3 +552,9 @@ One product may perform several roles. A permitted TCP connection does not autho
 - [RFC 9112 — HTTP/1.1](https://datatracker.ietf.org/doc/html/rfc9112); [RFC 9113 — HTTP/2](https://datatracker.ietf.org/doc/html/rfc9113); [RFC 9114 — HTTP/3](https://datatracker.ietf.org/doc/html/rfc9114).
 - [NIST SP 800-41 Rev. 1 — Guidelines on Firewalls and Firewall Policy](https://csrc.nist.gov/pubs/sp/800/41/r1/final).
 - [AWS VPC — Subnet CIDR Blocks](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html) — an example of platform-specific assignment rules.
+- [OpenBSD: Netcat Manual](https://man.openbsd.org/nc).
+- [Apple: Netcat Source and Platform Options](https://github.com/apple-oss-distributions/netcat/blob/main/netcat.c).
+- [Nmap: Ncat Reference Guide](https://nmap.org/book/ncat-man.html).
+- [Microsoft: Test-NetConnection](https://learn.microsoft.com/en-us/powershell/module/nettcpip/test-netconnection).
+- [Microsoft: Windows PowerShell Executable Arguments](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1).
+- [Oracle: Oracle Net Listener Overview](https://docs.oracle.com/en/database/oracle/oracle-database/26/netag/overview-oracle-net-listener.html).
