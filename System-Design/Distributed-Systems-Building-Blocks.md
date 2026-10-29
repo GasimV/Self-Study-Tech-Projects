@@ -1281,7 +1281,7 @@ When **NGINX terminates TLS**, NGINX is the client-facing TLS endpoint in this e
 | **Server verifies a client certificate?** | No | Yes |
 | **Certificates used for endpoint authentication?** | Server certificate | Server and client certificates |
 | **Application traffic protected in transit?** | Yes | Yes |
-| **Typical example** | Sarah's browser → support portal | Order Service → Payment Service |
+| **Primary use cases** | Public websites and consumer-facing apps | Microservices, internal APIs, and managed IoT devices |
 | **Application authorization still required?** | Yes | Yes |
 
 Without a client certificate, the client is **not certificate-authenticated by TLS**; it can still authenticate at the application layer using a login session or token. For standardized user sign-in, [OIDC](Identity-and-Access-Management.md#oidc-login-walkthrough) supplies an identity layer on OAuth 2.0; OAuth alone is not a standardized end-user login protocol.
@@ -1312,15 +1312,9 @@ sequenceDiagram
 
 **Private-key proof means proving possession, not sending the private key.** Each verifier checks the relevant identity, certificate trust, validity, and permitted use. When client-certificate authentication is required, a missing or invalid client credential must not grant access to the protected operation. See [TLS CertificateRequest](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.3.2).
 
-**When would I use each one?**
+**Simple selection rule:** Use usual HTTPS when visitors need to verify your website and sign in through the application. Consider mTLS when both endpoints must prove their identities with certificates—for example, two internal services or a managed device and its API.
 
-| Situation | Usual choice | Why |
-| --- | --- | --- |
-| **Sarah opens the public support portal** | Server-authenticated TLS (HTTPS) | Her browser checks the website. She signs in through the app/IdP; she does not need a personal client certificate. |
-| **Order Service calls Payment Service** | mTLS when both services need certificate identities | Each service proves its identity. [Consul intentions](#consul-service-discovery-and-service-mesh) can allow the connection; the app still checks the payment. |
-| **A managed device or partner connects to an API** | mTLS when you can issue and manage client certificates | The server can identify the approved client from its certificate. |
-
-These are common choices, not mandatory rules. A service API can also use TLS with a suitable token scheme; zero trust does not universally require mTLS.
+These are common choices, not mandatory rules. A service API can also use TLS with a suitable token scheme. **mTLS can support zero-trust designs, but zero trust is a broader approach, not a protocol that always requires mTLS.**
 
 Both choices need server-certificate care. mTLS adds client certificates to issue, renew, trust, and revoke. Automation helps manage that work.
 
@@ -1686,7 +1680,26 @@ Consul servers do **not** forward each ordinary application request. The mTLS la
 
 #### Illustrative Consul Configuration
 
-Here are three small JSON/CLI examples for the same Order → Payment system. They assume Consul is already running and the CLI has the required permissions. The commands have the same form in CMD, PowerShell, and Linux/macOS terminals when the Consul CLI is available.
+**Consul accepts HCL (HashiCorp Configuration Language) and JSON configuration files.** HCL supports comments and is often easier to edit by hand; JSON is convenient for generated files. Both are supported—HCL is a readability choice, not a requirement. See [agent configuration](https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file).
+
+**First, distinguish the files:** Agent settings configure the Consul process. A service definition registers an application. An intention defines who may connect to it.
+
+**Basic agent settings in HCL:** Example `agent.hcl` for a client agent joining an existing cluster:
+
+```hcl
+node_name  = "payment-host"  # Unique agent name
+datacenter = "dc1"           # Must match the cluster
+server     = false          # Client agent, not a Consul server
+data_dir   = "consul/data"   # Writable local state directory
+log_level  = "INFO"
+
+# Illustrative address: replace with a reachable cluster member.
+retry_join = ["consul-server.internal.example"]
+```
+
+The agent reads these settings at startup. This is a teaching excerpt; deployment-specific addresses, permissions, and security settings must be supplied separately. `.example` is a documentation placeholder.
+
+The following service and policy examples show **equivalent JSON and HCL** for the same Order → Payment system. Choose either format for each file. They assume Consul is already running and the CLI has the required permissions. The commands have the same form in CMD, PowerShell, and Linux/macOS terminals when the Consul CLI is available.
 
 **1. Register Payment Service and check its health.**
 
@@ -1712,6 +1725,32 @@ Example file: `payment.json`. Assume Payment Service and its Consul agent run on
 
 ```text
 consul services register payment.json
+```
+
+**Same service definition in HCL:** `payment.hcl`.
+
+```hcl
+service {
+  id   = "payment-1"
+  name = "payment"
+  port = 8080
+
+  check {
+    http     = "http://127.0.0.1:8080/health"
+    interval = "10s"
+    timeout  = "2s"
+  }
+
+  connect {
+    sidecar_service {} # Register the proxy definition
+  }
+}
+```
+
+Use this command instead of the JSON registration command:
+
+```text
+consul services register payment.hcl
 ```
 
 | Setting | Simple meaning |
@@ -1746,6 +1785,23 @@ Example file: `payment-intentions.json`.
 
 ```text
 consul config write payment-intentions.json
+```
+
+**Same policy in HCL:** `payment-intentions.hcl`.
+
+```hcl
+Kind = "service-intentions"
+Name = "payment" # Destination service
+Sources = [
+  { Name = "order", Action = "allow" },
+  { Name = "*",     Action = "deny" }
+]
+```
+
+Use this command instead of the JSON policy command:
+
+```text
+consul config write payment-intentions.hcl
 ```
 
 `Name: "payment"` identifies the destination. `Sources` lists callers. The specific `order` rule takes precedence over the wildcard `*` rule.
@@ -2018,6 +2074,7 @@ For system-design interviews, be prepared to explain **placement, request flow, 
 - [HashiCorp: Consul Consensus](https://developer.hashicorp.com/consul/docs/concept/consensus)
 - [HashiCorp: Consul Control-Plane Architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
 - [HashiCorp: Consul Service Definition Reference](https://developer.hashicorp.com/consul/docs/reference/service)
+- [HashiCorp: Consul Agent Configuration in HCL and JSON](https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file)
 - [HashiCorp: Consul HTTP and Other Health Checks](https://developer.hashicorp.com/consul/docs/register/health-check/vm)
 - [HashiCorp: Register Services from a File](https://developer.hashicorp.com/consul/commands/services/register)
 - [HashiCorp: Service Intentions Configuration Reference](https://developer.hashicorp.com/consul/docs/reference/config-entry/service-intentions)
