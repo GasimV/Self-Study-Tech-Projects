@@ -27,6 +27,7 @@
   - [Late Fusion](#late-fusion)
   - [Early Fusion](#early-fusion)
   - [Speech Integration: Adapters, Native Models, and Full-Duplex Dialogue](#speech-integration)
+    - [LLaMA-Omni and LLaMA-Omni 2: Modular Speech Integration](#llama-omni-and-llama-omni-2)
     - [GPT-4o: Native Processing and Disclosure Limits](#gpt-4o-native-processing)
     - [Moshi, Mimi, and PersonaPlex](#moshi-mimi-and-personaplex)
     - [Thinker–Talker and External Supervisors](#thinker-talker-and-external-supervisors)
@@ -679,6 +680,72 @@ The examples below describe different tasks and disclosure levels. They are not 
 
 *Source review: October 31, 2026. Architecture statements refer to the cited paper or implementation, not every product bearing a related model-family name.*
 
+<a id="llama-omni-and-llama-omni-2"></a>
+
+#### **LLaMA-Omni and LLaMA-Omni 2: Modular Speech Integration**
+
+How can an instruction-tuned text LLM acquire both speech input and speech output? The LLaMA-Omni family offers a concrete modular example. Its value here is the connection between input adaptation and output generation: the system must make acoustic information understandable to the LLM, then turn the answer into speech incrementally. Those are different alignment problems, even though the user experiences one conversation.
+
+**The original model.** [LLaMA-Omni](https://arxiv.org/abs/2409.06666) uses Whisper-large-v3's encoder, a speech adaptor, and Llama-3.1-8B-Instruct. The adaptor compresses and projects encoder features into the LLM's embedding space, avoiding an explicit input-transcription stage. As text is generated, upsampled LLM hidden states condition a causal, non-autoregressive speech decoder. Connectionist temporal classification (**CTC**) maps its predictions to discrete speech units, which a vocoder converts into audio chunks. Here, non-autoregressive describes speech-unit alignment prediction, not the text LLM's decoding.
+
+Training has two stages: first train the adaptor and LLM for speech-to-text responses while freezing the encoder; then freeze the encoder, adaptor, and LLM and train the speech decoder. Calling the backbone “always frozen” would therefore misdescribe the original method. The [official implementation](https://github.com/ictnlp/LLaMA-Omni) provides the corresponding model and code.
+
+**What changes in Omni 2?** The [official successor](https://github.com/ictnlp/LLaMA-Omni2) uses Qwen2.5 instruction-tuned backbones despite retaining the LLaMA-Omni family name. Speech output now uses an **autoregressive speech language model**. Generated speech tokens pass through CosyVoice 2's chunk-aware causal flow-matching model to mel spectrograms, then through a HiFi-GAN vocoder to waveform chunks. This makes the earlier [discrete-token plus continuous-generation discussion](#continuous-audio-latents-and-flow-matching) concrete: token prediction and flow matching occupy different stages.
+
+The [Omni 2 paper](https://aclanthology.org/2025.acl-long.912/) describes gated conditioning that combines projected LLM hidden states with embeddings of its generated text. Its speech language model alternates reading conditioning prefixes and writing speech tokens. Training initially prepares speech understanding and speech synthesis separately; a later stage freezes the encoder, adaptor, and main LLM while training the gate and speech language model. A modular diagram alone does not establish which parameters are updated.
+
+```mermaid
+flowchart LR
+    subgraph O1["Original LLaMA-Omni"]
+        direction TB
+        I1["Speech instruction"] --> E1["Whisper-large-v3 encoder"]
+        E1 --> A1["Speech adaptor"] --> L1["Llama-3.1-8B-Instruct"]
+        L1 --> T1["Text response"]
+        L1 -->|"Upsampled hidden states"| D1["CTC speech-unit decoder<br/>Non-autoregressive"]
+        D1 --> U1["Discrete speech units"] --> V1["Vocoder<br/>audio chunks"]
+    end
+    subgraph O2["LLaMA-Omni 2"]
+        direction TB
+        I2["Speech instruction"] --> E2["Whisper-large-v3 encoder"]
+        E2 --> A2["Speech adaptor"] --> L2["Qwen2.5-Instruct"]
+        L2 --> T2["Text response"]
+        L2 -->|"Hidden states"| G2["Gated conditioning"]
+        T2 -->|"Text-token embeddings"| G2
+        G2 --> D2["Autoregressive speech LM<br/>Read conditioning / write tokens"]
+        D2 --> M2["CosyVoice 2 flow matching<br/>mel spectrogram chunks"]
+        M2 --> V2["HiFi-GAN vocoder<br/>audio chunks"]
+    end
+    O1 ~~~ O2
+```
+
+*Separate paths summarize the published architectures. Text-to-speech arrows operate on evolving prefixes, not necessarily a completed answer. The diagram shows inference dependencies, not parameter-freezing boundaries or continuous user-audio input during playback.*
+
+When reading either path, trace what each component receives: acoustic features, LLM hidden states, text embeddings, or generated speech tokens. These interfaces explain where alignment is required and which operations can overlap. The broad label “speech-to-speech” does not reveal those dependencies by itself.
+
+| Aspect | LLaMA-Omni | LLaMA-Omni 2 |
+| --- | --- | --- |
+| Main LLM | Llama-3.1-8B-Instruct | Qwen2.5-Instruct family |
+| Speech generation | CTC-based non-autoregressive units and vocoder | Autoregressive speech tokens, causal flow matching, vocoder |
+| Training boundary | Adaptor/LLM first, speech decoder second | Separate understanding/synthesis preparation, then gated speech generation |
+| Streaming control | Accumulated unit chunks | Alternating read/write schedule and acoustic chunks |
+| Released variants | Llama-3.1-8B-Omni | English 0.5B–14B; bilingual variants through 32B |
+| Interaction evidence | Streaming output | Streaming output and multi-turn dialogue; neither label alone establishes full duplex |
+
+The [release inventory](https://github.com/ictnlp/LLaMA-Omni2) distinguishes English-only 0.5B/1.5B/3B/7B/14B checkpoints from English–Chinese bilingual variants, including 32B. The paper discusses 0.5B–14B; the additional released checkpoint should not be silently included in its experimental results. Advertised sizes name backbone variants rather than the entire encoder/adaptor/speech-generation pipeline. **As of October 31, 2026, Omni 2 is the latest official successor verified in the checked repositories and [model collection](https://huggingface.co/collections/ICTNLP/llama-omni); no official Omni 3 was found there.**
+
+**A latency example.** Let $R$ denote text-conditioning tokens read per round and $W$ speech tokens written. [Appendix B](https://arxiv.org/html/2505.02625v1#A2) reports these first-chunk results for the 7B model in the paper's single-NVIDIA-L40 setup:
+
+| Read/write configuration | Reported latency |
+| --- | --- |
+| $R=1$, $W=5$ | 457.29 ms |
+| $R=3$, $W=10$ | 582.91 ms |
+
+These figures concern production of the first speech chunk under specified settings. They are not a complete telephone or browser playback budget. Reading fewer text tokens can start speech earlier, but provides less linguistic context; writing smaller speech chunks also changes work and context available to synthesis. Evaluate pronunciation, continuity, and content fidelity alongside timing rather than choosing the smallest latency in isolation.
+
+This is a useful distinction between a **representation decision** and a **scheduling decision**. Changing the speech decoder changes how audio is modeled; changing $R$ and $W$ changes when conditioned work becomes available. The existing [token-budget discussion](#streaming-neural-codecs-and-token-budgets) explains why “five speech tokens” is not interchangeable with five text tokens or five audio packets. The [runtime latency budget](#audio-runtime-and-latency) explains which additional delays a listener experiences.
+
+Finally, simultaneous text-and-speech generation refers to overlapping **outputs**. It does not by itself show that incoming user audio continuously updates the model while it speaks, that turn-taking is learned, or that playback and history are reconciled after an interruption. Keep those questions separate when comparing these systems with [Moshi/PersonaPlex](#moshi-mimi-and-personaplex). The family's modular construction is a useful complement to native speech models, without forcing it into every capability associated with that label.
+
 <a id="gpt-4o-native-processing"></a>
 
 #### **GPT-4o: Native Processing and Disclosure Limits**
@@ -769,6 +836,8 @@ TDT predicts both a token and an alignment duration, allowing advancement over m
 
 | Model or system | Input → output relevant here | Architectural mechanism | Streaming / duplex evidence | Important limit |
 | --- | --- | --- | --- | --- |
+| LLaMA-Omni | Speech → text and speech | Whisper encoder, adaptor, Llama backbone, CTC speech-unit decoder | Streaming speech output | Speech decoder is non-autoregressive; full duplex is not established by output streaming |
+| LLaMA-Omni 2 | Speech → text and speech | Qwen2.5 backbone, gated AR speech LM, flow matching and vocoder | Read/write streaming and multi-turn dialogue | Paper configurations and later released variants must be distinguished |
 | GPT-4o | Multimodal → text / audio / image, as described in its card | End-to-end multimodal network | Card discusses low-latency speech interaction | Card does not disclose the complete neural or transport design |
 | Moshi with Mimi | User audio → assistant audio and aligned text | Parallel streams, temporal/depth modeling, neural codec | Disclosed full-duplex framework | Frame rates and configured delays differ from end-to-end latency |
 | PersonaPlex | User audio plus role/voice prompts → speech and text | Moshi-based model with hybrid prompting | Full-duplex evaluation | Released checkpoint and main experiments differ |
@@ -1227,6 +1296,16 @@ To see more on this, check out the book on *[official website][link-003]. On [Am
 50. Gu, Albert, and Tri Dao. ["Mamba: Linear-Time Sequence Modeling with Selective State Spaces."](https://arxiv.org/abs/2312.00752) *arXiv:2312.00752* (2023).
 
 51. Lin, Guan-Ting, et al. ["Full-Duplex-Bench: A Benchmark to Evaluate Full-duplex Spoken Dialogue Models on Turn-taking Capabilities."](https://arxiv.org/abs/2503.04721) *arXiv:2503.04721* (2025).
+
+52. Fang, Qingkai, et al. ["LLaMA-Omni: Seamless Speech Interaction with Large Language Models."](https://arxiv.org/abs/2409.06666) *arXiv:2409.06666v2* (2024; revised 2025), ICLR 2025.
+
+53. ICTNLP. ["LLaMA-Omni."](https://github.com/ictnlp/LLaMA-Omni) Official implementation. Accessed October 31, 2026.
+
+54. Fang, Qingkai, Yan Zhou, Shoutao Guo, Shaolei Zhang, and Yang Feng. ["LLaMA-Omni 2: LLM-based Real-time Spoken Chatbot with Autoregressive Streaming Speech Synthesis."](https://aclanthology.org/2025.acl-long.912/) *ACL 2025*, pp. 18617–18629. [arXiv version and latency appendix](https://arxiv.org/html/2505.02625v1#A2).
+
+55. ICTNLP. ["LLaMA-Omni2."](https://github.com/ictnlp/LLaMA-Omni2) Official implementation and checkpoint inventory. Accessed October 31, 2026.
+
+56. ICTNLP. ["LLaMA-Omni."](https://huggingface.co/collections/ICTNLP/llama-omni) Official model collection. Accessed October 31, 2026.
 
 [link-001]: <https://substack.com/app-link/post?publication_id=1741130&post_id=220364616&utm_source=post-email-title&utm_campaign=email-post-title&isFreemail=true&r=5g228f&token=eyJ1c2VyX2lkIjozMjkzMDA5NDMsInBvc3RfaWQiOjIyMDM2NDYxNiwiaWF0IjoxNzkzMjg5OTU1LCJleHAiOjE3OTU4ODE5NTUsImlzcyI6InB1Yi0xNzQxMTMwIiwic3ViIjoicG9zdC1yZWFjdGlvbiJ9.eQ8n8ihFsQ4CK59W3KyqrD167sjn3-AUV97Bq9vEuBs>
 [link-002]: <https://substack.com/redirect/d88bd595-245b-46d1-a795-d683a196da84?j=eyJ1IjoiNWcyMjhmIn0.8CksELbKE5H87vRbvb-LNocdDhBOT_WqcZWW7bXMgsg>
