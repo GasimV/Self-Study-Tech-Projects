@@ -404,7 +404,7 @@ The AudioLM example separates semantic planning from acoustic detail. For intera
 For one encoder frame $z$, residual vector quantization starts with $r_0=z$. At stage $i$, it selects the nearest vector from codebook $C_i$:
 
 $$
-k_i=\operatorname*{arg\,min}_{k}\|r_{i-1}-C_i[k]\|_2^2,\qquad
+k_i=\arg\min_{k}\|r_{i-1}-C_i[k]\|_2^2,\qquad
 r_i=r_{i-1}-C_i[k_i],\qquad
 \hat z=\sum_{i=1}^{N}C_i[k_i].
 $$
