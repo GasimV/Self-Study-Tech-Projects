@@ -18,27 +18,46 @@
     - [Acoustic Tokens](#acoustic-tokens)
     - [Semantic Tokens](#semantic-tokens)
     - [Hierarchical Transformers](#hierarchical-transformers)
+    - [Streaming Neural Codecs and Token Budgets](#streaming-neural-codecs-and-token-budgets)
+    - [Continuous Audio Latents and Flow Matching](#continuous-audio-latents-and-flow-matching)
+    - [State-Space Audio Generation](#state-space-audio-generation)
     - [From Audio Generation to Real-Time Dialogue](#from-audio-generation-to-real-time-dialogue)
   - [Generating Videos](#generating-videos)
 - [Creating Generative Multimodal LLMs](#creating-generative-multimodal-llms)
   - [Late Fusion](#late-fusion)
   - [Early Fusion](#early-fusion)
+  - [Speech Integration: Adapters, Native Models, and Full-Duplex Dialogue](#speech-integration)
+    - [GPT-4o: Native Processing and Disclosure Limits](#gpt-4o-native-processing)
+    - [Moshi, Mimi, and PersonaPlex](#moshi-mimi-and-personaplex)
+    - [Thinker–Talker and External Supervisors](#thinker-talker-and-external-supervisors)
+    - [Audio-Grounded Reasoning and Specialized ASR](#audio-grounded-reasoning-and-specialized-asr)
+    - [Comparing Speech Architectures](#comparing-speech-architectures)
   - [Real-Time Speech Agents: Phonic-1](#real-time-speech-agents-phonic-1)
     - [What Is Publicly Documented?](#phonic-public-disclosures)
     - [A Conceptual System Architecture](#phonic-conceptual-architecture)
     - [Overlapping Listening and Tool Execution](#phonic-overlapping-execution)
     - [Training and Serving](#phonic-training-and-serving)
     - [Lessons and Limitations](#phonic-lessons-and-limitations)
+- [Engineering and Evaluating Real-Time Speech Systems](#engineering-real-time-speech)
+  - [The Audio Runtime and Its Latency Budget](#audio-runtime-and-latency)
+  - [Queues, Playback, and Interruption](#queues-playback-and-interruption)
+  - [Serving, Memory, and Quantization](#speech-serving-memory-and-quantization)
+  - [Diagnosing Audio Failures](#diagnosing-audio-failures)
+  - [Evaluating the Complete Interaction](#evaluating-the-complete-interaction)
+  - [Audio Instructions, Voice Identity, and Provenance](#audio-instructions-and-provenance)
+  - [Lecture Claims Requiring Qualification](#lecture-claims-requiring-qualification)
 - [Conclusion](#conclusion)
 - [References](#references)
 
-Most Multimodal LLMs today are only multimodal in one direction: they can **understand** images, audio, and video as *input*, but they still only generate text as *output*.
+Many Multimodal LLMs are multimodal in one direction: they can **understand** images, audio, and video as *input*, but still only generate text as *output*. Other architectures support native multimodal generation, including speech.
 
 Enabling an LLM to actually **generate** images, audio, and video requires quite a different set of architectures!
 
 [![](images/figure-001.jpg)][link-002]
 
 With over **50** custom visuals in this guide, we will explore how modern AI generates images, audio, and video from scratch, and how LLMs are being architected to decode them.
+
+The speech extension connects those foundations to streaming representations, native and hybrid conversational architectures, and the engineering needed for real-time interaction. Read it in order to move from **audio representations → generation methods → speech architectures → real-time operation → evaluation**. Worked examples separate model computation from the buffering, scheduling, and playback that the listener experiences.
 
 > **A Free Bonus Chapter!**   
 > This is a chapter of the recently released book, *[An Illustrated Guide to AI Agents][link-003]*.  
@@ -303,7 +322,7 @@ To do so, it contains three important components.
 
 In AudioLM, given an input audio, acoustic tokens are extracted using a neural codec called SoundStream. A codec is a technique that compresses (encodes) and decompresses (decodes) digital data like audio or video to reduce their file size. A neural codec is a more advanced technique that uses neural networks for this compression/decompression. Compared to traditional codecs, neural codecs learn compression strategies directly from the data through training, which allows them to better preserve important features with fewer audible distortions.
 
-Neural codecs typically use autoencoders, which are neural networks (VAE) that consist of two components:
+Neural codecs often use an autoencoder structure with two components. An autoencoder is not necessarily a variational autoencoder (VAE):
 
 - **Encoder** — Compress audio into vector representations to capture features
 - **Decoder** — Reconstructs audio from the vector representations
@@ -312,21 +331,21 @@ As we have explored before, encoder-decoder architectures are great at generatin
 
 [![](images/figure-030.jpg)][link-038]
 
-These continuous vector representations, like most others, are extremely useful in a wide variety of tasks. However, they cannot easily be used in Transformer models, which require discrete vector representations.
+These continuous vector representations can be used directly by Transformers through suitable projections. Transformers operate on continuous embeddings; discrete token IDs are one convenient way to select those embeddings and define a categorical prediction target.
 
 To create these discrete representations, vector quantization (VQ) is used. VQ is a technique that allows any given continuous signal to be mapped to a fixed set of levels. This fixed set is called a codebook and allows many vector representations to be mapped to a select few.
 
 [![](images/figure-031.png)][link-039]
 
-As such, VQ can be applied to the latent space, converting it to a codebook of vector representations. This codebook can be seen as discrete acoustic token embeddings and is exactly the type of representation that a Transformer might expect. This modified version is known as a **VQ-VAE.**
+Applying VQ to an encoder's latent vectors selects entries from a learned codebook. The resulting indices are discrete acoustic tokens, while the selected codebook vectors are continuous. **VQ-VAE** is one architecture using this idea; vector quantization also appears in codecs trained with other objectives.
 
-A variant of VQ-VAE is used in SoundStream, a neural codec that is used in AudioLM to extract the necessary acoustic representation.
+[SoundStream](https://arxiv.org/abs/2107.03312), the neural codec used by AudioLM, combines a convolutional encoder-decoder with residual vector quantization and reconstruction/adversarial training.
 
 Compared to VQ-VAE, it uses Residual Vector Quantization (RVQ) to compress and represent audio. RVQ is a more advanced technique for quantization and iteratively refines the residual errors from each quantization step for more accuracy.
 
 Let’s now dive a little deeper into the architecture of SoundStream. Although, like other neural codecs, it has an encoder-decoder architecture, it is not the same as the encoder-decoder architecture of Transformers. Like U-Net, it uses convolutional blocks instead of the well-known attention blocks to process the audio (encoder) and recreate it (decoder).
 
-There is additional timestep conditioning (as with the latent diffusion transformer). This enables the model to adapt to different levels of noise or reverb in audio.
+SoundStream also explores joint compression and enhancement with conditioning that controls denoising. This should not be confused with the diffusion timestep conditioning discussed earlier.
 
 [![](images/figure-032.jpg)][link-040]
 
@@ -372,9 +391,110 @@ In the final stage, the predicted coarse acoustic tokens are further processed t
 
 AudioLM was used for various use cases of audio generation, including speech continuation and piano continuation, taking into account the original audio examples. Since AudioLM, there have been many incredible techniques that use similar architectures. Common amongst those are the following components:
 
-- **VQ-VAE** - Some variant of VQ-VAE to create a codebook of audio codes
+- **Quantized representation** - A codec can use vector quantization to create discrete audio codes, without necessarily being a VQ-VAE.
 - **Transformer** - To transform text/audio into audio.
 - **Neural Codec**- A decoder (also called a vocoder) for converting latent representations (embeddings) back into waveforms.
+
+<a id="streaming-neural-codecs-and-token-budgets"></a>
+
+#### **Streaming Neural Codecs and Token Budgets**
+
+The AudioLM example separates semantic planning from acoustic detail. For interactive speech, we must additionally ask how much audio each representation covers and when it becomes available. A waveform has samples; an encoder groups samples into latent frames; a quantizer selects codebook indices for each frame. The language model may arrange these indices along time, across codebook depth, or in multiple streams. Calling all four quantities “audio tokens” hides important engineering differences.
+
+For one encoder frame $z$, residual vector quantization starts with $r_0=z$. At stage $i$, it selects the nearest vector from codebook $C_i$:
+
+$$
+k_i=\operatorname*{arg\,min}_{k}\|r_{i-1}-C_i[k]\|_2^2,\qquad
+r_i=r_{i-1}-C_i[k_i],\qquad
+\hat z=\sum_{i=1}^{N}C_i[k_i].
+$$
+
+The first codebook makes a coarse approximation; later ones describe what remains unexplained. The decoder reconstructs audio from $\hat z$, not by treating the integer indices themselves as waveform amplitudes. This is a representation mechanism, not a complete training objective: reconstruction, adversarial, perceptual, and quantization-related losses depend on the codec. [Descript Audio Codec's RVQGAN paper](https://arxiv.org/abs/2306.06546) provides a concrete example of codec design and training choices.
+
+```mermaid
+flowchart TB
+    Z["Encoder frame z<br/>Initial residual r0"] --> Q1["Codebook 1<br/>select k1 and vector C1[k1]"]
+    Q1 -->|"Subtract C1[k1] from r0"| R1["Residual r1"]
+    R1 --> Q2["Codebook 2<br/>select k2 and vector C2[k2]"]
+    Q2 -->|"Subtract C2[k2] from r1"| R2["Residual r2"]
+    Q1 -->|"Selected vector C1[k1]"| SUM["Sum selected vectors<br/>approximate latent z"]
+    Q2 -->|"Selected vector C2[k2]"| SUM
+    SUM --> D["Codec decoder<br/>reconstructed waveform"]
+    R2 -.-> MORE["Further residual stages<br/>repeat refinement"]
+    MORE -.-> SUM
+```
+
+*RVQ shown for one latent frame. Each residual stage selects another codebook entry; the dashed branch abbreviates additional stages.*
+
+Consider an illustrative eight-codebook configuration at **12.5 frames/second**. One minute contains $12.5\times60=750$ frames and $750\times8=6{,}000$ code indices. That is not automatically 6,000 temporal positions in the main Transformer. A temporal model can advance once per frame while a smaller depth model handles codebooks within the frame. Flattening every codebook index into one sequence creates a different context and compute budget.
+
+With $K$ entries per codebook, fixed-length index packing requires approximately $fN\lceil\log_2 K\rceil$ bits/second for frame rate $f$, before metadata or entropy coding. This counts the transmitted representation, not model weights, activations, or KV-cache memory. Codebook size, number of codebooks, and frame rate are separate controls; they cannot be replaced by a single “compression ratio.”
+
+[Mimi's reference implementation](https://github.com/kyutai-labs/moshi) describes 24 kHz input, a 12.5 Hz representation, and an 80 ms frame duration. A streaming encoder must respect causality and any lookahead requirement; low average compute time alone cannot remove the time needed to collect a frame. Decoder buffering and playback add further delay. Different codec configurations should therefore be compared using both representation rate and algorithmic latency.
+
+<a id="continuous-audio-latents-and-flow-matching"></a>
+
+#### **Continuous Audio Latents and Flow Matching**
+
+Discrete codes support next-token prediction, but quantization is not mandatory. [Qwen-Audio-VAE](https://arxiv.org/abs/2607.11738) describes continuous audio autoencoders for general audio generation. Here a generator predicts continuous latent tensors that a decoder maps to sound. This is a separate report from Qwen3.5-Omni and does not establish that the latter uses this VAE as its speech tokenizer.
+
+Three questions must remain separate: **what representation is generated, which generative process predicts it, and how the result becomes a waveform**. An autoregressive language model can predict discrete speech tokens and then condition a continuous flow-matching generator. A discrete block-diffusion model can also feed a flow-based waveform stage. These are combinations of mechanisms rather than competing labels for the entire system.
+
+[Conditional flow matching](https://arxiv.org/abs/2210.02747) trains a vector field. For a simplified linear training path between noise $x_0$ and a target audio representation $x_1$, with conditioning $c$:
+
+$$
+x_t=(1-t)x_0+tx_1,\qquad
+\mathcal L_{\mathrm{CFM}}=\mathbb E\left[\|v_\theta(t,x_t,c)-(x_1-x_0)\|_2^2\right].
+$$
+
+At inference, start with noise and numerically integrate $dx/dt=v_\theta(t,x,c)$. One Euler step is:
+
+$$
+x_{j+1}=x_j+(t_{j+1}-t_j)v_\theta(t_j,x_j,c).
+$$
+
+For example, ten uniform steps use $\Delta t=0.1$ and ten field evaluations in this simplified solver. The network must already be trained; this update alone is not a speech synthesizer. A straight conditional training path does not guarantee straight trajectories under the learned marginal field, and fewer solver steps introduce a quality/latency tradeoff rather than a universal free speedup.
+
+```mermaid
+flowchart LR
+    subgraph AR["Autoregressive tokens"]
+        direction TB
+        A0["Conditioning"] --> A1["Predict token 1"] --> A2["Predict token 2"] --> A3["Codec / acoustic decoder"]
+    end
+    subgraph FM["Continuous flow matching"]
+        direction TB
+        F0["Noise + conditioning"] --> F1["Vector-field update"] --> F2["Repeat solver steps"] --> F3["Generated audio representation"]
+    end
+    subgraph BD["Discrete block diffusion"]
+        direction TB
+        B0["Prior blocks + conditioning"] --> B1["Masked token block"] --> B2["Iterative parallel prediction"] --> B3["Emit block and advance"]
+    end
+    AR ~~~ FM ~~~ BD
+```
+
+*Three generation mechanisms. A complete speech system can combine them; the diagram does not claim identical output representations or timing.*
+
+[CosyVoice 2](https://arxiv.org/abs/2412.10117) combines a text-to-speech-token language model with chunk-aware causal flow matching, supporting streaming synthesis. It demonstrates why “discrete tokens versus flow matching” is a false choice at the system level. Streaming requires training and inference designs that make chunks available with suitable conditioning; an arbitrary noncausal generator does not become streamable merely by slicing its output.
+
+[NaturalSpeech 3](https://arxiv.org/abs/2403.03100) instead uses a factorized codec and diffusion models for content, prosody, timbre, and acoustic detail. [Chatterbox-Flash](https://github.com/resemble-ai/chatterbox-flash) replaces an autoregressive token decoder with block diffusion while retaining a flow-matching vocoder. These examples separate attribute factorization, token scheduling, and waveform reconstruction. Their published results should not be converted into fixed quality rankings between all autoregressive and diffusion systems.
+
+<a id="state-space-audio-generation"></a>
+
+#### **State-Space Audio Generation**
+
+Attention is not the only way to model long audio sequences. [SaShiMi](https://arxiv.org/abs/2202.09729), introduced in 2022, builds a multiscale waveform model from S4 state-space blocks. It progressively downsamples the sequence, processes information at coarser resolutions, and upsamples with skip connections. The paper studies autoregressive waveform generation and also uses the architecture as a backbone in a diffusion model.
+
+A simplified discretized state-space layer has the recurrence:
+
+$$
+h_k=\bar A h_{k-1}+\bar B u_k,\qquad y_k=C h_k+D u_k.
+$$
+
+Here $h_k$ is a fixed-size summary state, $u_k$ the current input, and the barred matrices reflect discretization. S4's structure enables efficient convolutional computation during training and recurrent stepping during generation. SaShiMi additionally addresses stability when switching to autoregressive operation; maintaining state is not sufficient if that state evolves unstably.
+
+For a fixed model and state dimension, recurrent state memory need not grow with sequence length. This differs from storing an ever-growing attention KV cache. However, “constant state” does not mean free computation, unlimited lossless memory, or no buffering elsewhere in the system. Standard dense attention has quadratic interaction count over a full sequence, not exponential growth; cached decoding has different time and memory behavior from full-sequence training.
+
+[Mamba](https://arxiv.org/abs/2312.00752) is a later selective state-space architecture with input-dependent dynamics. It belongs to the broader SSM family but is not the architecture used in the original SaShiMi paper. For a practical comparison, specify whether a model predicts raw samples, compressed frames, or text: sequence rates and hardware implementation can matter as much as the backbone's asymptotic complexity.
 
 <a id="from-audio-generation-to-real-time-dialogue"></a>
 
@@ -547,6 +667,119 @@ Compared to late fusion, early fusion is much more costly to train, as most of t
 
 Janus, like many other native multimodal LLMs, gained popularity in 2025 due to its unified architecture. As these native multimodal LLMs start to become popular, Agentic systems get more multimodal capabilities, thereby extending their control over their environments.
 
+<a id="speech-integration"></a>
+
+### **Speech Integration: Adapters, Native Models, and Full-Duplex Dialogue**
+
+The early/late-fusion distinction is useful for generation, but conversational speech needs a more precise description. Ask three independent questions: **how does audio enter the reasoning model, how is output speech generated, and what coordinates listening and speaking?** An audio encoder attached to a text LLM answers only the first. A speech decoder answers the second. Neither alone establishes full-duplex interaction, reliable tools, or sensible interruption handling.
+
+An input adaptor maps audio features into the representations expected by an LLM. It may project channels, reduce temporal resolution, or resample a variable-length stream into a smaller sequence. This is different from the output projectors in the earlier NExT-GPT example. Training only an adaptor is one possible strategy; it must not be assumed for every model that contains one. Temporal compression also trades sequence length against the detail available downstream.
+
+The examples below describe different tasks and disclosure levels. They are not successive steps in a universal progression toward one architecture. Specialized recognition models remain useful components even when native speech models are available.
+
+*Source review: October 31, 2026. Architecture statements refer to the cited paper or implementation, not every product bearing a related model-family name.*
+
+<a id="gpt-4o-native-processing"></a>
+
+#### **GPT-4o: Native Processing and Disclosure Limits**
+
+The [GPT-4o System Card](https://arxiv.org/abs/2410.21276) describes an autoregressive model trained end-to-end across text, vision, and audio, with inputs and outputs processed by the same neural network. This supports explaining native multimodal processing, but the card is not a detailed specification of its audio tokenizer, neural heads, attention layout, or serving topology. A conceptual drawing of such components must remain explicitly conceptual.
+
+The model and its communication interface are also different layers. WebRTC versus WebSocket transport, packet duration, echo cancellation, and playback cancellation describe an application or API implementation. Those choices cannot be inferred solely from end-to-end training. Conversely, a bidirectional network connection does not prove that the model continuously conditions on new user audio while generating speech.
+
+The card's evaluation discussion offers another useful lesson. Transcribing generated audio allows text-based assessment, but can miss background sounds, unusual delivery, or unwanted voice changes. Synthetic spoken test inputs may not represent real accents, hesitation, overlapping speakers, or noise. Evaluating a native model therefore requires listening to and measuring audio, not just grading its transcript.
+
+<a id="moshi-mimi-and-personaplex"></a>
+
+#### **Moshi, Mimi, and PersonaPlex**
+
+[Moshi](https://arxiv.org/abs/2410.00037) provides a disclosed full-duplex design. User speech and assistant speech are modeled as separate parallel streams. Its temporal Transformer processes progression through time; a depth Transformer handles the acoustic codebooks within a timestep. This avoids treating every codebook as another equally expensive temporal step. Time-aligned text predictions, called “Inner Monologue” in the paper, help guide the generated speech. They are modeled text tokens, not evidence that arbitrary audio models reason entirely in acoustic tokens.
+
+The [Mimi implementation](https://github.com/kyutai-labs/moshi) supplies streaming compression and waveform reconstruction. Its frame duration imposes a temporal granularity distinct from model runtime. Delays used to align streams and codebooks are architectural choices; system latency also includes audio capture and playback. Full-duplex modeling accommodates overlap, but it still needs data and evaluation that distinguish an interruption from a listener's brief acknowledgment.
+
+```mermaid
+sequenceDiagram
+    participant U as User audio stream
+    participant M as Moshi-style temporal model
+    participant D as Codebook-depth model
+    participant P as Assistant playback
+    U->>M: Incoming frame at time t
+    M->>D: Temporal state and aligned text prediction
+    D-->>P: Generated audio codes, then codec decoding
+    par Listening continues
+        U->>M: Next frame at time t plus 1
+    and Speech continues
+        P-->>U: Assistant audio is audible
+    end
+    U->>M: User starts an interruption
+    Note over M,P: Model behavior and playback policy determine yielding
+```
+
+*Conceptual stream relationship based on Moshi. Arrows show dependencies, not measured durations; buffering and trained stream offsets are omitted. PersonaPlex extends this family of architecture.*
+
+[PersonaPlex](https://arxiv.org/abs/2602.06053) builds on Moshi with a hybrid system prompt. Text supplies the role or scenario; an audio example supplies voice conditioning. The paper describes three channels: user audio, agent text, and agent audio. During role prompting, scenario text is supplied while the agent audio channel is silent; voice prompting supplies a speech sample while text is padded. This is more specific than adding an unspecified “style MLP” to a generic model.
+
+Its synthetic dialogue training separates the source of conversational content from the generation of training voices. That distinction matters when discussing role following versus speaker similarity: getting the wording right does not guarantee the desired delivery. The paper evaluates these dimensions separately and extends duplex evaluation with service roles.
+
+The publicly released checkpoint differs from the main experimental setup. Appendix A describes additional real conversations and changes to synthetic voice generation. Its separate naturalness evaluation uses another annotator pool and explicitly warns against direct comparison with the main table. A professional comparison should identify the checkpoint and evaluation protocol, rather than mixing the strongest numbers from different experiments.
+
+<a id="thinker-talker-and-external-supervisors"></a>
+
+#### **Thinker–Talker and External Supervisors**
+
+The [Qwen3.5-Omni report](https://arxiv.org/abs/2604.15804) describes Thinker and Talker components using Hybrid Attention MoE. Thinker processes multimodal context; Talker conditions on that context and Thinker's text to generate speech. The disclosed speech path uses RVQ tokens, a multi-token prediction module for residual codebooks, and a causal ConvNet decoder.
+
+**ARIA**, Adaptive Rate Interleave Alignment, addresses mismatched text and speech token rates through adaptive interleaving. It is not simply a generic cross-attention compressor. The report discusses chunked input processing and streaming generation; these disclosures should not be expanded into an unsupported claim that every interaction uses Moshi-style full duplex.
+
+Phonic's [supervisor-assisted system](#phonic-conceptual-architecture) operates at a different descriptive level. Internal speech-generation components and separately assisting frontier models should not be treated as interchangeable. The following comparison illustrates that distinction without proposing an undisclosed Phonic interface.
+
+```mermaid
+flowchart LR
+    subgraph Q["Qwen3.5-Omni (published)"]
+        direction TB
+        I["Multimodal input"] --> T["Thinker"]
+        T -->|"Text and contextual conditioning"| K["Talker<br/>ARIA and RVQ prediction"]
+        K --> C["Causal codec decoder"] --> A["Speech"]
+    end
+    subgraph P["Phonic (conceptual)"]
+        direction TB
+        S["Native speech model"] -.->|"Coordination interface undisclosed"| R["Frontier-model supervisors"]
+        R -.->|"Reasoning and tool assistance"| S
+        S --> O["Spoken interaction"]
+    end
+```
+
+*The Qwen panel summarizes published component roles. Dashed connections in the Phonic panel indicate a conceptual relationship, not a disclosed handoff protocol or a shared neural network.*
+
+<a id="audio-grounded-reasoning-and-specialized-asr"></a>
+
+#### **Audio-Grounded Reasoning and Specialized ASR**
+
+The supplied [Step-Audio-R1.5 report](https://arxiv.org/abs/2604.25719) makes a particularly important distinction. Its architecture section describes a frozen Qwen2 audio encoder producing 25 Hz features, an adaptor that downsamples them to 12.5 Hz, and a decoder initialized from Qwen2.5-32B. The decoder generates **textual reasoning and textual answers**. This is audio-grounded reasoning, not a disclosed codec-token speech generator.
+
+The training account combines audio-centric mid-training, supervised initialization for multi-turn interaction, and RLHF using rubric-guided and comparative reward judgments. It argues that objective correctness alone is insufficient to capture interaction quality. This motivates evaluating instruction retention, revisions, and conversational consistency alongside answer accuracy; it does not prove that verbal pauses implement hidden computation or that an “MGRD” acoustic-token algorithm is present.
+
+Audio understanding is also not limited to general-purpose LLMs. The [Canary-1B-v2 and Parakeet-TDT-0.6B-v3 report](https://arxiv.org/abs/2509.14128) describes two specialized systems. Canary pairs a FastConformer encoder with a Transformer decoder for multilingual speech recognition and speech-to-text translation. Parakeet pairs a FastConformer encoder with a Token-and-Duration Transducer for ASR. Neither is a speech-output conversational model.
+
+TDT predicts both a token and an alignment duration, allowing advancement over multiple encoder frames instead of repeatedly performing blank-dominated transducer steps. This is an efficient recognition mechanism, not a reason to call Canary a TDT model or a guarantee of a fixed speedup on every recording. The paper's aggregate throughput measurements also do not establish microphone-to-answer latency. Batch size, hardware, audio length, precision, and streaming configuration must accompany performance claims.
+
+<a id="comparing-speech-architectures"></a>
+
+#### **Comparing Speech Architectures**
+
+| Model or system | Input → output relevant here | Architectural mechanism | Streaming / duplex evidence | Important limit |
+| --- | --- | --- | --- | --- |
+| GPT-4o | Multimodal → text / audio / image, as described in its card | End-to-end multimodal network | Card discusses low-latency speech interaction | Card does not disclose the complete neural or transport design |
+| Moshi with Mimi | User audio → assistant audio and aligned text | Parallel streams, temporal/depth modeling, neural codec | Disclosed full-duplex framework | Frame rates and configured delays differ from end-to-end latency |
+| PersonaPlex | User audio plus role/voice prompts → speech and text | Moshi-based model with hybrid prompting | Full-duplex evaluation | Released checkpoint and main experiments differ |
+| Qwen3.5-Omni | Multimodal → text / speech | Thinker–Talker, ARIA, RVQ speech path | Report describes streaming input and generation | Streaming alone does not establish every duplex behavior |
+| Step-Audio-R1.5 | Audio / text → text | Audio encoder, adaptor, reasoning LLM | Multi-turn evaluation | Its disclosed decoder outputs text |
+| Canary-1B-v2 | Speech → transcription / translation text | FastConformer plus Transformer decoder | Report evaluates ASR/AST performance | Not a speech generator |
+| Parakeet-TDT-0.6B-v3 | Speech → transcription text | FastConformer plus TDT | Recognition throughput evaluation | Throughput is not conversational response latency |
+| Phonic-1 system | Caller speech → spoken interaction and actions | Native speech with supervisor assistance and tools | Company demonstrations and tool documentation | Internal orchestration remains undisclosed |
+
+*Read each row with its linked discussion above; this is an architectural map, not a common benchmark leaderboard. Input/output capability does not specify which capabilities are exposed by every deployment.*
+
 <a id="real-time-speech-agents-phonic-1"></a>
 
 ### **Real-Time Speech Agents: Phonic-1**
@@ -675,11 +908,215 @@ Early execution introduces general engineering questions. An incomplete request 
 
 Readers should leave with a system-level distinction: native audio generation, supervisor assistance, and execution scheduling contribute different capabilities. Public evidence supports studying their combination, while leaving Phonic-1's exact neural architecture and orchestration algorithm unknown.
 
+<a id="engineering-real-time-speech"></a>
+
+## **Engineering and Evaluating Real-Time Speech Systems**
+
+A voice agent is experienced through sound arriving at the right time. Excellent generated speech can still feel slow if the application buffers too much; a fast system can still interrupt inappropriately or answer a superseded request. The following examples are general engineering patterns, not descriptions of undisclosed Phonic mechanisms. They connect the preceding architectures to observable behavior.
+
+<a id="audio-runtime-and-latency"></a>
+
+### **The Audio Runtime and Its Latency Budget**
+
+Start by separating the stages that a microphone-to-speaker path must handle:
+
+| Stage | Responsibility | Common source of delay or error |
+| --- | --- | --- |
+| Capture and resampling | Collect samples and match the model's required format | Device buffering, wrong rate or channel interpretation |
+| Echo cancellation and enhancement | Reduce assistant playback leakage and unwanted noise | Lookahead, processing delay, damaged speech cues |
+| Voice activity detection | Estimate whether speech is present | Confusing noise, silence, and quiet speech |
+| Endpointing / turn policy | Decide when a user turn is sufficiently complete | Mistaking hesitation for completion |
+| Codec and model | Encode, reason, predict, and decode | Frame collection, compute, dependencies, queueing |
+| Output buffering and playback | Deliver audible chunks without underruns | Accumulated queue duration, jitter, device buffers |
+
+VAD is not endpointing: detecting a silent frame does not establish that the speaker has finished a thought. Likewise, echo cancellation, speaker separation, and diarization solve different problems. Echo cancellation uses a playback reference to reduce the assistant's own sound in the microphone. Separation estimates distinct source signals; diarization labels who spoke when. Neither is an automatic substitute for distinguishing a new user instruction from a brief “mm-hmm.”
+
+For a transport example, **20 ms at 48 kHz** contains $48{,}000\times0.020=960$ samples per channel. Mono PCM16 uses two bytes per sample, so the payload is **1,920 bytes**, excluding headers. Stereo doubles that payload. This packet size is not Mimi's 80 ms codec frame: the runtime may aggregate several packets before codec processing. Resampling to another rate changes sample counts, while the same 20 ms duration remains 20 ms.
+
+Do not add every stage's full runtime mechanically: some stages overlap. Instead, timestamp events along the interaction's critical path. Record the user's actual speech end, the endpointing decision, generation start, first decoded audio, and first audible playback. The difference between first decoded and first audible audio often reveals buffering that model-only benchmarks omit.
+
+The [throat-microphone enhancement study](https://arxiv.org/abs/2508.02974) offers a concrete example. It fine-tunes a Mimi encoder using paired throat and airborne recordings while retaining a pretrained codec reconstruction path. Its demo reports a minimum path dominated by two 80 ms frames and estimates approximately **160–224 ms** including device buffering. This is that enhancement setup's latency account, not a universal Mimi delay or an entire conversational agent's response time. Its perceptual and signal-alignment metrics also disagree, showing why waveform similarity alone cannot establish listening quality.
+
+<a id="queues-playback-and-interruption"></a>
+
+### **Queues, Playback, and Interruption**
+
+Listening and playback should progress independently. Use bounded queues so a slow consumer cannot accumulate seconds of unnoticed delay. Specify what happens on overload: silently losing microphone frames can change a request, whereas continuing to play an obsolete response can conceal a successful cancellation.
+
+The pseudocode below sketches an application wrapper. It assumes nonblocking microphone callbacks, one event loop serializing generation changes, and an adapter that tags output with the request ID assigned **when generation starts**. The adapter orders cancellation/history reconciliation before replacement generation; the turn policy emits one interruption event per detected user onset. Frontend/model computation belongs in workers, outside the real-time device callback. These are explicit design assumptions, not existing Phonic or Moshi API methods.
+
+```text
+input_q = BoundedQueue(50)                 # 20 ms frames: at most 1 s
+output_q = BoundedQueue(12)                # capacity measured in chunks
+generation = 0
+on_microphone_frame(frame):
+    if not input_q.try_put(frame): fault_and_stop_session("input overrun")
+async listen():
+    while session_active:
+        clean = frontend(await input_q.get())
+        if turn_policy.detects_barge_in(clean): interrupt()
+        await adapter.send_audio(clean)
+on_reply_requested(context):
+    generation += 1
+    spawn produce(generation, context)
+async produce(request_id, context):
+    async for chunk in adapter.generate(context, request_id):
+        if request_id != generation: return
+        await output_q.put((request_id, chunk))
+async play():
+    while session_active:
+        request_id, chunk = await output_q.get()
+        if request_id == generation: speaker.enqueue(chunk)
+interrupt():
+    old_request = generation
+    generation += 1                       # invalidate late packets first
+    speaker.stop_and_clear()              # flush device/application buffers
+    output_q.clear()
+    adapter.cancel_and_reconcile_async(old_request, speaker.heard_until)
+run_concurrently(listen(), play())          # microphone callback stays active
+```
+
+The generation check at playback is essential. A producer suspended on a full queue may finish its pending enqueue after cancellation. Tagging by the *current* ID when a packet arrives would incorrectly make that stale audio appear new. Likewise, merely clearing an application queue does not remove samples already submitted to the audio device. Record what was actually heard, then reconcile conversation history using the adapter's supported mechanism; do not blindly delete the complete KV cache or pretend unheard speech was delivered.
+
+Queue bounds should ultimately express **duration**, because chunk sizes can vary. Twelve 20 ms chunks contain 240 ms; twelve 80 ms chunks contain 960 ms. Backpressure and maximum generation time bound output growth. Input overrun in this sketch ends the session explicitly instead of answering from corrupted context. A deployment needs an appropriate user-visible recovery path and device callback implementation.
+
+Walk through realistic cases: during playback an interruption stops output while capture continues; a delayed old chunk is rejected; a full output queue releases obsolete work without audible leakage. Silence should not repeatedly trigger interruptions. Two overlapping people require an explicit speaker/turn policy; this wrapper does not solve source separation. Disconnects and cancellation timeouts should surface a defined session state rather than leave an apparently listening but inactive interface.
+
+```mermaid
+sequenceDiagram
+    participant C as Microphone capture
+    participant L as Listener and turn policy
+    participant G as Model adapter
+    participant Q as Bounded output queue
+    participant P as Playback
+    C->>L: User frames continue arriving
+    G->>Q: Audio tagged with generation 7
+    Q->>P: Play current audio
+    C->>L: User starts speaking over playback
+    L->>L: Advance generation to 8
+    L->>P: Stop and flush buffered output
+    L->>Q: Clear queued chunks
+    L->>G: Request cancellation and history reconciliation
+    par Continued input
+        C->>L: More user frames
+        L->>G: Feed new input
+    and Late old output
+        G-->>Q: Delayed chunk tagged generation 7
+        Q-->>P: Playback guard discards stale chunk
+    end
+    Note over G,P: Replacement generation follows adapter reconciliation
+```
+
+*Illustrative application behavior. Cancellation changes generation validity and playback state without shutting down microphone capture.*
+
+<a id="speech-serving-memory-and-quantization"></a>
+
+### **Serving, Memory, and Quantization**
+
+Audio can stress context memory because many representation steps cover only a short duration. The actual cost depends on temporal resolution, serialization, model layers, and attention design. “Audio costs 10–20 times more memory” is not a model-independent law.
+
+For an ordinary decoder caching keys and values, a useful payload estimate is:
+
+$$
+M_{\mathrm{KV}}=2BLSH_{\mathrm{KV}}d_hb.
+$$
+
+$B$ is batch size, $L$ layer count, $S$ cached sequence positions, $H_{\mathrm{KV}}$ the number of KV heads, $d_h$ head dimension, and $b$ bytes per element. The factor two counts keys and values. [Grouped-query attention](https://arxiv.org/abs/2305.13245) distinguishes KV-head count from query-head count; substituting the latter can overestimate cache size.
+
+For a hypothetical single-session model with 32 layers, 6,000 positions, eight KV heads, dimension 128, and FP16 cache:
+
+$$
+2\times1\times32\times6000\times8\times128\times2
+=786{,}432{,}000\text{ bytes}=750\text{ MiB}.
+$$
+
+This excludes weights, activation/workspace memory, allocator overhead, padding, and other streams. It is not a measured footprint of Moshi or Phonic. A temporal/depth model does not necessarily cache all 6,000 code indices as temporal positions, and compressed, windowed, recurrent, or hybrid caches need their own accounting. Distinguish MiB from decimal MB when quoting results.
+
+The next serving question is how sessions share hardware. [vLLM's optimization documentation](https://docs.vllm.ai/en/latest/configuration/optimization/) explains chunked prefill: large prompt work is split so decode work can be scheduled alongside it. That scheduler operation differs from audio input chunking, which determines what samples and future context an encoder can see. Dynamic batching can improve throughput while adding queueing delay; measure both under realistic concurrency.
+
+Compilation, fused kernels, and codec/model partitioning should target measured bottlenecks. Ahead-of-time deployment can reduce startup work, as in the [Phonic case study](#phonic-training-and-serving), but support depends on architecture, shapes, runtime, and hardware. A paper mentioning internal vLLM experiments does not guarantee compatibility with an arbitrary public vLLM release. Check the exact model/runtime combination before presenting deployment commands; the same applies to TensorRT conversion.
+
+Weight quantization, activation quantization, and KV-cache quantization are separate choices. Reduced precision can change content, pronunciation, speaker identity, or timing. Compare the quantized model against its own baseline across speech and text tasks; include long turns, quiet speech, numbers, languages, and noise. Neither INT4 nor FP8 guarantees preserved intonation. Speculative decoding also requires a compatible proposal/verification scheme; it is not a universal drop-in accelerator for any audio representation.
+
+<a id="diagnosing-audio-failures"></a>
+
+### **Diagnosing Audio Failures**
+
+Similar audible symptoms can have different causes. Collect representation statistics, generated text, audio, request IDs, and timing before choosing a remedy.
+
+| Symptom | Evidence to inspect | Qualified response |
+| --- | --- | --- |
+| Many unused codebook entries during training | Per-codebook usage, entropy, reconstruction error | Investigate quantizer optimization, initialization, and training data; repeated sound alone does not establish collapse |
+| Repetitive generated sounds or words | Token histories, stopping behavior, prompt and decoding settings | Compare decoding configurations and training behavior; temperature changes do not repair an untrained codebook |
+| Speech produced from silence or noise | Input audio, frontend output, VAD decisions, reference transcripts | Test non-speech examples and recognition/generation thresholds; avoid assuming every event is the same hallucination mechanism |
+| Generated speech disagrees with displayed text | Aligned audio/transcript and actual playback boundary | Inspect text/audio alignment, normalization, decoder conditioning, and cancellation history |
+| Clicks, gaps, or delayed bursts | Queue duration, packet arrival, device underruns | Investigate chunk boundaries, clock/rate mismatch, scheduling, and playback buffers before retraining |
+
+The [Canary/Parakeet report](https://arxiv.org/abs/2509.14128) describes adding non-speech training audio with empty transcription targets to improve recognition robustness. This is a specific training intervention for that task. It is not evidence that one silence token fixes every generative audio hallucination. Similarly, text/audio drift may arise from stale playback or text normalization as well as model alignment; an extra loss term is not automatically the right first change.
+
+<a id="evaluating-the-complete-interaction"></a>
+
+### **Evaluating the Complete Interaction**
+
+A useful evaluation separates dimensions that can improve independently:
+
+| Dimension | Example measurement | What it does not establish |
+| --- | --- | --- |
+| Intelligibility / content fidelity | WER against a reference transcript | Naturalness, correct reasoning, or correct speaker identity |
+| Perceptual quality | Human MOS with protocol and confidence interval | Tool success or reliable turn-taking |
+| Predicted listening quality | A fixed learned estimator such as UTMOS | A fresh human listening study on the deployment domain |
+| Voice consistency | Speaker-embedding similarity plus listening | Consent, emotional fidelity, or absence of impersonation |
+| Understanding and actions | Audio QA, instruction retention, validated tool outcomes | Quality of the generated waveform |
+| Conversational behavior | Interruption response, pause handling, backchannels, role adherence | Good behavior across all languages and acoustic conditions |
+| Runtime | RTF, first-audio delay, turn-response delay, interruption delay | Quality or robustness by itself |
+
+For ASR, word error rate is $\mathrm{WER}=(S+D+I)/N$, where substitutions, deletions, and insertions are counted against $N$ reference words. When assessing synthesized speech through a recognizer, the result also reflects that recognizer's errors. Specify normalization, punctuation handling, language, and recognizer version. A clear spoken answer can have low WER while being factually wrong.
+
+Human MOS depends on the question asked, rating scale, listeners, clips, playback conditions, and aggregation. Report sample sizes and uncertainty. [UTMOS](https://arxiv.org/abs/2204.02152) predicts listening scores; it is useful for repeatable screening, but its predictions are not interchangeable with direct human judgments, especially after a domain shift. Speaker similarity likewise depends on the embedding model and reference recording; it is not a universal score with one acceptable threshold.
+
+[Full-Duplex-Bench](https://arxiv.org/abs/2503.04721) evaluates conversational turn-taking capabilities beyond isolated utterance quality. PersonaPlex adds service-role evaluation, while Step-Audio-R1.5 emphasizes multi-turn instruction retention and audio-grounded understanding. Preserve the distinction between a benchmark using text answers and one measuring emitted speech; do not rank them as if they were one test.
+
+Runtime measurements also need explicit boundaries. **RTF** is processing time divided by audio duration: 0.2 means processing took one fifth of the recording duration under the stated conditions. Batched throughput or its inverse does not directly determine a single caller's wait. Measure time to first audible audio separately from delay between user speech ending and the assistant starting. For interruption delay, specify whether timing begins at acoustic onset or the detector firing, and ends at model cancellation or actual silence at the speaker.
+
+Report p50 and p95 rather than only a best case, and include failure/timeout rates. Stratify by concurrent sessions, turn length, language, noise, and network conditions. A minimum acceptance set should contain silence, long hesitation, interruption during playback, late cancelled audio, queue saturation, two overlapping speakers, and a tool response arriving after the user changes the request. Define the expected conversational outcome for each; treating every overlap as failure would penalize appropriate backchannels.
+
+<a id="audio-instructions-and-provenance"></a>
+
+### **Audio Instructions, Voice Identity, and Provenance**
+
+Native audio introduces both instruction-handling and voice-generation questions. Separate an authorized user's request from quoted speech, a recording played for analysis, background media, or a second speaker. A useful test plays a recording containing an instruction to abandon the task: the system should analyze the recording within the user's request rather than automatically grant the recording authority over tools.
+
+Keep tool permissions and action validation outside the assumption that acoustic understanding is reliable. Tests should include ordinary audible instructions, overlapping voices, and transformed recordings. A low-pass filter may alter an ultrasonic signal, but it cannot establish protection from instructions spoken in the ordinary speech band. It can also damage useful signal content. Filtering needs a defined threat model and quality measurements.
+
+The [GPT-4o System Card](https://arxiv.org/abs/2410.21276) discusses unwanted voice generation and the use of selected voices and output classifiers in its deployment context. That is separate from PersonaPlex's research capability for reference-voice conditioning. Capability, authorization to use a voice, and the product's release policy should remain distinct in the notes.
+
+[AudioSeal](https://github.com/facebookresearch/audioseal) provides audio watermarking and detection for identifying generated speech. Provenance signals can support tracing and detection, but they do not enforce instruction priority or validate tool calls. Watermark absence also does not prove that a clip is human. Evaluate transformations and false positives/negatives rather than describing a watermark as unbreakable or as a complete defense against audio prompt injection.
+
+<a id="lecture-claims-requiring-qualification"></a>
+
+### **Lecture Claims Requiring Qualification**
+
+The 30 lecture slides supplied with the six papers serve as a topic map. The following corrections keep useful ideas without copying unsupported generalizations. Public sources below make the notes readable without access to the local lecture folder.
+
+| Slide topic | Qualification used in this guide |
+| --- | --- |
+| Qwen3.5-Omni and Qwen-Audio-VAE (4, 8, 30) | [2604.15804](https://arxiv.org/abs/2604.15804) is the Omni report; [2607.11738](https://arxiv.org/abs/2607.11738) describes a separate continuous audio VAE. ARIA is adaptive interleaving, not simply a compressor. |
+| PersonaPlex citation (10, 30) | Use [2602.06053](https://arxiv.org/abs/2602.06053), not the unrelated 2601.03210; prompting details come from the actual architecture section. |
+| Descript Audio Codec citation (30) | The RVQGAN paper is [2306.06546](https://arxiv.org/abs/2306.06546), not 2306.06564. |
+| Audio reasoning tokens (9) | Step-Audio-R1.5's disclosed decoder produces textual reasoning/output; the cited report does not establish the slide's acoustic-token reasoning algorithm. |
+| Canary and TDT (18) | TDT belongs to the cited Parakeet model; Canary uses a Transformer decoder. Throughput figures require their experimental conditions. |
+| Universal ELBO / unified vocabulary (2, 5) | Training objectives and representation layouts vary. Native audio does not imply a VAE objective or one flattened token vocabulary. |
+| Attention and SSMs (17) | Dense attention interactions grow quadratically, not exponentially; SaShiMi uses S4, not Mamba. Cache and recurrent-state costs require separate accounting. |
+| Fixed latency / quality / quantization claims (12, 14, 19, 23–25) | Define hardware, workload, measurement boundaries, and quality protocol. There is no architecture-wide guarantee of sub-150 ms response, fixed MOS, lossless quantization, or a fixed cache multiplier. |
+| Failure remedies and security (26, 28) | Diagnose causes before prescribing losses or sampling changes. Filtering and watermarking address different concerns and are not complete instruction-security mechanisms. |
+
 <a id="conclusion"></a>
 
 ## **Conclusion**
 
-This concludes the journey in multimodal generation! Who knows what kind of models we will see in the future?!
+Multimodal generation connects representations, generative mechanisms, and systems that deliver the result. Images and videos illustrate how latent spaces and diffusion interact with language models; speech adds streaming time, conversational overlap, and audible delivery. A useful architecture description identifies these layers separately, cites what is disclosed, and measures the behavior the user actually experiences.
+
+For speech, the progression from codecs to native models and hybrid agents shows why no single label determines quality or latency. Token rates, alignment, scheduling, tools, and playback all shape the interaction. The worked examples and evaluation dimensions above provide a starting point for comparing those choices without turning model-specific demonstrations into general guarantees.
 
 To see more on this, check out the book on *[official website][link-003]. On [Amazon][link-006]. Code in [GitHub][link-007].*!
 
@@ -748,6 +1185,48 @@ To see more on this, check out the book on *[official website][link-003]. On [Am
 29. Phonic team. ["Concurrency Limits: The Hidden Tax in Voice AI (and how we solved it!)"](https://phonic.ai/blog/concurrency-limits-the-hidden-tax-in-voice-ai-and-how-we-solved-it) Engineering article. Accessed October 31, 2026.
 
 30. PyTorch. ["AOTInductor: Ahead-Of-Time Compilation for Torch.Export-ed Models."](https://docs.pytorch.org/docs/stable/user_guide/torch_compiler/torch.compiler_aot_inductor.html) Developer documentation. Accessed October 31, 2026.
+
+31. Zeghidour, Neil, et al. ["SoundStream: An End-to-End Neural Audio Codec."](https://arxiv.org/abs/2107.03312) *arXiv:2107.03312* (2021).
+
+32. Kumar, Rithesh, et al. ["High-Fidelity Audio Compression with Improved RVQGAN."](https://arxiv.org/abs/2306.06546) *arXiv:2306.06546* (2023).
+
+33. Jiang, Ziyue, et al. ["Qwen-Audio-VAE Technical Report."](https://arxiv.org/abs/2607.11738) *arXiv:2607.11738* (2026).
+
+34. Lipman, Yaron, et al. ["Flow Matching for Generative Modeling."](https://arxiv.org/abs/2210.02747) *arXiv:2210.02747* (2022; revised 2023).
+
+35. Du, Zhihao, et al. ["CosyVoice 2: Scalable Streaming Speech Synthesis with Large Language Models."](https://arxiv.org/abs/2412.10117) *arXiv:2412.10117* (2024).
+
+36. Ju, Zeqian, et al. ["NaturalSpeech 3: Zero-Shot Speech Synthesis with Factorized Codec and Diffusion Models."](https://arxiv.org/abs/2403.03100) *arXiv:2403.03100* (2024).
+
+37. Seo, Deokjin, Gangin Park, and Kihyun Nam. ["Chatterbox-Flash: Prior-Calibrated Block Diffusion for Streaming Zero-Shot TTS."](https://arxiv.org/abs/2605.30748) *arXiv:2605.30748* (2026). [Official implementation](https://github.com/resemble-ai/chatterbox-flash). Accessed October 31, 2026.
+
+38. Goel, Karan, Albert Gu, Chris Donahue, and Christopher Ré. ["It's Raw! Audio Generation with State-Space Models."](https://arxiv.org/abs/2202.09729) *arXiv:2202.09729* (2022).
+
+39. Kyutai. ["Moshi: a speech-text foundation model and full-duplex spoken dialogue framework."](https://github.com/kyutai-labs/moshi) Official Moshi/Mimi implementation. Accessed October 31, 2026.
+
+40. OpenAI. ["GPT-4o System Card."](https://arxiv.org/abs/2410.21276) *arXiv:2410.21276* (2024).
+
+41. Roy, Rajarshi, et al. ["PersonaPlex: Voice and Role Control for Full Duplex Conversational Speech Models."](https://arxiv.org/abs/2602.06053) *arXiv:2602.06053* (2026). Main experiments and Appendix A's released-checkpoint evaluation are distinguished in the text.
+
+42. Qwen Team. ["Qwen3.5-Omni Technical Report."](https://arxiv.org/abs/2604.15804) *arXiv:2604.15804v2* (2026).
+
+43. StepFun-Audio Team. ["Step-Audio-R1.5 Technical Report."](https://arxiv.org/abs/2604.25719) *arXiv:2604.25719v2* (2026).
+
+44. Sekoyan, Monica, et al. ["Canary-1B-V2 & Parakeet-TDT-0.6B-V3: Efficient and High-Performance Models for Multilingual ASR and AST."](https://arxiv.org/abs/2509.14128) *arXiv:2509.14128v2* (2025).
+
+45. Hauret, Julien, Thomas Joubaud, and Éric Bavu. ["Real-time speech enhancement in noise for throat microphone using neural audio codec as foundation model."](https://arxiv.org/abs/2508.02974) *arXiv:2508.02974* (2025).
+
+46. vLLM. ["Optimization and Tuning."](https://docs.vllm.ai/en/latest/configuration/optimization/) Developer documentation. Accessed October 31, 2026.
+
+47. Ainslie, Joshua, et al. ["GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints."](https://arxiv.org/abs/2305.13245) *arXiv:2305.13245* (2023).
+
+48. Saeki, Takaaki, et al. ["UTMOS: UTokyo-SaruLab System for VoiceMOS Challenge 2022."](https://arxiv.org/abs/2204.02152) *arXiv:2204.02152* (2022).
+
+49. Meta. ["AudioSeal."](https://github.com/facebookresearch/audioseal) Official watermarking and detection implementation. Accessed October 31, 2026.
+
+50. Gu, Albert, and Tri Dao. ["Mamba: Linear-Time Sequence Modeling with Selective State Spaces."](https://arxiv.org/abs/2312.00752) *arXiv:2312.00752* (2023).
+
+51. Lin, Guan-Ting, et al. ["Full-Duplex-Bench: A Benchmark to Evaluate Full-duplex Spoken Dialogue Models on Turn-taking Capabilities."](https://arxiv.org/abs/2503.04721) *arXiv:2503.04721* (2025).
 
 [link-001]: <https://substack.com/app-link/post?publication_id=1741130&post_id=220364616&utm_source=post-email-title&utm_campaign=email-post-title&isFreemail=true&r=5g228f&token=eyJ1c2VyX2lkIjozMjkzMDA5NDMsInBvc3RfaWQiOjIyMDM2NDYxNiwiaWF0IjoxNzkzMjg5OTU1LCJleHAiOjE3OTU4ODE5NTUsImlzcyI6InB1Yi0xNzQxMTMwIiwic3ViIjoicG9zdC1yZWFjdGlvbiJ9.eQ8n8ihFsQ4CK59W3KyqrD167sjn3-AUV97Bq9vEuBs>
 [link-002]: <https://substack.com/redirect/d88bd595-245b-46d1-a795-d683a196da84?j=eyJ1IjoiNWcyMjhmIn0.8CksELbKE5H87vRbvb-LNocdDhBOT_WqcZWW7bXMgsg>
