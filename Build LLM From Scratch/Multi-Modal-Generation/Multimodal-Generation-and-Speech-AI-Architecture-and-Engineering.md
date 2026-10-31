@@ -1,6 +1,8 @@
-# [A Visual Guide to Multimodal Generation][link-001]
+# Multimodal Generation and Speech AI: Architecture and Engineering
 
 *Exploring Image, Audio, and Video Generation in Multimodal LLMs*
+
+*Original guide: [A Visual Guide to Multimodal Generation][link-001].*
 
 ## Table of Contents
 
