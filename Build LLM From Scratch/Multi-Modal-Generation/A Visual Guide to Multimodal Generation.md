@@ -18,10 +18,17 @@
     - [Acoustic Tokens](#acoustic-tokens)
     - [Semantic Tokens](#semantic-tokens)
     - [Hierarchical Transformers](#hierarchical-transformers)
+    - [From Audio Generation to Real-Time Dialogue](#from-audio-generation-to-real-time-dialogue)
   - [Generating Videos](#generating-videos)
 - [Creating Generative Multimodal LLMs](#creating-generative-multimodal-llms)
   - [Late Fusion](#late-fusion)
   - [Early Fusion](#early-fusion)
+  - [Real-Time Speech Agents: Phonic-1](#real-time-speech-agents-phonic-1)
+    - [What Is Publicly Documented?](#phonic-public-disclosures)
+    - [A Conceptual System Architecture](#phonic-conceptual-architecture)
+    - [Overlapping Listening and Tool Execution](#phonic-overlapping-execution)
+    - [Training and Serving](#phonic-training-and-serving)
+    - [Lessons and Limitations](#phonic-lessons-and-limitations)
 - [Conclusion](#conclusion)
 - [References](#references)
 
@@ -369,6 +376,25 @@ AudioLM was used for various use cases of audio generation, including speech con
 - **Transformer** - To transform text/audio into audio.
 - **Neural Codec**- A decoder (also called a vocoder) for converting latent representations (embeddings) back into waveforms.
 
+<a id="from-audio-generation-to-real-time-dialogue"></a>
+
+#### **From Audio Generation to Real-Time Dialogue**
+
+Continuing an audio sample and conducting a conversation are different problems. Audio continuation asks what sound should come next. A conversational agent must also decide whether the user has finished, whether a pause invites a reply, and how to react when the user interrupts.
+
+Four concepts help explain this shift:
+
+- **Streaming** processes incoming audio and produces outgoing audio incrementally, without waiting for an entire recording.
+- **Full-duplex dialogue** allows listening and speaking to overlap.
+- **Turn-taking** determines when to speak, pause, or yield the conversational floor.
+- **Interruption handling**, also called barge-in handling, adapts playback and response generation when the user speaks over the assistant.
+
+A traditional cascade performs **speech-to-text (STT) → language-model reasoning → text-to-speech (TTS)**. Streaming can overlap parts of this pipeline, but a plain transcript does not fully represent timing, emotion, or vocal delivery. Native speech-to-speech models process and generate audio without requiring that external three-stage cascade. This does not imply that they have no internal text representations.
+
+[Moshi](https://arxiv.org/abs/2410.00037) provides an openly documented example: it models user and assistant speech as parallel streams, generates neural-codec audio tokens, and predicts aligned text tokens to help guide speech generation. It connects the audio-token concepts above to interactive dialogue. This is Moshi's disclosed design, **not evidence that Phonic uses the same architecture**.
+
+Conversation also involves actions beyond generating sound. The [Phonic-1 case study](#real-time-speech-agents-phonic-1) explores how native speech, supervisor reasoning, and external tools can work together.
+
 <a id="generating-videos"></a>
 
 ### **Generating Videos**
@@ -521,6 +547,134 @@ Compared to late fusion, early fusion is much more costly to train, as most of t
 
 Janus, like many other native multimodal LLMs, gained popularity in 2025 due to its unified architecture. As these native multimodal LLMs start to become popular, Agentic systems get more multimodal capabilities, thereby extending their control over their environments.
 
+<a id="real-time-speech-agents-phonic-1"></a>
+
+### **Real-Time Speech Agents: Phonic-1**
+
+The fusion approaches above describe how models connect understanding and generation. A deployed voice agent adds another question: how does generation interact with reasoning, external services, and conversational timing? Phonic-1 offers a useful case study at this system level.
+
+*Research date: October 31, 2026. The account below separates public disclosures from conceptual interpretation.*
+
+<a id="phonic-public-disclosures"></a>
+
+#### **What Is Publicly Documented?**
+
+Phonic describes Phonic-1 as a native speech-to-speech model. Its [homepage](https://phonic.ai/) explicitly states that frontier models serve as supervisor agents assisting with reasoning and tool calling. Its [launch article](https://phonic.ai/blog/phonic-1) demonstrates tool calls during caller speech and reports multilingual conversation and turn-taking capabilities. These are company-reported capabilities, rather than independent verification of every claim.
+
+The [tool documentation](https://docs.phonic.ai/docs/build/tools/tools_overview) provides more concrete application behavior: agents can use webhooks, WebSocket tools, context tools, transfers, and connected MCP servers. However, these interfaces do not reveal the underlying neural network or its internal coordination mechanisms.
+
+The resulting **hybrid system** interpretation is useful: native audio generation can coexist with assistance from other models. Public disclosures do not establish the supervisors' identities, inputs, routing rules, scheduling, or communication format. They also do not specify Phonic-1's audio tokenizer or exact model architecture. We therefore cannot assign it confidently to the guide's early- or late-fusion categories.
+
+<a id="phonic-conceptual-architecture"></a>
+
+#### **A Conceptual System Architecture**
+
+The diagram separates audio interaction, reasoning assistance, and external execution. Solid arrows show publicly described audio transport and tool interactions; dashed arrows propose logical relationships inside the service. They do not specify a hidden-state interface, transcript handoff, or particular supervisor schedule.
+
+```mermaid
+flowchart TB
+    U["Caller / audio client"]
+    A["Bidirectional audio transport"]
+    subgraph P["Phonic service (conceptual)"]
+        S["Native speech-to-speech model"]
+        R["Frontier-model supervisors<br/>Reasoning and tool assistance"]
+        O["Conversation and tool orchestration"]
+        C["Conversation context<br/>Returned tool results"]
+        S -.->|"Assistance relationship"| R
+        R -.->|"Reasoning support"| S
+        S -.->|"Action coordination"| O
+        R -.->|"Tool assistance"| O
+        O -.->|"Context update"| C
+        C -.->|"Inform later generation"| S
+    end
+    T["External tools<br/>HTTP webhooks / WebSocket handlers / MCP"]
+    U -->|"Incoming audio"| A
+    A -->|"Audio input"| S
+    S -->|"Generated audio"| A
+    A -->|"Streaming playback"| U
+    O -->|"Tool invocation"| T
+    T -->|"Tool output"| O
+```
+
+*Conceptual architecture based on public disclosures. Internal boxes are logical roles, not a disclosed deployment diagram; dashed connections are inferred.*
+
+For example, [WebSocket conversations](https://docs.phonic.ai/docs/build/with-web-sockets/via-web-sockets) forward audio chunks between the client interface and Phonic. Separately, [WebSocket tools](https://docs.phonic.ai/docs/build/tools/websocket_tools) send a `tool_call` to application code, which returns a `tool_call_output` with the matching call ID. Audio transport and tool execution are distinct responsibilities, even when both use WebSockets.
+
+| System pattern | Audio handling | Reasoning support | Tool orchestration |
+| --- | --- | --- | --- |
+| STT → LLM → TTS cascade | Explicit transcription and synthesis stages | Text LLM | Application coordinates calls; streaming stages can overlap |
+| Native speech-to-speech | Model processes and generates audio | Depends on model design | Depends on model interfaces and application |
+| Native speech with supervisor assistance | Native audio interaction | Additional models assist reasoning | Coordinates speech, assistance, and tools; Phonic discloses this combination |
+
+These patterns describe different design choices. Native audio alone does not guarantee effective tool use, and a cascade need not execute every operation sequentially.
+
+<a id="phonic-overlapping-execution"></a>
+
+#### **Overlapping Listening and Tool Execution**
+
+Consider an illustrative request: “Check flight AB123 tomorrow, and the weather at its destination, Paris. I would also like advice about packing.” Once the date and destination are sufficiently clear, flight and weather lookups can proceed independently while the caller adds preferences.
+
+```mermaid
+sequenceDiagram
+    participant U as Caller
+    participant A as Voice agent system
+    participant F as Flight API
+    participant W as Weather API
+    U->>A: Flight AB123 tomorrow, destination Paris
+    Note over A: Enough information for independent lookups
+    par Flight lookup
+        A->>F: Request flight status
+    and Weather lookup
+        A->>W: Request Paris forecast
+    and Continued listening
+        U->>A: Adds packing preferences
+    end
+    F-->>A: Flight result
+    Note over A: Result enters conversation context
+    U->>A: Finishes request
+    W-->>A: Forecast result
+    Note over A: Needed results available, reply can use them
+    A-->>U: Streams spoken answer using both results
+```
+
+*Illustrative execution pattern, not a trace of Phonic's internals. The system participant deliberately leaves supervisor responsibilities unspecified. One result arrives after caller speech ends.*
+
+Three behaviors must be distinguished. **Early dispatch** starts a tool before the caller finishes. **Parallel execution** overlaps independent tool calls. **Asynchronous execution** lets conversation continue without waiting for a tool. None automatically implies the other two.
+
+Phonic's [tool overview](https://docs.phonic.ai/docs/build/tools/tools_overview) documents selectable `sync` and `async` execution for custom webhook and WebSocket tools. Sync execution waits for completion and can be interrupted by caller speech, subject to configuration. Async execution continues the conversation and is not interrupted by caller speech. Its result enters context but normally does **not** immediately trigger a spoken response. The optional `wait_for_response` behavior changes this by waiting, holding other tools, and informing the user; it cannot be combined with tool chaining. Context, transfer, and built-in tools use sync mode; do not assume custom-tool mode choices apply to MCP.
+
+In the [launch demonstration](https://phonic.ai/blog/phonic-1), Phonic reports a reply **1.1 seconds after caller speech ends**, compared with **15.7 seconds** for the demonstrated GPT-Live setup. This measures a specific interaction, including work overlapped with caller speech. It is neither a general latency guarantee nor proof that other architectures cannot overlap work.
+
+<a id="phonic-training-and-serving"></a>
+
+#### **Training and Serving**
+
+Phonic's [company description](https://phonic.ai/about) reports pre-training from scratch, mid-training for conversational intelligence, and post-training for naturalness, instruction following, and reliability. The [launch article](https://phonic.ai/blog/phonic-1) also mentions reinforcement learning. These disclosures establish broad training activities, without specifying datasets, loss functions, reward design, or a reproducible recipe.
+
+The [inference engineering article](https://phonic.ai/blog/concurrency-limits-the-hidden-tax-in-voice-ai-and-how-we-solved-it) reports a separate serving improvement: model/container cold starts fell from **5.6 minutes to 26 seconds**. The reported steps were:
+
+1. Persist CUDA, Triton, and PyTorch Inductor compilation caches so containers can reuse artifacts.
+2. Reduce recompilation caused by invalidated tensor-shape guards.
+3. Move to ahead-of-time deployment using `torch.export`, externalize KV caches into a service, and remove CPU↔GPU communication during model inference.
+
+[PyTorch's documentation](https://docs.pytorch.org/docs/stable/user_guide/torch_compiler/torch.compiler_aot_inductor.html) distinguishes exporting a computation graph from compiling and packaging a deployable artifact. Phonic also reports [custom kernels](https://phonic.ai/about) and builds for different deployment targets. These are serving-stack disclosures, not a specification of every Phonic-1 component.
+
+Cold-start time measures readiness of additional capacity. Conversational response latency measures delay within an interaction. Faster capacity expansion can help absorb traffic spikes, but **26 seconds is not a per-turn response time**.
+
+<a id="phonic-lessons-and-limitations"></a>
+
+#### **Lessons and Limitations**
+
+The transferable lesson is to examine **when work becomes possible and what blocks the answer**. An independent lookup can overlap listening; a dependent lookup must wait for its prerequisite. A useful conceptual approximation is:
+
+**Post-speech waiting ≈ unfinished work on the response's critical path + remaining response-startup overhead.**
+
+This is a scheduling intuition, not Phonic's latency formula. Network delay, available capacity, conversational decisions, and audio buffering also affect what the caller experiences.
+
+Early execution introduces general engineering questions. An incomplete request may lack required arguments. A caller correction may invalidate an earlier lookup. A late result may refer to an abandoned request. Implementations need ways to associate results with current intent and avoid using stale information. These are design considerations, **not documented descriptions of Phonic's cancellation or reconciliation algorithms**. Interrupting a conversation also does not establish that an external side effect was undone.
+
+Readers should leave with a system-level distinction: native audio generation, supervisor assistance, and execution scheduling contribute different capabilities. Public evidence supports studying their combination, while leaving Phonic-1's exact neural architecture and orchestration algorithm unknown.
+
 <a id="conclusion"></a>
 
 ## **Conclusion**
@@ -576,6 +730,24 @@ To see more on this, check out the book on *[official website][link-003]. On [Am
 20. Wu, Chengyue, et al. "Janus: Decoupling visual encoding for unified multimodal understanding and generation." *Proceedings of the Computer Vision and Pattern Recognition Conference*. 2025.
 
 21. Esser, Patrick, Robin Rombach, and Bjorn Ommer. "Taming transformers for high-resolution image synthesis." *Proceedings of the IEEE/CVF conference on computer vision and pattern recognition*. 2021.
+
+22. Défossez, Alexandre, et al. ["Moshi: a speech-text foundation model for real-time dialogue."](https://arxiv.org/abs/2410.00037) *arXiv preprint arXiv:2410.00037* (2024).
+
+23. Phonic. ["The speech-to-speech model company."](https://phonic.ai/) Company homepage. Accessed October 31, 2026.
+
+24. Phonic team. ["Introducing Phonic-1 and our $27.5M Series A."](https://phonic.ai/blog/phonic-1) October 29, 2026. Accessed October 31, 2026.
+
+25. Phonic. ["Tools Overview."](https://docs.phonic.ai/docs/build/tools/tools_overview) Developer documentation. Accessed October 31, 2026.
+
+26. Phonic. ["Conversations via WebSockets."](https://docs.phonic.ai/docs/build/with-web-sockets/via-web-sockets) Developer documentation. Accessed October 31, 2026.
+
+27. Phonic. ["WebSocket Tools."](https://docs.phonic.ai/docs/build/tools/websocket_tools) Developer documentation. Accessed October 31, 2026.
+
+28. Phonic. ["About Phonic."](https://phonic.ai/about) Company description. Accessed October 31, 2026.
+
+29. Phonic team. ["Concurrency Limits: The Hidden Tax in Voice AI (and how we solved it!)"](https://phonic.ai/blog/concurrency-limits-the-hidden-tax-in-voice-ai-and-how-we-solved-it) Engineering article. Accessed October 31, 2026.
+
+30. PyTorch. ["AOTInductor: Ahead-Of-Time Compilation for Torch.Export-ed Models."](https://docs.pytorch.org/docs/stable/user_guide/torch_compiler/torch.compiler_aot_inductor.html) Developer documentation. Accessed October 31, 2026.
 
 [link-001]: <https://substack.com/app-link/post?publication_id=1741130&post_id=220364616&utm_source=post-email-title&utm_campaign=email-post-title&isFreemail=true&r=5g228f&token=eyJ1c2VyX2lkIjozMjkzMDA5NDMsInBvc3RfaWQiOjIyMDM2NDYxNiwiaWF0IjoxNzkzMjg5OTU1LCJleHAiOjE3OTU4ODE5NTUsImlzcyI6InB1Yi0xNzQxMTMwIiwic3ViIjoicG9zdC1yZWFjdGlvbiJ9.eQ8n8ihFsQ4CK59W3KyqrD167sjn3-AUV97Bq9vEuBs>
 [link-002]: <https://substack.com/redirect/d88bd595-245b-46d1-a795-d683a196da84?j=eyJ1IjoiNWcyMjhmIn0.8CksELbKE5H87vRbvb-LNocdDhBOT_WqcZWW7bXMgsg>
