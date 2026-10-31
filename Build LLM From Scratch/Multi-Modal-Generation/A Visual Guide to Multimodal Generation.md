@@ -20,6 +20,7 @@
     - [Hierarchical Transformers](#hierarchical-transformers)
     - [Streaming Neural Codecs and Token Budgets](#streaming-neural-codecs-and-token-budgets)
     - [Continuous Audio Latents and Flow Matching](#continuous-audio-latents-and-flow-matching)
+    - [CosyVoice 2 to CosyVoice 3: Better Tokens, Broader Data, and Post-Training](#cosyvoice-2-to-cosyvoice-3)
     - [State-Space Audio Generation](#state-space-audio-generation)
     - [From Audio Generation to Real-Time Dialogue](#from-audio-generation-to-real-time-dialogue)
   - [Generating Videos](#generating-videos)
@@ -477,7 +478,65 @@ flowchart LR
 
 [CosyVoice 2](https://arxiv.org/abs/2412.10117) combines a text-to-speech-token language model with chunk-aware causal flow matching, supporting streaming synthesis. It demonstrates why “discrete tokens versus flow matching” is a false choice at the system level. Streaming requires training and inference designs that make chunks available with suitable conditioning; an arbitrary noncausal generator does not become streamable merely by slicing its output.
 
+The [CosyVoice 3 comparison below](#cosyvoice-2-to-cosyvoice-3) explains how token learning, training scale, and post-training change within that overall design.
+
 [NaturalSpeech 3](https://arxiv.org/abs/2403.03100) instead uses a factorized codec and diffusion models for content, prosody, timbre, and acoustic detail. [Chatterbox-Flash](https://github.com/resemble-ai/chatterbox-flash) replaces an autoregressive token decoder with block diffusion while retaining a flow-matching vocoder. These examples separate attribute factorization, token scheduling, and waveform reconstruction. Their published results should not be converted into fixed quality rankings between all autoregressive and diffusion systems.
+
+<a id="cosyvoice-2-to-cosyvoice-3"></a>
+
+#### **CosyVoice 2 to CosyVoice 3: Better Tokens, Broader Data, and Post-Training**
+
+CosyVoice shows why a speech system can improve substantially without abandoning its overall decomposition. A language model predicts discrete speech tokens; conditional flow matching generates acoustic features; a vocoder produces the waveform. CosyVoice is a **text-to-speech component**, potentially conditioned on reference speech, rather than a complete conversational agent. Its speech language model plans how to realize supplied text, which is different from deciding what answer a caller needs.
+
+**Better tokens.** The [CosyVoice 3 report](https://arxiv.org/html/2505.17589v2) replaces CosyVoice 2's SenseVoice-derived tokenizer with a MinMo-derived encoder and finite scalar quantization (**FSQ**). Training supervises recognition, language identification, emotion recognition, audio-event detection, and speaker analysis. FSQ rounds coordinates in a compact latent space to finite levels; it does not perform RVQ's successive nearest-codebook residual refinement. The resulting discrete representation can carry content and paralinguistic cues. The complete MinMo understanding model should not be drawn as a required inference-time conversational brain inside the synthesizer.
+
+**Broader data and capacity.** The paper describes approximately one million hours of synthesis training data, a speech LM scaled from 0.5B to 1.5B parameters, and a DiT-based flow-matching model scaled from 100M to 300M. These are component sizes, not total pipeline counts. Its tokenizer training data and synthesis training data are different accounting categories; adding their reported hours would not establish a unique total dataset.
+
+**Post-training.** [Differentiable Reward Optimization (DiffRO)](https://arxiv.org/abs/2507.05911) evaluates generated token representations instead of requiring waveform synthesis for each reward calculation. A Gumbel-Softmax approximation permits differentiation through otherwise discrete choices. The CosyVoice 3 method uses an ASR-like Token2Text reward for content alignment and also discusses multitask rewards. This differs from treating a human-preference score on completed audio as the training signal. Reward optimization can emphasize selected attributes; it does not make every desirable property improve automatically.
+
+**Control.** The [official project](https://github.com/QwenAudio/CosyVoice) documents pronunciation inpainting using Chinese Pinyin and English phonemes, varied text formats, and instruction controls. These address different questions: pronunciation specifies how a word sounds, normalization determines how symbols are verbalized, and instructions guide supported delivery attributes. A general claim of “expressive speech” should not collapse them into unrestricted voice or timbre control.
+
+```mermaid
+flowchart TB
+    X["Text conditioning"] --> L["Speech language model"]
+    R["Reference speech"] --> T["Speech tokenizer<br/>MinMo-derived encoder + FSQ"]
+    T -->|"Prompt speech tokens"| L
+    L --> U["Generated speech tokens"]
+    U --> F["Conditional flow matching<br/>acoustic features"]
+    A["Reference acoustic features<br/>and speaker conditioning"] --> F
+    F --> V["Vocoder"] --> W["Waveform chunks"]
+    S["Training only: tokenizer supervision<br/>Recognition / language / emotion<br/>Audio events / speaker analysis"]
+    D["Training only: DiffRO<br/>Token rewards and<br/>differentiable sampling"]
+    S -.->|"Learn representation"| T
+    D -.->|"Optimize token generation"| L
+    classDef training fill:#fff4dd,stroke:#b7791f,stroke-dasharray:5 5
+    class S,D training
+```
+
+*Conceptual synthesis dependencies and paper-described training roles. Reference speech supplies both prompt tokens and acoustic/speaker conditioning, shown as separate inputs for readability. Dashed arrows mark training influence, not runtime requests. The diagram does not assert that every released RL weight uses the same complete training recipe.*
+
+| Aspect | CosyVoice 2 | CosyVoice 3 research configurations | Fun-CosyVoice3-0.5B-2512 release |
+| --- | --- | --- | --- |
+| Tokenizer | SenseVoice-derived FSQ | MinMo-derived, multitask-supervised FSQ | Released v3 tokenizer |
+| Generation | Speech LM, causal flow matching, vocoder | Same broad decomposition; scaled DiT acoustic model | Released LM, flow, and vocoder assets |
+| Scale | 0.5B speech LM in the cited comparison | Speech LM up to 1.5B; CFM up to 300M | Named 0.5B LM variant; not the complete pipeline size |
+| Capability emphasis | Streaming and non-streaming synthesis | Broader coverage, controls, post-training | Model-card claims and checkpoint-specific results |
+| Evidence | Existing CosyVoice 2 paper | CosyVoice 3 report | Official model card and files |
+
+**Research versus release.** The public checkpoint verified on **October 31, 2026** is [Fun-CosyVoice3-0.5B-2512](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512). Its card reports nine languages and **18+ Chinese dialects/accents**. Keep this wording attributed to the release rather than combining differing counts across paper sections. The [file inventory](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/tree/main) includes `llm.pt` and `llm.rl.pt`; these distinguish base and RL weights within that repository, not two independently verified model families. The paper's 1.5B results do not automatically describe this 0.5B checkpoint.
+
+The model card supplies a useful multidimensional example. In its author-reported English evaluation, the base and RL rows show:
+
+| Released weight variant | English WER (%) ↓ | Speaker similarity (%) ↑ |
+| --- | --- | --- |
+| Base | 2.24 | 71.8 |
+| RL | 1.68 | 69.5 |
+
+Recognition error improves while speaker similarity decreases under that evaluation. This illustrates why selecting a model solely by its best metric can conceal a tradeoff. It does not establish a universal causal relationship between reward optimization and voice similarity, or show that the same ranking will hold for another language, reference clip, or listening test.
+
+**Bi-streaming and evaluation.** Bi-streaming means incremental **text input and audio output**. It can overlap synthesis with text arriving from an upstream LLM, but does not establish continuous spoken-input understanding, full-duplex turn-taking, playback cancellation, or tools. Those remain separate [runtime responsibilities](#audio-runtime-and-latency). In particular, adding CosyVoice 3 here does not change LLaMA-Omni 2's documented use of CosyVoice 2 components.
+
+[CV3-Eval](https://github.com/QwenAudio/CV3-Eval) evaluates multilingual, cross-lingual, and emotional voice cloning, with separate subjective subsets. Its objective measures include recognition error, speaker-embedding similarity, and predicted quality through DNSMOS. Listening judgments answer a different question from any one automated metric. Use the guide's [evaluation framework](#evaluating-the-complete-interaction) to record language, reference conditions, recognizer, similarity model, and test protocol before comparing results. Better synthesis does not by itself establish better dialogue reasoning, and a newer version name does not replace that evidence.
 
 <a id="state-space-audio-generation"></a>
 
@@ -836,6 +895,7 @@ TDT predicts both a token and an alignment duration, allowing advancement over m
 
 | Model or system | Input → output relevant here | Architectural mechanism | Streaming / duplex evidence | Important limit |
 | --- | --- | --- | --- | --- |
+| [CosyVoice 3](#cosyvoice-2-to-cosyvoice-3) (TTS) | Text and reference conditioning → speech | Speech-token LM, conditional flow matching, vocoder | Text-in / audio-out bi-streaming | Not a complete conversational agent; research configurations and released weights differ |
 | LLaMA-Omni | Speech → text and speech | Whisper encoder, adaptor, Llama backbone, CTC speech-unit decoder | Streaming speech output | Speech decoder is non-autoregressive; full duplex is not established by output streaming |
 | LLaMA-Omni 2 | Speech → text and speech | Qwen2.5 backbone, gated AR speech LM, flow matching and vocoder | Read/write streaming and multi-turn dialogue | Paper configurations and later released variants must be distinguished |
 | GPT-4o | Multimodal → text / audio / image, as described in its card | End-to-end multimodal network | Card discusses low-latency speech interaction | Card does not disclose the complete neural or transport design |
@@ -1306,6 +1366,16 @@ To see more on this, check out the book on *[official website][link-003]. On [Am
 55. ICTNLP. ["LLaMA-Omni2."](https://github.com/ictnlp/LLaMA-Omni2) Official implementation and checkpoint inventory. Accessed October 31, 2026.
 
 56. ICTNLP. ["LLaMA-Omni."](https://huggingface.co/collections/ICTNLP/llama-omni) Official model collection. Accessed October 31, 2026.
+
+57. Du, Zhihao, et al. ["CosyVoice 3: Towards In-the-wild Speech Generation via Scaling-up and Post-training."](https://arxiv.org/html/2505.17589v2) *arXiv:2505.17589v2* (2025).
+
+58. QwenAudio / FunAudioLLM. ["CosyVoice."](https://github.com/QwenAudio/CosyVoice) Official project repository; the former FunAudioLLM URL redirects here. Accessed October 31, 2026.
+
+59. FunAudioLLM. ["Fun-CosyVoice3-0.5B-2512."](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512) Official model card and [checkpoint files](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/tree/main). Accessed October 31, 2026.
+
+60. QwenAudio / FunAudioLLM. ["CV3-Eval."](https://github.com/QwenAudio/CV3-Eval) Official benchmark and evaluation implementation. Accessed October 31, 2026.
+
+61. Gao, Changfeng, Zhihao Du, and Shiliang Zhang. ["Differentiable Reward Optimization for LLM based TTS system."](https://arxiv.org/abs/2507.05911) *arXiv:2507.05911* (2025).
 
 [link-001]: <https://substack.com/app-link/post?publication_id=1741130&post_id=220364616&utm_source=post-email-title&utm_campaign=email-post-title&isFreemail=true&r=5g228f&token=eyJ1c2VyX2lkIjozMjkzMDA5NDMsInBvc3RfaWQiOjIyMDM2NDYxNiwiaWF0IjoxNzkzMjg5OTU1LCJleHAiOjE3OTU4ODE5NTUsImlzcyI6InB1Yi0xNzQxMTMwIiwic3ViIjoicG9zdC1yZWFjdGlvbiJ9.eQ8n8ihFsQ4CK59W3KyqrD167sjn3-AUV97Bq9vEuBs>
 [link-002]: <https://substack.com/redirect/d88bd595-245b-46d1-a795-d683a196da84?j=eyJ1IjoiNWcyMjhmIn0.8CksELbKE5H87vRbvb-LNocdDhBOT_WqcZWW7bXMgsg>
