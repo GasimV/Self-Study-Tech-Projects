@@ -1,0 +1,2 @@
+# Include this study diagram despite the repository's general SVG ignore rule.
+!assets/consistent-hashing-before-after.svg

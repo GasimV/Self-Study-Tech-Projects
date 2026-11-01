@@ -951,6 +951,14 @@ flowchart LR
 >
 > N5 takes over keys with hashes **greater than `45` and up to `65`, including `65`**. N3 keeps `(65, 70]`; the other nodes keep their ranges.
 
+**Circular view: before and after adding N5.** Both rings use the same illustrative hash positions `0–99`. Dots mark server tokens; yellow highlights new N5. The orange diamond marks the key's hash. Follow the orange arrow clockwise to find its owner.
+
+![Two clockwise hash rings: customer:123 hashes to 60 and maps to N3 at token 70 before addition, then to N5 at token 65 after addition. The highlighted range (45, 65] transfers from N3 to N5.](assets/consistent-hashing-before-after.svg)
+
+> **Ring:** Possible hash positions. **Token:** A server's position. **Key hash:** A record's position. **Owner:** The first server token reached clockwise.
+
+The green band marks the transferred range. This shows one token per server and primary ownership only; the new owner still needs the actual data transferred safely.
+
 **Virtual nodes** give a physical server several token positions. One hash function is sufficient: `h("nodeA#0")`, `h("nodeA#1")`, and `h("nodeA#2")` identify different tokens for the same machine. A placement policy can assign more tokens or weight to greater capacity. Multiple tokens can improve range balance and spread reassignment among neighbors, but also add metadata and maintenance work.
 
 Virtual nodes do not add hardware, create independent replicas, or distribute a single hot key across multiple owners by themselves. Membership changes also need data transfer and a safe routing transition; a new owner cannot recreate data if no copy survives.
