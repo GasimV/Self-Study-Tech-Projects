@@ -873,6 +873,32 @@ flowchart TB
 
 The hash stays the same; changing the divisor changes placement. Many other keys can also move, including keys whose old owners remain healthy. A uniform hash can spread **keys** approximately evenly, but does not make four nodes receive exactly 25% of requests each: some keys may be much more popular or larger than others.
 
+**Worked example: four servers become three.** Start with Server 0, Server 1, Server 2, and Server 3. Remove Server 3 and keep the other server labels unchanged:
+
+| `Hash(key)` | Four servers: `% 4` | Three servers: `% 3` | Mapping changed? |
+| --- | --- | --- | --- |
+| 10 | Server 2 | Server 1 | Yes |
+| 11 | Server 3 | Server 2 | Yes |
+| 12 | Server 0 | Server 0 | No |
+| 13 | Server 1 | Server 1 | No |
+| 14 | Server 2 | Server 2 | No |
+| 15 | Server 3 | Server 0 | Yes |
+
+**Three of these six keys now map to different servers.** This is an illustrative sample, not a fixed percentage for every dataset. Notice that hash `10` moves even though its original owner, Server 2, remains available.
+
+**Why does this matter?** Suppose a customer's account record has a key whose hash is `10`:
+
+1. With four servers, `10 % 4 = 2`, so the record is stored on Server 2.
+2. With three servers, `10 % 3 = 1`, so the new routing rule sends requests to Server 1.
+3. **Changing the calculation does not physically move the record.** It is still on Server 2 until transferred.
+4. The system must transfer the record and coordinate the routing change so requests can still find it during migration.
+
+Across millions of keys, these transfers consume network bandwidth, CPU, and storage I/O. For a **planned removal**, transfer the departing server's data before shutting it down. For a **sudden failure**, recovery needs surviving replicas, backups, or another recovery source; changing the hash rule cannot restore lost data.
+
+Consistent hashing reduces this disruption by changing ownership only for affected hash ranges. The amount moved depends on token placement and balance; it is not always a tiny fixed fraction.
+
+> **Recall:** Modulo routing changes many mappings when the server count changes. Consistent hashing limits reassignment. Both still need safe data transfer and routing updates.
+
 **Consistent hashing:** Place node tokens and key hashes in the same circular hash space. Select the first eligible token clockwise, wrapping around when necessary. In this illustrative ring, the key hash `60` belongs to N3 at token `70`:
 
 ```mermaid
