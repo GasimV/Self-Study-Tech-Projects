@@ -928,6 +928,29 @@ flowchart LR
 
 The arrows represent logical clockwise token order, not a network topology or a required circular rendering. If N5 joins at token `65`, keys in `(45, 65]` move from N3 to N5 in this **single-token, primary-placement example**. Other primary ranges remain unchanged. Virtual nodes and replication can involve additional ranges and replica transfers; do not generalize this example into “only one physical neighbor is ever affected.”
 
+**After adding N5 at token 65:**
+
+```mermaid
+flowchart LR
+    N1["N1: token 20"] --> N2["N2: token 45"]
+    N2 --> N5["NEW N5: token 65"]
+    N5 --> N3["N3: token 70"]
+    N3 --> N4["N4: token 90"]
+    N4 --> N1
+    KEY["Key hash 60"] -.-> N5
+
+    classDef existing fill:#dbeafe,stroke:#111,color:#111
+    classDef changed fill:#fff3cd,stroke:#111,stroke-width:2px,color:#111
+    class N1,N2,N3,N4 existing
+    class N5,KEY changed
+```
+
+> **Before:** Hash `60` → N3 at `70`.
+>
+> **After:** Hash `60` → N5 at `65`, now the first token clockwise.
+>
+> N5 takes over keys with hashes **greater than `45` and up to `65`, including `65`**. N3 keeps `(65, 70]`; the other nodes keep their ranges.
+
 **Virtual nodes** give a physical server several token positions. One hash function is sufficient: `h("nodeA#0")`, `h("nodeA#1")`, and `h("nodeA#2")` identify different tokens for the same machine. A placement policy can assign more tokens or weight to greater capacity. Multiple tokens can improve range balance and spread reassignment among neighbors, but also add metadata and maintenance work.
 
 Virtual nodes do not add hardware, create independent replicas, or distribute a single hot key across multiple owners by themselves. Membership changes also need data transfer and a safe routing transition; a new owner cannot recreate data if no copy survives.
