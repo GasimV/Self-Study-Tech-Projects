@@ -901,6 +901,17 @@ Consistent hashing reduces this disruption by changing ownership only for affect
 
 **Consistent hashing:** Place node tokens and key hashes in the same circular hash space. Select the first eligible token clockwise, wrapping around when necessary. In this illustrative ring, the key hash `60` belongs to N3 at token `70`:
 
+**Diagram legend:**
+
+| Label | Simple meaning |
+| --- | --- |
+| **N1–N4** | Four storage nodes (servers) that hold key-value records. |
+| **Token** | A number marking a node's position on the ring. Here, N3 has token `70`. A server can have several tokens, as explained below. |
+| **Key** | An identifier such as `customer:123`, used to find its stored value. |
+| **Key hash 60** | The key's hash result places it at position `60` on the ring. It is not the stored value or the server number. |
+
+**Example:** If `hash("customer:123") = 60`, move clockwise to the next token, `70`. Its owner, **N3**, stores the record in this example.
+
 ```mermaid
 flowchart LR
     N1["N1: token 20"] --> N2["N2: token 45"]
