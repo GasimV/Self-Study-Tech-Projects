@@ -959,9 +959,41 @@ flowchart LR
 
 The green band marks the transferred range. This shows one token per server and primary ownership only; the new owner still needs the actual data transferred safely.
 
-**Virtual nodes** give a physical server several token positions. One hash function is sufficient: `h("nodeA#0")`, `h("nodeA#1")`, and `h("nodeA#2")` identify different tokens for the same machine. A placement policy can assign more tokens or weight to greater capacity. Multiple tokens can improve range balance and spread reassignment among neighbors, but also add metadata and maintenance work.
+**Virtual nodes: several positions, one physical server.** A virtual node is an extra position representing the same server on the ring—not another machine. Instead of owning one large range, each server can own several smaller ranges at different positions.
 
-Virtual nodes do not add hardware, create independent replicas, or distribute a single hot key across multiple owners by themselves. Membership changes also need data transfer and a safe routing transition; a new owner cannot recreate data if no copy survives.
+For example, give each of three physical servers three tokens:
+
+| Physical server | Token positions on the ring | Actual machines |
+| --- | --- | ---: |
+| A | `10`, `50`, `80` | 1 |
+| B | `20`, `40`, `90` | 1 |
+| C | `30`, `60`, `70` | 1 |
+
+**How are the positions created?** One hash function is sufficient: hash different server identifiers such as `hash("A#0")`, `hash("A#1")`, and `hash("A#2")`. The table's positions are illustrative outputs. The suffix creates another token for A; it does not create another physical server. Multiple hash functions are not required, and the request key is not hashed once per virtual node.
+
+**Request walkthrough:**
+
+1. Hash the key once: suppose `hash("customer:123") = 55`.
+2. Move clockwise from `55` to the next token, **60**.
+3. Token 60 belongs to **C**, so physical **Server C** handles the request.
+
+![Virtual-node ring with three physical servers and nine tokens: hash 55 selects token 60, owned by Server C.](assets/consistent-hashing-virtual-nodes.svg)
+
+All tokens with the **same letter and color** represent the same physical server. There are **nine ring positions but only three machines**. The arrows show lookup direction, not network links.
+
+**Why use virtual nodes?**
+
+| Benefit | Simple explanation |
+| --- | --- |
+| **Better range balance** | Several smaller ranges per server can reduce the uneven ownership caused by a few randomly placed tokens. Balance is approximate, not guaranteed. |
+| **Spread reassignment** | When A leaves this example, its ranges pass to B at tokens `20` and `90`, and C at `60`. One remaining server need not take all of A's ranges. |
+| **Account for capacity** | The placement policy can give a more-capable server more tokens or weight. Twice as many tokens does not guarantee twice the useful throughput. |
+
+More tokens also add metadata and maintenance work. Balanced ranges do not guarantee equal request traffic: one key may be much more popular than others. Virtual nodes do not add hardware, create independent replicas, or split a single hot key across servers by themselves.
+
+Membership changes still need data transfer and a safe routing transition. Planned maintenance allows transfer before shutdown; after a failure, recovery needs surviving copies. Adding virtual nodes cannot recreate lost data.
+
+> **Recall:** Many positions can belong to one server. Hash the key once, find the next token clockwise, and send the request to that token's physical owner.
 
 See [Consistent Hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing), [Virtual Nodes](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server), and the existing [C++ teaching example](examples/consistent_hashing/README.md). [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html) illustrates token-based placement; its implementation is not a universal specification for every key-value store.
 

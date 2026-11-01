@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="920" viewBox="0 0 1000 920" role="img" aria-labelledby="title description">
+  <title id="title">Virtual nodes: nine ring positions represent three physical servers</title>
+  <desc id="description">A clockwise hash ring with tokens A10, B20, C30, B40, A50, C60, C70, A80, B90. Each letter has one consistent color and identifies one physical storage server. The example key customer:123 hashes once to 55, shown by an orange diamond, and maps clockwise to token 60 belonging to Server C. Virtual nodes are positions, not additional machines or independent replica copies.</desc>
+  <defs>
+    <marker id="clock-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
+    <marker id="lookup-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/></marker>
+  </defs>
+  <rect width="1000" height="920" fill="#ffffff"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#172033">
+    <text x="500" y="39" text-anchor="middle" font-size="27" font-weight="700">Virtual nodes: several positions, the same physical server</text>
+    <text x="500" y="73" text-anchor="middle" font-size="19">Same letter and color = same machine. Hash each request key once.</text>
+    <circle cx="500" cy="370" r="190" fill="#f8fafc" stroke="#475569" stroke-width="3"/>
+    <text x="500" y="162" text-anchor="middle" font-size="16" fill="#475569">0 / wrap</text>
+    <path d="M 517.42 232.10 A 139 139 0 0 1 621.81 303.04" fill="none" stroke="#475569" stroke-width="3" marker-end="url(#clock-arrow)"/>
+    <text x="500" y="305" text-anchor="middle" font-size="18" fill="#475569">CLOCKWISE</text>
+    <text x="500" y="342" text-anchor="middle" font-size="22" font-weight="700">ONE HASH RING</text>
+    <text x="500" y="371" text-anchor="middle" font-size="19">3 servers, 9 positions</text>
+    <rect x="380" y="410" width="240" height="68" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="1.5"/>
+    <text x="500" y="437" text-anchor="middle" font-size="21" font-weight="700">Key: customer:123</text>
+    <text x="500" y="463" text-anchor="middle" font-size="20">Hash = 55</text>
+    <path d="M 611.68 216.29 L 658.70 151.57" stroke="#1d4ed8" stroke-width="1.5" fill="none"/>
+    <rect x="588.70" y="122.57" width="140" height="58" rx="10" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="658.70" y="146.57" text-anchor="middle" font-size="21" font-weight="700">Server A</text>
+    <text x="658.70" y="169.57" text-anchor="middle" font-size="18">Token 10</text>
+    <circle cx="611.68" cy="216.29" r="10" fill="#3b82f6" stroke="#1d4ed8" stroke-width="2" data-token="10" data-server="A"/>
+    <path d="M 680.70 311.29 L 756.79 286.57" stroke="#6d28d9" stroke-width="1.5" fill="none"/>
+    <rect x="686.79" y="257.57" width="140" height="58" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+    <text x="756.79" y="281.57" text-anchor="middle" font-size="21" font-weight="700">Server B</text>
+    <text x="756.79" y="304.57" text-anchor="middle" font-size="18">Token 20</text>
+    <circle cx="680.70" cy="311.29" r="10" fill="#8b5cf6" stroke="#6d28d9" stroke-width="2" data-token="20" data-server="B"/>
+    <path d="M 680.70 428.71 L 756.79 453.43" stroke="#15803d" stroke-width="1.5" fill="none"/>
+    <rect x="686.79" y="424.43" width="140" height="58" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="756.79" y="448.43" text-anchor="middle" font-size="21" font-weight="700">Server C</text>
+    <text x="756.79" y="471.43" text-anchor="middle" font-size="18">Token 30</text>
+    <circle cx="680.70" cy="428.71" r="10" fill="#22c55e" stroke="#15803d" stroke-width="2" data-token="30" data-server="C"/>
+    <path d="M 611.68 523.71 L 658.70 588.43" stroke="#6d28d9" stroke-width="1.5" fill="none"/>
+    <rect x="588.70" y="559.43" width="140" height="58" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+    <text x="658.70" y="583.43" text-anchor="middle" font-size="21" font-weight="700">Server B</text>
+    <text x="658.70" y="606.43" text-anchor="middle" font-size="18">Token 40</text>
+    <circle cx="611.68" cy="523.71" r="10" fill="#8b5cf6" stroke="#6d28d9" stroke-width="2" data-token="40" data-server="B"/>
+    <path d="M 500.00 560.00 L 500.00 640.00" stroke="#1d4ed8" stroke-width="1.5" fill="none"/>
+    <rect x="430.00" y="611.00" width="140" height="58" rx="10" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="500.00" y="635.00" text-anchor="middle" font-size="21" font-weight="700">Server A</text>
+    <text x="500.00" y="658.00" text-anchor="middle" font-size="18">Token 50</text>
+    <circle cx="500.00" cy="560.00" r="10" fill="#3b82f6" stroke="#1d4ed8" stroke-width="2" data-token="50" data-server="A"/>
+    <path d="M 388.32 523.71 L 341.30 588.43" stroke="#15803d" stroke-width="1.5" fill="none"/>
+    <rect x="271.30" y="559.43" width="140" height="58" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="341.30" y="583.43" text-anchor="middle" font-size="21" font-weight="700">Server C</text>
+    <text x="341.30" y="606.43" text-anchor="middle" font-size="18">Token 60</text>
+    <circle cx="388.32" cy="523.71" r="10" fill="#22c55e" stroke="#15803d" stroke-width="2" data-token="60" data-server="C"/>
+    <path d="M 319.30 428.71 L 243.21 453.43" stroke="#15803d" stroke-width="1.5" fill="none"/>
+    <rect x="173.21" y="424.43" width="140" height="58" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="243.21" y="448.43" text-anchor="middle" font-size="21" font-weight="700">Server C</text>
+    <text x="243.21" y="471.43" text-anchor="middle" font-size="18">Token 70</text>
+    <circle cx="319.30" cy="428.71" r="10" fill="#22c55e" stroke="#15803d" stroke-width="2" data-token="70" data-server="C"/>
+    <path d="M 319.30 311.29 L 243.21 286.57" stroke="#1d4ed8" stroke-width="1.5" fill="none"/>
+    <rect x="173.21" y="257.57" width="140" height="58" rx="10" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="243.21" y="281.57" text-anchor="middle" font-size="21" font-weight="700">Server A</text>
+    <text x="243.21" y="304.57" text-anchor="middle" font-size="18">Token 80</text>
+    <circle cx="319.30" cy="311.29" r="10" fill="#3b82f6" stroke="#1d4ed8" stroke-width="2" data-token="80" data-server="A"/>
+    <path d="M 388.32 216.29 L 341.30 151.57" stroke="#6d28d9" stroke-width="1.5" fill="none"/>
+    <rect x="271.30" y="122.57" width="140" height="58" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+    <text x="341.30" y="146.57" text-anchor="middle" font-size="21" font-weight="700">Server B</text>
+    <text x="341.30" y="169.57" text-anchor="middle" font-size="18">Token 90</text>
+    <circle cx="388.32" cy="216.29" r="10" fill="#8b5cf6" stroke="#6d28d9" stroke-width="2" data-token="90" data-server="B"/>
+    <path d="M 440 478 L 441.29 550.70" stroke="#b45309" stroke-width="1.5" stroke-dasharray="5 4" fill="none"/>
+    <path d="M 441.29 540.70 l 10 10 l -10 10 l -10 -10 z" fill="#fb923c" stroke="#92400e" stroke-width="2"/>
+    <text x="413.29" y="555.70" font-size="19" font-weight="700" fill="#92400e">55</text>
+    <path d="M 447.16 532.63 A 171 171 0 0 1 399.49 508.34" fill="none" stroke="#b45309" stroke-width="5" marker-end="url(#lookup-arrow)"/>
+    <text x="500" y="704" text-anchor="middle" font-size="23" font-weight="700" fill="#92400e">Lookup: hash 55 → token 60 → physical Server C</text>
+    <rect x="70" y="750" width="260" height="90" rx="12" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="200" y="780" text-anchor="middle" font-size="22" font-weight="700">Physical Server A</text>
+    <text x="200" y="806" text-anchor="middle" font-size="18">Owns tokens 10, 50, 80</text>
+    <text x="200" y="828" text-anchor="middle" font-size="17">One machine, three positions</text>
+    <rect x="370" y="750" width="260" height="90" rx="12" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+    <text x="500" y="780" text-anchor="middle" font-size="22" font-weight="700">Physical Server B</text>
+    <text x="500" y="806" text-anchor="middle" font-size="18">Owns tokens 20, 40, 90</text>
+    <text x="500" y="828" text-anchor="middle" font-size="17">One machine, three positions</text>
+    <rect x="670" y="750" width="260" height="90" rx="12" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="800" y="780" text-anchor="middle" font-size="22" font-weight="700">Physical Server C</text>
+    <text x="800" y="806" text-anchor="middle" font-size="18">Owns tokens 30, 60, 70</text>
+    <text x="800" y="828" text-anchor="middle" font-size="17">One machine, three positions</text>
+    <text x="500" y="887" text-anchor="middle" font-size="19">Virtual nodes do not create extra machines or independent replica copies.</text>
+  </g>
+</svg>
