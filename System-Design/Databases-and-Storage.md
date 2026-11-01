@@ -953,7 +953,7 @@ flowchart LR
 
 **Circular view: before and after adding N5.** Both rings use the same illustrative hash positions `0–99`. Dots mark server tokens; yellow highlights new N5. The orange diamond marks the key's hash. Follow the orange arrow clockwise to find its owner.
 
-![Two clockwise hash rings: customer:123 hashes to 60 and maps to N3 at token 70 before addition, then to N5 at token 65 after addition. The highlighted range (45, 65] transfers from N3 to N5.](assets/consistent-hashing-before-after.svg)
+![Clockwise hash rings before and after adding N5: key hash 60 moves from N3 at token 70 to N5 at token 65.](assets/consistent-hashing-before-after.svg)
 
 > **Ring:** Possible hash positions. **Token:** A server's position. **Key hash:** A record's position. **Owner:** The first server token reached clockwise.
 
