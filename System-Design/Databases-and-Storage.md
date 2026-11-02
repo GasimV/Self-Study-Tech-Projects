@@ -1004,7 +1004,7 @@ See [Consistent Hashing](Distributed-Systems-Theorems-and-Data-Structures.md#con
 | Model | Where client writes are handled | Main design questions |
 | --- | --- | --- |
 | **Primary-secondary / single-leader** | The current primary for that partition orders writes; secondaries apply replicated changes | Replication lag, acknowledgment rules, promotion, and preventing competing primaries |
-| **Leaderless** | A coordinator sends operations to the key's replica set without a permanent per-key write leader | Response thresholds, concurrent versions, reconciliation, and replica repair |
+| **Peer-to-peer (leaderless in this example)** | A coordinator sends operations to the key's replica set without a permanent per-key write leader | Response thresholds, concurrent versions, reconciliation, and replica repair |
 
 **Primary-secondary example:**
 
@@ -1027,7 +1027,28 @@ With **asynchronous replication**, the primary may acknowledge before secondarie
 
 A failed primary can be replaced through a designed failover process; primary-secondary replication is not inherently limited to permanent loss of write service. Promotion must select an eligible replica, redirect clients, and prevent the old primary from continuing as a writer—often through **fencing**, which blocks an obsolete writer. See [PostgreSQL replication](https://www.postgresql.org/docs/current/warm-standby.html) and [failover guidance](https://www.postgresql.org/docs/current/warm-standby-failover.html). Consensus-based designs such as [Raft](Distributed-Systems-Theorems-and-Data-Structures.md#raft) provide another context for safe leadership and replicated history.
 
-**Leaderless example for one key:**
+**Peer-to-Peer (Leaderless) Replication**
+
+These names answer different questions. **Peer-to-peer** describes nodes acting as peers; **leaderless** means writes do not pass through a permanent leader for each key. This Dynamo-style example has both properties. Peer-to-peer is a broader term, so it does not always mean leaderless replication. See [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html).
+
+**Overall architecture: peers communicate without a permanent primary.**
+
+```mermaid
+flowchart TB
+    A["Peer A"] <--> B["Peer B"]
+    A <--> C["Peer C"]
+    B <--> D["Peer D"]
+    C <--> D
+    A <--> D
+    B <--> C
+
+    classDef peer fill:#dbeafe,stroke:#111,color:#111
+    class A,B,C,D peer
+```
+
+Each peer can handle requests and hold replicas for its assigned keys. The arrows show possible peer communication—not a requirement to broadcast every write to every node or store every key everywhere. For example, a key with intended replicas A, B, and C does not also need a copy on D.
+
+**One request's flow: a coordinator contacts the key's replicas.**
 
 ```mermaid
 flowchart TB
@@ -1043,6 +1064,8 @@ flowchart TB
 ```
 
 The coordinator is a **request-handling role**, not necessarily a permanent leader or a separate machine. A storage node can coordinate a request and hold a replica. Different requests may use different coordinators. The diagram shows request/reply paths; it does not require all cluster nodes to exchange every write.
+
+The two diagrams show **the same model at different levels**: the first shows peer relationships; the second follows one request. Leaderless replication avoids dependence on a permanent primary for that key, but does not eliminate failures or guarantee lower latency. Progress still depends on reachable replicas, response thresholds, and conflict handling.
 
 Let **N** be the total intended replicas of a key, including its first owner. It differs from **m**, the total physical-node count used in the modulo example. For `N = 3`, a clockwise preference scan such as `A#0 → A#1 → B#0 → C#0 → D#0` selects intended physical owners **A, B, C**: A's second token does not count as another copy. Later candidates such as D can be considered by a fallback policy.
 
