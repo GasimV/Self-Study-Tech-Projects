@@ -42,6 +42,11 @@
   - [Coordinating Reads and Writes](#coordinating-reads-and-writes)
   - [Temporary Failures: Sloppy Quorums and Hinted Handoff](#temporary-failures-sloppy-quorums-and-hinted-handoff)
   - [Replica Repair and Merkle Trees](#replica-repair-and-merkle-trees)
+    - [What the Hashes Represent](#what-the-hashes-represent)
+    - [Building the Tree](#building-the-tree)
+    - [Finding and Repairing a Difference](#finding-and-repairing-a-difference)
+    - [Complexity and Practical Uses](#complexity-and-practical-uses)
+    - [C++ Teaching Example](#c-teaching-example)
   - [Membership, Gossip, and Failure Detection](#membership-gossip-and-failure-detection)
   - [Design Review and Interview Checklist](#design-review-and-interview-checklist)
 - [Amazon DynamoDB](#amazon-dynamodb)
@@ -1150,21 +1155,96 @@ This example follows the **historical Dynamo-style fallback placement** describe
 
 **Anti-entropy repair** compares replica state and transfers missing or differing data. It is useful after prolonged outages, incomplete propagation, or replacement; it is not limited to permanently failed nodes. A replacement needs data from surviving replicas or a suitable backup.
 
-A **Merkle tree** summarizes a dataset through hashes: leaves summarize records or ranges, and each parent summarizes its children. Compare equivalent key ranges using compatible ordering, encoding, and version/snapshot rules. Conceptually, record hashes must cover the **key, value, and relevant version/deletion state**, not only the key name; equal names with different values must be distinguishable.
+#### What the Hashes Represent
 
-| Comparison for keys k1–k4 | Observation | Next action |
+**A Merkle tree is a tree of hashes that helps replicas find where their data differs.**
+
+| Term | Simple meaning |
+| --- | --- |
+| **Data block** | The content being summarized: a record, file chunk, or a range of records. |
+| **Hash** | A fixed-size fingerprint calculated from bytes. The same bytes and hash function produce the same result. Different inputs can collide, so a hash is not a guaranteed unique ID. |
+| **Leaf hash** | The fingerprint of one block or range at the bottom of the tree. |
+| **Parent hash** | A hash calculated from its children's hashes in a defined order. |
+| **Root hash** | The top hash, summarizing the whole ordered dataset represented by the tree. |
+
+For security-sensitive integrity checks, use a suitable **cryptographic hash**, such as SHA-256, and a trustworthy reference root. An ordinary fast hash is not interchangeable with a cryptographic one. Even with cryptographic hashing, matching roots provide assurance under the hash assumptions—not a mathematical guarantee that collisions are impossible.
+
+**Replicas must compare the same thing:** equivalent key ranges, ordering, byte encoding, tree construction, and compatible snapshots/version rules. Record hashes must cover the **key, value, and relevant version/deletion state**, not only key names. Equal keys with different values must be distinguishable.
+
+#### Building the Tree
+
+Use four blocks in this fixed order: **Alice, Bob, Carol, Dave**. Here, each block is just a string so the structure is easy to see.
+
+1. Hash each block: `h1 = H(Alice)`, `h2 = H(Bob)`, `h3 = H(Carol)`, `h4 = H(Dave)`.
+2. Combine adjacent hashes in order: `h12 = H(h1 || h2)` and `h34 = H(h3 || h4)`.
+3. Hash the parents: `root = H(h12 || h34)`.
+
+`||` means **concatenate the bytes in order**, not add the numbers. Real implementations define unambiguous encodings and distinguish leaves from internal nodes; the [C++ example](examples/merkle_tree/README.md#core-state-and-hash-encoding) makes those rules explicit. Merkle trees need not all use this exact binary shape or padding policy. See [RFC 9162's construction](https://www.rfc-editor.org/rfc/rfc9162.html#section-2.1) for one cryptographic variant.
+
+Changing Carol to Carl changes that leaf's input. In this example, its leaf hash, its right-side parent, and the root change; the left subtree remains unchanged. **A point update only needs to recalculate the affected path**, not rebuild every node.
+
+#### Finding and Repairing a Difference
+
+Suppose two replicas initially match, then block 3 changes in B:
+
+| Block | Replica A | Replica B after modification |
+| --- | --- | --- |
+| 1 | Alice | Alice |
+| 2 | Bob | Bob |
+| 3 | Carol | Carl |
+| 4 | Dave | Dave |
+
+![Two Merkle trees locating Carol versus Carl at block 3: the matching left subtree is skipped and the differing right branch is compared.](assets/merkle-tree-repair.svg)
+
+The diagram uses **symbolic hash names**, not actual SHA-256 outputs. Build the hashes upward from the data; compare downward from the roots.
+
+| Comparison | Observation | Next action |
 | --- | --- | --- |
 | Whole-range roots | Different | Compare the two subranges |
-| Left subtree: k1–k2 | Equal | Skip this subtree under the hash assumptions |
-| Right subtree: k3–k4 | Different | Compare its children |
-| Record k3 | Different | Exchange state and apply reconciliation rules |
-| Record k4 | Equal | No repair needed for that record |
+| Left subtree: blocks 1–2 | Equal | Skip this subtree under the hash assumptions |
+| Right subtree: blocks 3–4 | Different | Compare its children |
+| Block 3: Carol / Carl | Different | Exchange state and apply reconciliation rules |
+| Block 4: Dave / Dave | Equal | No repair needed for this block |
 
-With suitable collision-resistant hashes and equivalent tree construction, matching roots indicate matching summarized state with the usual negligible collision risk. Different roots tell us **where to investigate**, not which replica has the correct version. Reconciliation rules determine the retained state; a newer deletion marker may need to suppress an older value.
+For this demonstration, **we explicitly choose A as the trusted source**. Copy only block 3 from A to B, update B's leaf-to-root path, and compare the roots again.
 
-Comparing only differing branches can reduce transferred data. Building and maintaining trees still costs storage/CPU/I/O, and extensive differences can require substantial transfer. Changed ownership ranges may require rebuilding affected trees, depending on the implementation.
+**The tree detects disagreement; it does not decide that Carl is wrong.** Either replica might be stale, or both versions might be legitimate concurrent updates. Reconciliation rules determine the retained state; a newer deletion marker may need to suppress an older value. Merkle trees cannot establish business correctness or recover a value whose every copy is gone.
 
-Merkle trees cannot recover a value whose every copy is gone, establish business correctness, or replace version handling. See [Cassandra's repair explanation](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html) for an implementation using range comparisons and Merkle trees.
+> **Recall:** Compare roots → skip matching branches → locate differing blocks → reconcile → check again.
+
+#### Complexity and Practical Uses
+
+For **N constant-size blocks**, a balanced binary tree, and **K differing blocks**, with trees already built where applicable:
+
+| Operation | Computational cost |
+| --- | --- |
+| Build all hashes | O(N) time and hash storage |
+| Compare compatible roots | O(1) |
+| Update one block's hash path | O(log N) |
+| Locate one differing block | O(log N) hash comparisons |
+| Locate K differences | O(min(N, 1 + K log N)) hash comparisons |
+| Comparison auxiliary space | O(log N) recursion plus O(K) returned indexes |
+
+Interpret logarithms as `log2(max(2, N))`; empty trees take constant work. These bounds assume usable hash comparisons. **A matching teaching hash can hide a difference**, so the non-cryptographic example is not a security verifier.
+
+For variable-size blocks, building also hashes all input bytes; updating hashes the changed block's bytes plus its ancestors. Hash storage is O(N), but it does **not necessarily double data storage**: overhead depends on digest size, block size, and tree layout.
+
+**Network cost is separate:** comparing trees exchanges hash information; repairing then transfers the differing payload bytes and any required metadata. Sparse differences can save substantial traffic, while extensive differences can approach a full transfer. Alternatives include exchanging per-block checksums, so “without Merkle trees, always transfer the entire dataset” is too strong.
+
+| Use | What the tree helps with |
+| --- | --- |
+| **Database replica repair** | Find out-of-sync ranges and transfer differences; [Cassandra](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html) uses this during repair. A range may contain many records. |
+| **Bitcoin transaction inclusion** | Check that a transaction is included under a particular Merkle root; this alone does not establish transaction validity or consensus. See the [Bitcoin developer guide](https://developer.bitcoin.org/devguide/block_chain.html#merkle-trees). |
+| **BitTorrent v2** | Verify file-block content using SHA-256 Merkle trees; see [BEP 52](https://www.bittorrent.org/beps/bep_0052.html). |
+| **Certificate Transparency** | Use Merkle proofs for log-entry inclusion and append-only consistency; see [RFC 9162](https://www.rfc-editor.org/rfc/rfc9162.html#section-2.1). |
+
+An inclusion proof and comparing two whole trees are different operations. This example implements tree comparison, not proof generation. Production repair also involves CPU, disk I/O, snapshot coordination, and recovery rules; changed ownership ranges may require rebuilding affected trees.
+
+#### C++ Teaching Example
+
+See the [DSA-style Merkle tree example](examples/merkle_tree/README.md) for **Build**, **Update**, **FindDifferences**, language-neutral pseudocode, and the Carol → Carl → repair walkthrough.
+
+It uses a fixed **64-bit FNV-1a teaching hash**, not SHA-256. It compares ordered string blocks in memory and relies on an explicit source-selection policy for the repair. It does not implement Cassandra repair, Bitcoin, BitTorrent, or Certificate Transparency protocols.
 
 ### Membership, Gossip, and Failure Detection
 
@@ -1275,6 +1355,9 @@ The later sections above reserve space for deeper study of particular families a
 - [Apache Cassandra: Token Placement, Replication, and Membership](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
 - [Apache Cassandra: Hints and Hinted Handoff](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/hints.html)
 - [Apache Cassandra: Replica Repair and Merkle Trees](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html)
+- [RFC 9162: Merkle Trees and Certificate Transparency](https://www.rfc-editor.org/rfc/rfc9162.html#section-2.1)
+- [Bitcoin Developer Guide: Merkle Trees](https://developer.bitcoin.org/devguide/block_chain.html#merkle-trees)
+- [BitTorrent BEP 52: Protocol v2 Merkle Trees](https://www.bittorrent.org/beps/bep_0052.html)
 - [PostgreSQL: Primary-Standby and Synchronous Replication](https://www.postgresql.org/docs/current/warm-standby.html)
 - [PostgreSQL: Failover and Preventing Competing Primaries](https://www.postgresql.org/docs/current/warm-standby-failover.html)
 - [Apache HBase: Data Model](https://hbase.apache.org/docs/datamodel/)

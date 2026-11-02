@@ -1,3 +1,7 @@
 # Include these study diagrams despite the repository's general SVG ignore rule.
 !assets/consistent-hashing-before-after.svg
 !assets/consistent-hashing-virtual-nodes.svg
+!assets/merkle-tree-repair.svg
+
+# Generated Unix executable; Windows executables are already ignored upstream.
+/examples/merkle_tree/merkle_tree_dsa
