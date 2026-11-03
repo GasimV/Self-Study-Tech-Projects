@@ -35,6 +35,10 @@
   - [Separate the Design Dimensions](#separate-the-design-dimensions)
   - [Database Types, Requirements, and Examples](#database-types-requirements-and-examples)
   - [Worked Example: Banking Platform with an AI Assistant](#worked-example-banking-platform-with-an-ai-assistant)
+  - [Worked Example: Global Autonomous Delivery Platform](#worked-example-global-autonomous-delivery-platform)
+    - [Storage Roles in the Delivery Platform](#storage-roles-in-the-delivery-platform)
+    - [Follow One Package Through the System](#follow-one-package-through-the-system)
+    - [Combine Roles Before Adding Engines](#combine-roles-before-adding-engines)
   - [How to Justify the Choice](#how-to-justify-the-choice)
 - [Key-Value Stores](#key-value-stores)
   - [What Is a Key-Value Store?](#what-is-a-key-value-store)
@@ -869,6 +873,82 @@ flowchart TB
 **Separate databases do not automatically share one transaction.** Committing a transfer in PostgreSQL does not make Redis, Neo4j, and ClickHouse change atomically with it. Define which store is authoritative and how other views catch up; do not imply that an uncoordinated sequence of writes is one atomic operation.
 
 Using different storage technologies for different needs is called **polyglot persistence**. It can help, but every extra system adds synchronization, access control, backup/recovery, upgrades, monitoring, and cost. A simpler deployment may satisfy several roles with PostgreSQL, JSON, full-text search, and suitable extensions. Introduce another engine when the measured workload and operating requirements justify it.
+
+### Worked Example: Global Autonomous Delivery Platform
+
+Imagine a service where customers order goods, warehouses prepare parcels, robots deliver them, and operators supervise the fleet with an AI assistant. Follow **order D4821**, carrying a fragile parcel from warehouse W2 using robot R17.
+
+**The goal is to understand fourteen storage roles within one solution—not to install fourteen databases.** Some choices are alternatives; several capabilities can share one engine.
+
+#### Storage Roles in the Delivery Platform
+
+| Database type or capability | Where it fits in this platform | Candidate and reason to evaluate it |
+| --- | --- | --- |
+| **Relational SQL / OLTP** | Store D4821, its customer, payment records, and related operational changes | **PostgreSQL:** transactions and constraints for changes that must commit together within this database |
+| **Distributed SQL** | Coordinate stock reservations if the required transaction spans regions | **CockroachDB or Spanner:** evaluate distributed transactional SQL; this may replace the core relational deployment rather than duplicate it |
+| **Embedded SQL** | R17 retains its assigned task and local progress during a disconnection | **SQLite:** local storage without a separate database-server process |
+| **Key-value** | Retrieve a session by ID or reuse a cached result | **Redis:** known-key access with defined expiration/invalidation; cached stock is not authority to promise a parcel |
+| **Document** | Store differing package attributes: fragile glass, refrigerated food, or items with different dimensions | **MongoDB or PostgreSQL JSONB:** nested records when their shape and queries fit; a separate document engine is optional |
+| **Wide-column** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or HBase:** model partition/row keys for those queries; use time buckets where needed to bound growth |
+| **Graph** | Investigate customers, accounts, devices, and orders connected to suspicious delivery activity | **Neo4j:** traverse relationships; a shared device is a signal to investigate, not proof of fraud |
+| **Time-series** | Monitor battery and temperature trends across the fleet | **InfluxDB or TimescaleDB:** time-window queries and retention suited to monitoring |
+| **Search** | Search free-text incident reports using terms, filters, and relevance | **Elasticsearch:** evaluate richer text retrieval; an exact lookup of D4821 alone does not justify another search engine |
+| **Vector** | Retrieve maintenance-manual passages related to an operator's question about R17 | **Qdrant or PostgreSQL + pgvector:** similarity retrieval over approved, access-controlled knowledge |
+| **Analytical SQL / OLAP** | Aggregate delivery cost, delays, and revenue across historical orders | **ClickHouse:** evaluate larger analytical scans without placing every report on the live order database |
+| **Geospatial** | Find nearby available robots and test whether an address lies inside a delivery zone | **PostgreSQL + PostGIS:** spatial predicates and indexes; robot assignment still needs a valid reservation |
+| **Event store** | Reconstruct D4821's lifecycle from created, reserved, dispatched, and delivered events | **KurrentDB:** an option when adopting event sourcing; ordinary SQL state/history may be enough instead |
+| **Tamper-evident history / ledger** | Verify recorded delivery confirmations and selected audit history against retained trusted evidence | **immudb:** detect inconsistent history under its verification assumptions; it cannot prove a parcel physically arrived |
+
+The [general selection table](#database-types-requirements-and-examples) explains the categories. This table applies them to **one platform**, without claiming that each role requires a separate installation.
+
+#### Follow One Package Through the System
+
+```mermaid
+flowchart TB
+    ORDER["1. Place order<br/>SQL / key-value / documents"]
+    RESERVE["2. Reserve inventory<br/>Distributed SQL if required"]
+    ASSIGN["3. Assign robot<br/>Geospatial"]
+    JOURNEY["4. Track journey<br/>Embedded SQL / wide-column / time-series"]
+    OUTCOME["5. Record outcome<br/>Event store / verifiable history"]
+    INCIDENT["6. Review an incident<br/>Search / vectors / graph"]
+    REPORT["7. Analyze history<br/>Analytical SQL / OLAP"]
+
+    ORDER --> RESERVE
+    RESERVE --> ASSIGN
+    ASSIGN --> JOURNEY
+    JOURNEY --> OUTCOME
+    JOURNEY -.-> INCIDENT
+    OUTCOME --> REPORT
+    INCIDENT --> REPORT
+
+    classDef stage fill:#dbeafe,stroke:#111,color:#111
+    classDef conditional fill:#fff3cd,stroke:#111,color:#111
+    class ORDER,ASSIGN,JOURNEY,OUTCOME,REPORT stage
+    class RESERVE,INCIDENT conditional
+```
+
+**This is a learning journey, not a database-write protocol.** The incident branch is optional and may occur during or after a delivery. The labels name candidate storage roles, not mandatory products.
+
+1. **Checkout:** The customer signs in; a key-value lookup may retrieve the session. The order service records D4821 and its related operational data transactionally. Package attributes can remain in PostgreSQL JSONB or use a document model when justified. A transaction in the order database does not automatically include an external payment provider.
+2. **Reserve stock:** The service checks and reserves actual inventory using the required concurrency rules. If reservations need distributed transactions across regions, evaluate a distributed SQL deployment. Merely having customers in several countries does not require it.
+3. **Assign R17:** A geospatial query finds suitable nearby candidates. The application checks availability, capacity, and permissions, then reserves the chosen robot so two orders cannot claim it incompatibly. Proximity alone is not an assignment.
+4. **Track the journey:** R17 keeps local task progress in SQLite; disconnection does not erase it. Incoming readings can feed keyed history storage and time-series monitoring. On reconnection, local progress must be reconciled with central state; local storage alone does not resolve conflicting assignments or replace control/safety mechanisms.
+5. **Record delivery:** Retain the relevant lifecycle changes. With event sourcing, an event stream can be authoritative and current-state tables are projections. With ordinary SQL state, events/history can be recorded as supporting outputs. **Choose the authority; do not maintain two independently authoritative order histories.** Verifiable audit records can help detect later changes to recorded evidence, without proving its physical truth.
+6. **Investigate an incident:** Suppose R17 reported a temperature warning. Keyword search finds related incident reports; vector retrieval finds relevant manual passages for the operator's AI assistant. Separately, graph queries can investigate suspicious customer/device/order relationships. Retrieved text or a graph match does not automatically authorize a physical action or establish fraud.
+7. **Review results:** Analytical queries summarize cost and delay by warehouse, country, and month. These prepared copies can lag; they are not the source for deciding whether D4821 is currently paid, reserved, or delivered.
+
+#### Combine Roles Before Adding Engines
+
+A modest first version might use **PostgreSQL centrally and SQLite on robots**, evaluating JSONB, full-text search, PostGIS, or pgvector within PostgreSQL as requirements arise. This is a possible starting point, not a guarantee that it satisfies every workload.
+
+- **Relational versus distributed SQL:** Choose the deployment needed for the transaction and geography requirements. Do not add a second authoritative database just to demonstrate both labels.
+- **Wide-column versus time-series:** Their roles overlap. One engine may satisfy both historical-reading and monitoring queries; use two only when distinct requirements justify the extra pipeline and storage.
+- **Event store versus SQL history:** Adopt event sourcing deliberately. It is not a mandatory extra copy for every order service.
+- **Specialized copies:** Caches, search/vector indexes, graphs, and analytical views need ownership, access controls, update/deletion propagation, retention, and recovery. Retries must not duplicate business side effects; copying data between stores does not create a shared transaction.
+
+Use the [data-pipeline notes](Data-Engineering-for-Solution-Architecture.md#reliability-governance-and-operations), [AI retrieval explanation](AI-Systems-Design.md#knowledge-ingestion-and-retrieval), and [choice-justification template](#how-to-justify-the-choice) to evaluate each proposed addition.
+
+> **Recall:** One delivery creates many query patterns. Cover the required roles with as few independently operated systems as practical.
 
 ### How to Justify the Choice
 
