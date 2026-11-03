@@ -31,6 +31,11 @@
     - [Schemas, Atomicity, and Design Limits](#schemas-atomicity-and-design-limits)
   - [Relational and NoSQL Trade-Offs](#relational-and-nosql-trade-offs)
     - [Database Selection Checklist](#database-selection-checklist)
+- [Database Selection by Requirements](#database-selection-by-requirements)
+  - [Separate the Design Dimensions](#separate-the-design-dimensions)
+  - [Database Types, Requirements, and Examples](#database-types-requirements-and-examples)
+  - [Worked Example: Banking Platform with an AI Assistant](#worked-example-banking-platform-with-an-ai-assistant)
+  - [How to Justify the Choice](#how-to-justify-the-choice)
 - [Key-Value Stores](#key-value-stores)
   - [What Is a Key-Value Store?](#what-is-a-key-value-store)
   - [Why Use Key-Value Stores in Distributed Systems?](#why-use-key-value-stores-in-distributed-systems)
@@ -106,6 +111,8 @@ flowchart TB
 ```
 
 This is **not an exhaustive or mutually exclusive taxonomy**. Products can support several models, and query language does not uniquely determine storage architecture. For example, a relational database can store and query JSON; [PostgreSQL's JSON types](https://www.postgresql.org/docs/current/datatype-json.html) illustrate that overlap.
+
+For a practical mapping from requirements to database candidates, see [Database Selection by Requirements](#database-selection-by-requirements).
 
 ### Relational Databases
 
@@ -734,6 +741,8 @@ For distributed analytical workloads, [Greenplum's MPP architecture](#greenplum-
 
 #### Database Selection Checklist
 
+Use these questions with the [practical selection guide](#database-selection-by-requirements) below.
+
 1. What are the main reads, writes, searches, traversals, and aggregations?
 2. Which invariants and multi-record transaction boundaries must hold?
 3. What freshness and concurrency guarantees does each operation require?
@@ -745,6 +754,145 @@ For distributed analytical workloads, [Greenplum's MPP architecture](#greenplum-
 Use [CAP](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem) and [PACELC](Distributed-Systems-Theorems-and-Data-Structures.md#pacelc-theorem) to reason about relevant distributed trade-offs—not to assign every product a permanent SQL/NoSQL consistency category. For a small workload, a simpler deployment can be a sound design.
 
 > **Choose the data model and guarantees for the workload, then validate the engine and deployment. Neither “relational” nor “NoSQL” is a universal winner.**
+
+## Database Selection by Requirements
+
+**Choose a database by the operations and guarantees you need, not simply by application size or the SQL/NoSQL label.** Use the [Database Selection Checklist](#database-selection-checklist) to gather requirements, then use the mapping below to identify candidates.
+
+### Separate the Design Dimensions
+
+These labels answer different questions:
+
+| Dimension | Question | Examples |
+| --- | --- | --- |
+| **Data model** | How is information represented and related? | Relational tables, documents, key-value pairs, graphs |
+| **Workload or capability** | What operations must the system support? | Transactions, analytics, time-series, text search, vector search |
+| **Storage layout** | How are values arranged for storage and processing? | Row-oriented, column-oriented |
+| **Deployment** | Where does the engine run and how is work distributed? | Embedded in an application, single-server, distributed |
+
+> **Both relational and NoSQL databases can be distributed. “Distributed,” “columnar,” and “NoSQL” are not interchangeable labels.**
+
+For example, SQLite is relational and embedded; Greenplum is relational and distributed; PostgreSQL can support documents and specialized indexes without becoming a different physical database for every capability. “Embedded” and “distributed SQL” are deployment/architecture descriptions, not additional non-relational data models.
+
+Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trade-offs), [Greenplum MPP example](#greenplum-relational-analytics-with-mpp), and [wide-column versus analytical columnar distinction](#wide-column-vs-analytical-columnar-storage).
+
+### Database Types, Requirements, and Examples
+
+**These are evaluation candidates, not automatic recommendations.** Rows overlap, and product capabilities depend on versions, configuration, deployment, and operations. No row promises a particular latency, scale, availability, or level of correctness.
+
+| Family or capability | Requirement | Concrete example | Representative implementations |
+| --- | --- | --- | --- |
+| **Relational approaches** | | | |
+| **Relational SQL / OLTP** | Related records, constraints, and changes that must commit together | Transfer $100: debit one account and credit another in one transaction | PostgreSQL, MySQL, SQL Server, Oracle Database |
+| **Distributed SQL** | Transactional SQL with required distribution, partitioning, and geographic placement | Keep account operations consistent across the regions the service must support | CockroachDB, YugabyteDB, Google Spanner |
+| **Embedded SQL** | Local relational storage without a separate database server | A mobile app keeps offline preferences and locally saved data | SQLite |
+| **Common NoSQL models** | | | |
+| **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, Amazon DynamoDB, Aerospike |
+| **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, Amazon DynamoDB |
+| **Wide-column** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, Apache HBase, Google Bigtable |
+| **Graph** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | Neo4j, Amazon Neptune, TigerGraph |
+| **Specialized workloads and capabilities** | | | |
+| **Time-series** | Timestamped ingestion, time-window queries, and retention rules | Calculate hourly temperature and CPU-usage trends from a robot fleet | InfluxDB, TimescaleDB, OpenTSDB |
+| **Search** | Keyword matching, filters, and relevance ranking | Search product descriptions or application logs for matching terms | Elasticsearch, OpenSearch, Apache Solr |
+| **Vector** | Similarity retrieval over embeddings, with appropriate metadata filters | Retrieve approved documents related to an AI assistant's question | Qdrant, Milvus, Weaviate, Pinecone, PostgreSQL + pgvector |
+| **Analytical SQL / OLAP, often columnar** | Larger scans and aggregations over historical data | Calculate revenue by country across a billion historical sales records | ClickHouse, DuckDB, BigQuery, Snowflake |
+| **Geospatial** | Spatial indexes and geographic predicates such as distance or containment | Find available drivers within five kilometres of a customer | PostgreSQL + PostGIS, MongoDB geospatial capabilities |
+| **Event store** | Retain ordered business events and replay them using application rules | Reconstruct an order from its created, paid, and dispatched events | KurrentDB (formerly EventStoreDB) |
+| **Tamper-evident history / ledger** | Verify recorded history against cryptographic evidence and retained trusted state | Check whether an audit-history record has been altered | immudb |
+
+**Read the table with these distinctions:**
+
+- **Transactions and consistency:** SQL does not automatically mean every read sees the latest state; NoSQL does not mean transactions are absent. Check the required operation and deployment. See [Transactions and ACID](#transactions-and-acid) and [Schemas, Transactions, and Consistency](#schemas-transactions-and-consistency).
+- **Distribution:** More regions or replicas introduce coordination, latency, and failure trade-offs. Distributed SQL does not make cross-region transactions free; [Spanner's schema documentation](https://docs.cloud.google.com/spanner/docs/schema-and-data-model) illustrates relational data distributed across nodes.
+- **Embedded:** SQLite runs inside the application process; it does not need a separate database-server process. See [SQLite's explanation](https://www.sqlite.org/serverless.html).
+- **Wide-column:** Model the queries and keep partitions bounded. For sensor history, a device-and-time-bucket key can prevent one device's lifetime history becoming one ever-growing partition. See [Cassandra's partition-modeling guidance](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_refining.html). Wide-column is not the same as analytical columnar storage.
+- **Capabilities overlap:** [PostgreSQL + pgvector](https://github.com/pgvector/pgvector) and [PostgreSQL + PostGIS](https://postgis.net/documentation/) mean PostgreSQL with extensions, not separate database products named pgvector or PostGIS. PostgreSQL also supports JSON and [full-text search](https://www.postgresql.org/docs/current/textsearch.html); [Elasticsearch](https://www.elastic.co/docs/products/elasticsearch) supports vector search as well as text search.
+- **Events versus evidence:** An event store supports reconstructing state from retained events; a tamper-evident store supports detecting inconsistent history under its verification assumptions. Neither makes the original information true, guarantees it can never be deleted, or automatically supplies a complete accounting ledger. [KurrentDB's documentation](https://docs.kurrent.io/getting-started/kurrent-ecosystem) confirms the EventStoreDB rename; [immudb](https://github.com/codenotary/immudb) illustrates verifiable history. Compare the [Merkle-tree limitations](#finding-and-repairing-a-difference).
+
+For existing worked comparisons, see [MongoDB document modeling](#mongodb-document-modeling-and-queries) and [PostgreSQL, Greenplum, or ClickHouse selection](#quick-selection-postgresql-greenplum-or-clickhouse). These categories are a study map, not an exhaustive or mutually exclusive taxonomy.
+
+### Worked Example: Banking Platform with an AI Assistant
+
+**One application can have different storage needs.** Here is an illustrative allocation of roles—not a production banking design or a requirement to install six databases.
+
+| Role | Candidate | Why consider it? |
+| --- | --- | --- |
+| **Authoritative accounts and transactions** | PostgreSQL | Record approved account changes with the required transactions, constraints, and access controls |
+| **Optional cache and sessions** | Redis | Reuse selected results and look up session state by key |
+| **Optional keyword search** | Elasticsearch | Search approved documents or permitted operational records by terms and filters |
+| **Optional semantic retrieval** | Qdrant **or** PostgreSQL + pgvector | Find relevant approved knowledge for an AI answer |
+| **Optional relationship analysis** | Neo4j | Explore connections during fraud review; connections alone do not prove fraud |
+| **Optional analytical reporting** | ClickHouse | Run historical aggregations without placing every report on the operational database |
+
+```mermaid
+flowchart TB
+    APP["Banking app + AI assistant"] --> API["Authorized business APIs"]
+    API -->|"Read / write"| SQL["PostgreSQL<br/>Accounts and transfers"]
+
+    subgraph OPTIONAL["Optional specialist roles"]
+        CACHE["Redis<br/>Cache / sessions"]
+        TEXT["Elasticsearch<br/>Keyword search"]
+        VECTOR["Qdrant or PostgreSQL<br/>+ pgvector<br/>Semantic retrieval"]
+        GRAPH["Neo4j<br/>Relationship analysis"]
+        ANALYTICS["ClickHouse<br/>Reporting"]
+    end
+
+    API --> CACHE
+    API --> TEXT
+    API --> VECTOR
+    API --> GRAPH
+    API --> ANALYTICS
+
+    SQL -.->|"Committed changes"| PIPE["Background CDC / ETL"]
+    PIPE -.->|"Build views"| GRAPH
+    PIPE -.->|"Build views"| ANALYTICS
+    DOCS["Approved knowledge<br/>documents"] -.-> INGEST["Document indexing"]
+    INGEST -.->|"Text index"| TEXT
+    INGEST -.->|"Embeddings"| VECTOR
+
+    classDef primary fill:#dbeafe,stroke:#111,color:#111
+    classDef optional fill:#fff3cd,stroke:#111,color:#111
+    classDef pipeline fill:#ecfdf5,stroke:#111,color:#111
+    class APP,API,SQL primary
+    class CACHE,TEXT,VECTOR,GRAPH,ANALYTICS optional
+    class PIPE,DOCS,INGEST pipeline
+```
+
+**Solid arrows show application access; dotted arrows show background data updates.** Query results return to the caller; arrows are not broadcasts. The optional group names roles: PostgreSQL + pgvector may run in the same database as other tables, rather than requiring another installation.
+
+1. **A customer asks for their balance:** The authorized business API reads the authoritative account state with the required read guarantees. The AI assistant does not infer a live balance from similar documents or treat a stale cache as authoritative.
+2. **A customer asks about an approved policy:** Retrieve permitted documents using keywords, vectors, or both. Enforce access before giving evidence to the model; retrieval does not guarantee that its final answer is correct.
+3. **An analyst requests a historical report or relationship investigation:** Query the prepared views, knowing their freshness and completeness. These views can lag behind operational changes.
+
+**CDC** means *change data capture*; **ETL** means *extract, transform, load*. The background arrows stand for designed pipelines, not automatic cross-product replication. They need update/deletion propagation, replay or rebuilding, recovery, and access-control policies. Caches need explicit expiration or invalidation; sessions need their own security and lifecycle rules. See [data ingestion](Data-Engineering-for-Solution-Architecture.md#data-ingestion), [AI retrieval](AI-Systems-Design.md#knowledge-ingestion-and-retrieval), and [authorization enforcement](Identity-and-Access-Management.md#authorization-in-practice).
+
+**Separate databases do not automatically share one transaction.** Committing a transfer in PostgreSQL does not make Redis, Neo4j, and ClickHouse change atomically with it. Define which store is authoritative and how other views catch up; do not imply that an uncoordinated sequence of writes is one atomic operation.
+
+Using different storage technologies for different needs is called **polyglot persistence**. It can help, but every extra system adds synchronization, access control, backup/recovery, upgrades, monitoring, and cost. A simpler deployment may satisfy several roles with PostgreSQL, JSON, full-text search, and suitable extensions. Introduce another engine when the measured workload and operating requirements justify it.
+
+### How to Justify the Choice
+
+Write down five things:
+
+1. **Requirement:** What must the application do, and what must remain correct?
+2. **Candidate:** Which engine and deployment will you evaluate?
+3. **Why it fits:** Which capabilities match the requirement?
+4. **Trade-off:** What coordination, freshness, maintenance, or cost burden comes with it?
+5. **Evidence needed:** What measurements and failure/recovery checks would justify the decision?
+
+| Justification | Atomic account transfer | Historical analytical reporting |
+| --- | --- | --- |
+| **Requirement** | Debit and credit commit together; concurrent transfers preserve defined account rules | Aggregate historical transactions by country/month without unacceptable impact on live requests |
+| **Candidate** | PostgreSQL, with isolation, constraints, read routing, and recovery chosen for the workload | ClickHouse, compared against the existing PostgreSQL solution and the reporting requirements |
+| **Why it fits** | Multi-statement transactions, relational constraints, and SQL support the modeled operations | Column-oriented analytical execution can suit larger scans and aggregations |
+| **Trade-off** | Write capacity, replication/failover, transaction contention, and operational work still need design | A separate analytical copy adds ingestion lag, synchronization, storage, and maintenance |
+| **Evidence needed** | Realistic transfers under concurrency; latency targets; rollback/retry behavior; failover; tested restore | Representative queries and concurrent ingestion; latency/freshness targets; reconciliation; failed-pipeline recovery |
+
+For both candidates, validate the expected data sizes, throughput, indexes or partitioning, security, backup/restore, team expertise, and total operating cost. Set measurable latency targets—for example, a required 95th-percentile response time—instead of assuming a product is “fast.” Include resource contention and relevant failures, not just an isolated successful query.
+
+Use the [existing checklist](#database-selection-checklist) and [database operating questions](#why-applications-use-databases) to record the supporting evidence. For a normal business application, a familiar general-purpose relational engine is a sensible starting candidate; it is not a universal winner or a reason to ignore requirements for other models.
+
+> **Choose by required operations and guarantees. Add another database when its benefit justifies another system to synchronize and operate.**
 
 ## Key-Value Stores
 
@@ -1308,6 +1456,8 @@ Transactions, constraints, indexes, partitioning, and recovery mechanisms must b
 
 The later sections above reserve space for deeper study of particular families and implementations; their internals are not covered by this introduction.
 
+The [selection guide](#database-selection-by-requirements) maps requirements to database candidates and shows how a banking platform can combine authoritative records with optional caches, search, and analytical views. Each added system needs a clear role and a justified operating cost.
+
 > **Recall:** Start with the queries and invariants. Then choose the model, guarantees, engine, and operating strategy—not the other way around.
 
 ## Related Notes
@@ -1377,3 +1527,14 @@ The later sections above reserve space for deeper study of particular families a
 - [Tanzu: Greenplum on Kubernetes](https://blogs.vmware.com/tanzu/greenplum-on-kubernetes/)
 - [Yandex Cloud: Greenplum Storage Layouts](https://yandex.cloud/en/docs/managed-greenplum/concepts/tables)
 - [Yandex Cloud: Greenplum Data Distribution](https://yandex.cloud/en/docs/managed-greenplum/concepts/sharding)
+- [SQLite: Embedded Operation Without a Separate Server](https://www.sqlite.org/serverless.html)
+- [PostgreSQL: Full-Text Search](https://www.postgresql.org/docs/current/textsearch.html)
+- [pgvector: Vector Similarity Search Extension for PostgreSQL](https://github.com/pgvector/pgvector)
+- [PostGIS: Spatial Capabilities for PostgreSQL](https://postgis.net/documentation/)
+- [Google Bigtable: Data Model and Row-Key Access](https://docs.cloud.google.com/bigtable/docs/overview)
+- [Apache Cassandra: Partition Sizing and Bucketing](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_refining.html)
+- [InfluxDB: Time-Series Data and Use Cases](https://docs.influxdata.com/influxdb3/core/)
+- [Elasticsearch: Search, Analytics, and Vector Capabilities](https://www.elastic.co/docs/products/elasticsearch)
+- [Qdrant: Vector Similarity Search and Metadata Filtering](https://qdrant.tech/documentation/overview/)
+- [KurrentDB: Event Streams and the EventStoreDB Rename](https://docs.kurrent.io/getting-started/kurrent-ecosystem)
+- [immudb: Verifiable History](https://github.com/codenotary/immudb)
