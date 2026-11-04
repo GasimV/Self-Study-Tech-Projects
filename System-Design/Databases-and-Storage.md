@@ -59,6 +59,26 @@
   - [Membership, Gossip, and Failure Detection](#membership-gossip-and-failure-detection)
   - [Design Review and Interview Checklist](#design-review-and-interview-checklist)
 - [Amazon DynamoDB](#amazon-dynamodb)
+  - [DynamoDB Overview and Responsibilities](#dynamodb-overview-and-responsibilities)
+  - [Tables, Items, Attributes, and Flexible Schema](#tables-items-attributes-and-flexible-schema)
+  - [Partitioning and Primary Keys](#partitioning-and-primary-keys)
+    - [Horizontal and Vertical Partitioning](#horizontal-and-vertical-partitioning)
+    - [Partition Keys and Sort Keys](#partition-keys-and-sort-keys)
+  - [API Operations and Query Patterns](#api-operations-and-query-patterns)
+    - [Worked Requests: Customer Orders](#worked-requests-customer-orders)
+    - [GetItem, Query, and Scan](#getitem-query-and-scan)
+  - [Secondary Indexes: GSI and LSI](#secondary-indexes-gsi-and-lsi)
+  - [Capacity, Bursting, and Hot Partitions](#capacity-bursting-and-hot-partitions)
+    - [On-Demand and Provisioned Capacity](#on-demand-and-provisioned-capacity)
+    - [Read and Write Capacity Units](#read-and-write-capacity-units)
+    - [Burst, Adaptive, and Warm Throughput](#burst-adaptive-and-warm-throughput)
+  - [Architecture, Availability, and Read Guarantees](#architecture-availability-and-read-guarantees)
+    - [Published DynamoDB Architecture (2022)](#published-dynamodb-architecture-2022)
+    - [Admission Control and Splitting (2022)](#admission-control-and-splitting-2022)
+    - [Failure Handling and Gray Failures (2022)](#failure-handling-and-gray-failures-2022)
+    - [Current Read Consistency and Transactions](#current-read-consistency-and-transactions)
+    - [Availability, Freshness, Durability, and Recovery](#availability-freshness-durability-and-recovery)
+  - [DynamoDB Design Checklist](#dynamodb-design-checklist)
 - [Column-Family Databases](#column-family-databases)
 - [Apache HBase](#apache-hbase)
 - [Graph Databases](#graph-databases)
@@ -426,7 +446,7 @@ The application checks the relevant rules and groups the debit and credit within
 
 | Family | Main organization | Simple access-pattern example | Representative systems |
 | --- | --- | --- | --- |
-| **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, Amazon DynamoDB |
+| **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, [Amazon DynamoDB](#amazon-dynamodb) |
 | **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | [MongoDB](#mongodb-document-modeling-and-queries), Apache CouchDB |
 | **Column-family / wide-column** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, Apache HBase |
 | **Graph** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | Neo4j, Amazon Neptune |
@@ -791,8 +811,8 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | **Distributed SQL** | Transactional SQL with required distribution, partitioning, and geographic placement | Keep account operations consistent across the regions the service must support | CockroachDB, YugabyteDB, Google Spanner |
 | **Embedded SQL** | Local relational storage without a separate database server | A mobile app keeps offline preferences and locally saved data | SQLite |
 | **Common NoSQL models** | | | |
-| **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, Amazon DynamoDB, Aerospike |
-| **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, Amazon DynamoDB |
+| **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, [Amazon DynamoDB](#amazon-dynamodb), Aerospike |
+| **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, [Amazon DynamoDB](#amazon-dynamodb) |
 | **Wide-column** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, Apache HBase, Google Bigtable |
 | **Graph** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | Neo4j, Amazon Neptune, TigerGraph |
 | **Specialized workloads and capabilities** | | | |
@@ -1075,7 +1095,7 @@ The introductory requirements lead to these design questions:
 | **Configurability** | [Specify R/W thresholds and their limits](#coordinating-reads-and-writes). |
 | **Fault tolerance and failure detection** | [Handle temporary failures](#temporary-failures-sloppy-quorums-and-hinted-handoff), [repair replicas](#replica-repair-and-merkle-trees), and [manage membership](#membership-gossip-and-failure-detection). |
 
-The original [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) is a concrete example combining partitioning, replication, versioning, and application-assisted conflict handling. **Dynamo is the historical system described in that paper; Amazon DynamoDB is a separate managed product.** These techniques and their guarantees must be evaluated together rather than assumed from the key-value model.
+The original [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) is a concrete example combining partitioning, replication, versioning, and application-assisted conflict handling. **Dynamo is the historical system described in that paper; [Amazon DynamoDB](#amazon-dynamodb) is a separate managed product.** These techniques and their guarantees must be evaluated together rather than assumed from the key-value model.
 
 > **Recall:** A simple key-based API can hide a complex distributed design. Specify what success, missing data, concurrent updates, and failures mean before choosing the mechanisms.
 
@@ -1510,7 +1530,389 @@ A brief outage need not trigger permanent removal and full redistribution. Defin
 
 ## Amazon DynamoDB
 
-> Study notes to be added.
+### DynamoDB Overview and Responsibilities
+
+**Amazon DynamoDB is an AWS-managed, serverless key-value and document database.** Applications use its APIs without operating the underlying database servers. Serverless does not remove the need to model data, plan access, or manage costs and permissions.
+
+| AWS manages | Application designers decide |
+| --- | --- |
+| Server infrastructure, physical partitions, and replication | Keys, item structure, indexes, and access patterns |
+| Service maintenance and infrastructure failure handling | Capacity mode, workload testing, and application failure behavior |
+| Managed database facilities | Permissions, business rules, backup/restore configuration, and recovery checks |
+
+DynamoDB stores partitions on SSD-backed infrastructure and replicates them across multiple **Availability Zones (AZs)** within a Region. An AZ can contain more than one data centre. Multi-AZ replication and replication across **Regions** are different scopes. See [DynamoDB partitions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html) and [AWS AZ definitions](https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions-availability-zones.html).
+
+**DynamoDB is a separate service from the historical Dynamo system.** Do not assume the earlier leaderless teaching design describes DynamoDB's internals. Compare the [original Dynamo explanation](#design-topics-to-study-next) and the [published DynamoDB architecture](#published-dynamodb-architecture-2022) below.
+
+### Tables, Items, Attributes, and Flexible Schema
+
+Use a fictional table named **Orders**:
+
+| Component | Meaning in this example |
+| --- | --- |
+| **Table** | The collection named `Orders` |
+| **Item** | One order record |
+| **Attribute** | A field such as `Status`, `OrderId`, or `CreatedAt` |
+| **Primary key** | The `PK` and `SK` values together identify one item |
+
+Both key attributes are strings. The starting data is:
+
+| PK: partition key | SK: sort key | OrderId | Status | CreatedAt |
+| --- | --- | --- | --- | --- |
+| `CUSTOMER#42` | `ORDER#D4821` | D4821 | CREATED | 2026-01-10T10:00:00Z |
+| `CUSTOMER#42` | `ORDER#D4822` | D4822 | DELIVERED | 2026-01-09T09:00:00Z |
+| `CUSTOMER#99` | `ORDER#D9001` | D9001 | CREATED | 2026-01-10T11:00:00Z |
+
+`PK` and `SK` are names chosen by the application, not mandatory DynamoDB attribute names.
+
+**Flexible schema means non-key attributes can vary.** One order might include a nested delivery address; another might include special handling instructions. Table/index key definitions and their supported types are explicit. Applications still need validation, compatible readers, and migration planning. Not all NoSQL databases store documents or automatically outperform relational databases.
+
+The documented maximum item size is **400 KB**, including attribute names and values. DynamoDB uses `1 KB = 1024 bytes`. Flexible attributes do not allow unlimited-size items. See [core components](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.CoreComponents.html) and [item constraints](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html).
+
+### Partitioning and Primary Keys
+
+#### Horizontal and Vertical Partitioning
+
+| Approach | What is divided? | Simple example |
+| --- | --- | --- |
+| **Horizontal partitioning** | Rows/items | Put student rows 1–2 in one group and row 3 in another |
+| **Vertical partitioning** | Attributes | Separate names from subjects/grades, retaining the student ID |
+
+```mermaid
+flowchart TB
+    STUDENTS["Students: Id, Name, Subject, Grade<br/>1 Tom Math A<br/>2 Mike English B<br/>3 Rob Physics A"]
+    STUDENTS --> HORIZONTAL["Horizontal: divide rows"]
+    STUDENTS --> VERTICAL["Vertical: divide attributes"]
+    HORIZONTAL --> H1["Rows 1 and 2<br/>Tom / Math / A<br/>Mike / English / B"]
+    HORIZONTAL --> H2["Row 3<br/>Rob / Physics / A"]
+    VERTICAL --> V1["Id + Name<br/>1 Tom<br/>2 Mike<br/>3 Rob"]
+    VERTICAL --> V2["Id + Subject + Grade<br/>1 Math A<br/>2 English B<br/>3 Physics A"]
+
+    classDef source fill:#dbeafe,stroke:#111,color:#111
+    classDef split fill:#fff3cd,stroke:#111,color:#111
+    class STUDENTS source
+    class HORIZONTAL,VERTICAL,H1,H2,V1,V2 split
+```
+
+**This is a general modeling illustration, not actual DynamoDB placement.** Horizontal grouping here is arbitrary, not a claim about hash results. Vertical modeling remains possible with flexible attributes—for example, separating information into related items. It is also different from a physical column-oriented storage layout.
+
+DynamoDB automatically manages physical partition allocation, movement, and splitting. Customers do not manually assign items to storage servers or split physical partitions. Designers can change application-level key patterns or introduce write-sharding keys when justified; those are different decisions from AWS's physical management.
+
+#### Partition Keys and Sort Keys
+
+| Primary-key design | What must be unique? | Direct item lookup |
+| --- | --- | --- |
+| **Partition key only** | Each partition-key value | Supply the partition key |
+| **Partition key + sort key** | Each complete pair; partition-key values may repeat | Supply both key values |
+
+For the Orders table, `CUSTOMER#42` alone describes a group of orders. The pair `CUSTOMER#42 / ORDER#D4821` identifies one order.
+
+```mermaid
+flowchart TB
+    PK["Partition key<br/>CUSTOMER#42"] --> ROUTING["Internal hash and routing metadata"]
+    ROUTING --> STORAGE["AWS-managed physical partitions<br/>and replicas"]
+    SK["Sort key<br/>ORDER#D4821"] --> SELECT["Select the complete key pair"]
+    STORAGE --> SELECT
+    SELECT --> ITEM["One item: D4821"]
+
+    classDef key fill:#fff3cd,stroke:#111,color:#111
+    classDef step fill:#dbeafe,stroke:#111,color:#111
+    class PK,SK key
+    class ROUTING,STORAGE,SELECT,ITEM step
+```
+
+The **partition key** participates in hash-based routing; the **sort key** distinguishes and orders items within the logical item collection. The sort key is not simply another value hashed together with the partition key.
+
+An **item collection** means items sharing a partition-key value. Do not equate it permanently with one physical partition: collections can be split when supported; an LSI introduces additional restrictions. See [partition and sort-key distribution](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html).
+
+Choose keys for real queries and traffic distribution. A single popular key can remain a bottleneck even when the table has ample total capacity. Cross-link: [partitioning and hashing foundations](#scalability-partitioning-and-consistent-hashing).
+
+### API Operations and Query Patterns
+
+| Operation | Main behavior | Important default |
+| --- | --- | --- |
+| **PutItem** | Create or replace a complete item with its full key | An existing item with that key is replaced unless a condition prevents it |
+| **UpdateItem** | Change selected attributes | Can create an item if it is missing |
+| **GetItem** | Read one item using its complete primary key | Eventual consistency unless strong consistency is requested |
+| **DeleteItem** | Delete one item using its complete primary key | Deleting an absent item without conditions succeeds |
+| **Query** | Read items matching one partition-key value, optionally restricting the sort key | Results are ordered by sort key; pagination can apply |
+
+See the official [PutItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html), [UpdateItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html), [GetItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html), and [DeleteItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html) references.
+
+#### Worked Requests: Customer Orders
+
+**These are language-neutral API-style examples, not executable SDK syntax.** Names such as `Condition`, `Set`, and `KeyCondition` below describe intent. Real SDK requests use exact expression syntax, attribute aliases, and value encoding.
+
+Assume the three starting items above, no concurrent writes, and a small result fitting one page. The new order is D4823.
+
+**1. Create it without replacing an existing item.**
+
+```text
+PutItem(
+    Table = "Orders",
+    Item = {
+        PK: "CUSTOMER#42", SK: "ORDER#D4823",
+        OrderId: "D4823", Status: "CREATED",
+        CreatedAt: "2026-01-10T12:00:00Z"
+    },
+    Condition = attribute_not_exists(PK)
+)
+Expected: success; D4823 is created.
+```
+
+The condition checks the targeted item identified by the full key. It does not prevent other orders sharing `CUSTOMER#42`. Repeating this create while D4823 exists produces a conditional-check failure instead of overwriting it.
+
+**2. Update an existing item.**
+
+```text
+UpdateItem(
+    Table = "Orders",
+    Key = {PK: "CUSTOMER#42", SK: "ORDER#D4823"},
+    Set = {Status: "DISPATCHED"},
+    Condition = attribute_exists(PK),
+    ReturnValues = "ALL_NEW"
+)
+Expected attributes:
+    {PK: "CUSTOMER#42", SK: "ORDER#D4823", OrderId: "D4823",
+     Status: "DISPATCHED", CreatedAt: "2026-01-10T12:00:00Z"}
+```
+
+The condition prevents an accidental upsert when the item is missing. Existence alone does not validate a business transition; a real workflow may also require an expected status or version.
+
+**3. Read the updated item.**
+
+```text
+GetItem(
+    Table = "Orders",
+    Key = {PK: "CUSTOMER#42", SK: "ORDER#D4823"},
+    ConsistentRead = true
+)
+Expected Item:
+    {PK: "CUSTOMER#42", SK: "ORDER#D4823", OrderId: "D4823",
+     Status: "DISPATCHED", CreatedAt: "2026-01-10T12:00:00Z"}
+```
+
+**4. Query customer 42's orders.**
+
+```text
+Query(
+    Table = "Orders",
+    KeyCondition = PK equals "CUSTOMER#42",
+    ConsistentRead = true,
+    Projection = [SK, Status]
+)
+Expected Items, in ascending sort-key order:
+    [{SK: "ORDER#D4821", Status: "CREATED"},
+     {SK: "ORDER#D4822", Status: "DELIVERED"},
+     {SK: "ORDER#D4823", Status: "DISPATCHED"}]
+```
+
+String sort keys follow their byte ordering. These order IDs do **not** imply chronological order: D4822's `CreatedAt` is earlier than D4821's. If time-ordered access is required, model an appropriate time-based key or index.
+
+**5. Delete D4823.**
+
+```text
+DeleteItem(
+    Table = "Orders",
+    Key = {PK: "CUSTOMER#42", SK: "ORDER#D4823"}
+)
+Expected: success; the item is removed.
+Deleting the already absent key again, without conditions, also succeeds.
+```
+
+**6. Check the deletion.**
+
+```text
+GetItem(
+    Table = "Orders",
+    Key = {PK: "CUSTOMER#42", SK: "ORDER#D4823"},
+    ConsistentRead = true
+)
+Expected: no Item element in the response.
+```
+
+A failed condition produces a conditional-check error; it is not the same as a successful read finding no item. These examples describe documented behavior; they do not contact AWS.
+
+#### GetItem, Query, and Scan
+
+| Need | Operation | Design implication |
+| --- | --- | --- |
+| One known full key | **GetItem** | Direct item access |
+| One partition-key value, possibly a sort-key range | **Query** | Design table or index keys for this access pattern |
+| Examine items across a table/index | **Scan** | Can read substantial data; a filter does not turn it into a key lookup |
+
+`Query` pages are up to **1 MB of evaluated data**. Continue with the returned `LastEvaluatedKey` as the next request's `ExclusiveStartKey` until no continuation key remains. A filtered page can contain zero matches and still require continuation.
+
+Filters apply after items are read; they do not save the read capacity already consumed. Choosing fewer projected attributes also does not make base-table reads cheaper merely because the response is smaller. See [query pagination](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.Pagination.html), [filter expressions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.FilterExpression.html), and [capacity accounting](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html).
+
+### Secondary Indexes: GSI and LSI
+
+A secondary index adds an alternate key-based access pattern. **Projection** means the attributes copied into that index.
+
+| Question | Global secondary index (GSI) | Local secondary index (LSI) |
+| --- | --- | --- |
+| **Key definition** | Can use a different partition key and optional sort key | Same partition key as the table, with an alternate sort key |
+| **Example** | Query by `OrderId` without knowing the customer | Query one customer's orders by `CreatedAt` rather than order-ID sort order |
+| **Read consistency** | Eventual only | Eventual or strong |
+| **When created?** | With the table or later; can be removed | Must be created with the table; cannot later be added or removed |
+| **Capacity** | Separate index capacity in provisioned mode; writes maintaining the index add work | Uses the table's capacity |
+| **Storage and scope** | Stored separately; queries return projected attributes, including base primary keys | Adds index storage and a 10 GB item-collection limit for each partition-key value, including relevant table/index data |
+
+Suppose an illustrative **OrderLookup** GSI has partition key `OrderId` and projects the needed attributes:
+
+```text
+Query(
+    Table = "Orders",
+    Index = "OrderLookup",
+    KeyCondition = OrderId equals "D4821"
+)
+Expected after index propagation: the item for CUSTOMER#42 / ORDER#D4821.
+```
+
+**GSI keys need not be unique.** The application must enforce any required uniqueness separately; a query might return multiple items. This index query may lag behind a recent base-table write. It cannot request a strongly consistent GSI read, and `GetItem` is not an operation for querying a GSI.
+
+Adding indexes increases storage and write work and can introduce additional throttling constraints. This subsection covers **the two secondary-index types**, not every indexing capability DynamoDB may offer. See [AWS's secondary-index comparison](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SecondaryIndexes.html).
+
+### Capacity, Bursting, and Hot Partitions
+
+#### On-Demand and Provisioned Capacity
+
+| Mode | What the application configures | What to consider |
+| --- | --- | --- |
+| **On-demand** | No provisioned RCU/WCU target; requests drive capacity use | Scaling readiness, configured/service limits, hot keys, and request cost still matter |
+| **Provisioned** | Read capacity units (RCUs) and write capacity units (WCUs), with optional scaling policies | Forecast demand, observe throttling, and maintain suitable headroom |
+
+On-demand is not infinite throughput on every key at every instant. Provisioned capacity is not a fixed count of arbitrary-size items. See [capacity modes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/capacity-mode.html) and [on-demand scaling considerations](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/on-demand-capacity-mode.html).
+
+#### Read and Write Capacity Units
+
+A **capacity unit** describes supported work per second in provisioned mode. On-demand uses **read/write request units** rather than a provisioned per-second allocation. Both require the appropriate item-size and operation accounting.
+
+For existing items and ordinary single-item operations:
+
+| Item read size | Strong read: RCUs for one read/second | Eventual read: RCUs for one read/second | Transactional read: RCUs for one read/second |
+| --- | ---: | ---: | ---: |
+| Up to 4 KB | 1 | 0.5 | 2 |
+| 8 KB | 2 | 1 | 4 |
+
+| Item written size | Ordinary write: WCUs for one write/second | Transactional write: WCUs for one write/second |
+| --- | ---: | ---: |
+| Up to 1 KB | 1 | 2 |
+| 1.5 KB | 2 | 4 |
+| 2 KB | 2 | 4 |
+
+Reads round up in **4 KB blocks**; writes round up in **1 KB blocks**. For an ordinary strongly consistent `GetItem`, use `ceil(itemBytes / 4096)` read units; for an ordinary put creating a new item, use `ceil(itemBytes / 1024)` write units. Replacement/update accounting uses the larger applicable old/new item size, not just the changed bytes.
+
+**Nominal provisioned-capacity examples:**
+
+- **20,000 RCUs:** 20,000 strong reads/second for items up to 4 KB, or 10,000 for 8 KB items.
+- **5,000 WCUs:** 5,000 ordinary puts/second for items up to 1 KB, or 2,500 for 2 KB items.
+
+These are unit calculations, not guaranteed request rates. They exclude extra index work and assume no other bottleneck, quota, competing workload, or hot partition limits progress. API-specific accounting also matters for multi-item operations. See [read/write accounting](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html) and [capacity constraints](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html).
+
+#### Burst, Adaptive, and Warm Throughput
+
+| Mechanism | Simple meaning | Practical limit |
+| --- | --- | --- |
+| **Burst capacity** | Some unused capacity is saved and may serve temporary spikes | Savings can run out or be used for maintenance; not a permanent increase |
+| **Adaptive capacity** | AWS accommodates uneven traffic across partitions within the applicable limits | It does not remove the table's total constraints or every hot-item limit |
+| **Warm throughput** | The table/index has prepared throughput it can support when appropriately configured | Readiness is distinct from burst savings and does not override other constraints |
+
+![Illustrative demand and admitted traffic with and without saved burst capacity: saved capacity absorbs a short spike, but sustained excess demand still throttles.](assets/dynamodb-burst-capacity.svg)
+
+The dashed line is a **100-unit/second illustrative baseline**, not an arbitrary item count. Both panels use the same demand. The right panel saves unused units, serves the first spike, then exhausts its savings during later excess demand. It is a simplified teaching model, not an AWS benchmark or an exposed “enable bursting” setting. Actual behavior includes other capacity-management mechanisms.
+
+Do not describe bursting simply as borrowing neighbouring partitions' spare allocations. Current AWS documentation explains saved unused capacity; historical node-level resource controls are discussed [separately below](#admission-control-and-splitting-2022).
+
+Do not teach adaptive capacity as universally a slow learning process. AWS describes automatic, immediate adjustment within its documented bounds; that is not a promise that every workload surge, physical split, or single-item hot spot is resolved instantly. For an expected large peak, assess warm throughput and the appropriate mode/limits in advance. Users can request more warm throughput; they do not manually split physical partitions.
+
+Observe throttling and latency, use appropriate retry/backoff behavior, and evaluate cache, partition-key distribution, or application write sharding when required. See [burst/adaptive capacity](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html), [warm throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/warm-throughput.html), and [write-sharding patterns](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-sharding.html).
+
+### Architecture, Availability, and Read Guarantees
+
+#### Published DynamoDB Architecture (2022)
+
+**2022 design:** The [AWS-authored paper](https://www.usenix.org/conference/atc22/presentation/elhemali) describes metadata-based routing, Multi-Paxos groups, leader leases, replicated write-ahead logs, and optional log-only replicas.
+
+```mermaid
+flowchart TB
+    CLIENT["Application"] --> ROUTER["Request router"]
+    META["Routing metadata"] -.-> ROUTER
+    subgraph GROUP["Illustrative replication group"]
+        LEADER["AZ A<br/>Leader"]
+        FOLLOWER1["AZ B<br/>Replica"]
+        FOLLOWER2["AZ C<br/>Replica"]
+        LEADER -->|"Log"| FOLLOWER1
+        LEADER -->|"Log"| FOLLOWER2
+        FOLLOWER1 -.->|"Ack"| LEADER
+        FOLLOWER2 -.->|"Ack"| LEADER
+    end
+    ROUTER --> LEADER
+
+    classDef service fill:#dbeafe,stroke:#111,color:#111
+    classDef replica fill:#fff3cd,stroke:#111,color:#111
+    class CLIENT,ROUTER,META service
+    class LEADER,FOLLOWER1,FOLLOWER2 replica
+```
+
+Illustration only; log-only members lack a full item index and are omitted here. Leaders handle writes/strong reads; storage replicas can serve eventual reads. Writes await quorum log persistence. Compare [Paxos](Distributed-Systems-Theorems-and-Data-Structures.md#paxos) and [replication](#replication-models-and-replica-placement).
+
+#### Admission Control and Splitting (2022)
+
+The paper describes an evolution:
+
+| Mechanism | Purpose |
+| --- | --- |
+| Partition/node token buckets | Allocation and workload isolation |
+| Global admission control | Table-wide request-router token coordination |
+| Automatic splitting for consumed load | Divide eligible hot ranges; single hot items remain constrained |
+
+“Global” here is table-wide, not necessarily multi-Region. These are historical internals; current “adaptive capacity” is customer-facing terminology.
+
+#### Failure Handling and Gray Failures (2022)
+
+Peers can initiate elections. Replacements respect the old lease before serving protected operations. Gray failures involve partial reachability; peer cross-checks reduce spurious elections. Leader loss can interrupt service; recovery remains possible. See [failure detection](#membership-gossip-and-failure-detection).
+
+#### Current Read Consistency and Transactions
+
+**Current public API guarantees are separate from the historical implementation sketch.**
+
+| Read source | Available read guarantee |
+| --- | --- |
+| **Base table** | Eventual by default; strong reads can be requested |
+| **Local secondary index** | Eventual or strong |
+| **Global secondary index** | Eventual only |
+| **DynamoDB Streams** | Eventual; not a strongly consistent table read |
+
+A strong read reflects previously completed successful writes within the applicable scope. It is not a lock preventing a subsequent write, nor does making several strong reads automatically create a multi-item snapshot.
+
+**Global tables** replicate across Regions. **MREC** means *multi-Region eventual consistency*: cross-Region propagation is asynchronous. **MRSC** means *multi-Region strong consistency*: supported strong reads provide the corresponding cross-Region guarantee. The modes have different supported configurations and restrictions; see [global-table consistency modes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html).
+
+DynamoDB supports transactional APIs within documented boundaries. Standard transaction scope is within one AWS account and Region; do not assume a transaction is replicated atomically as a cross-Region unit. MRSC does not support transaction operations under the current documented restrictions. Compare [DynamoDB transactions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html), [global-table transaction restrictions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html), and [ACID concepts](#transactions-and-acid).
+
+See [AWS's read-consistency documentation](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html). Eventual consistency is not the absence of durability, and a successful response is not necessarily a fresh read.
+
+#### Availability, Freshness, Durability, and Recovery
+
+| Concern | Question it answers |
+| --- | --- |
+| **Availability** | Can the requested operation complete successfully? |
+| **Freshness / consistency** | Which completed changes may the read observe? |
+| **Durability** | Are acknowledged writes retained under the specified failure assumptions? |
+| **Backup / recovery** | Can we restore an appropriate state after deletion, corruption, or other loss? |
+
+An eventual read can succeed while returning an older committed value. Replication can improve availability and durability but also propagate an accidental deletion. Configure and test suitable backup/restore and [point-in-time recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Point-in-time-recovery.html). Neither multi-AZ replication nor an availability claim replaces application-level correctness and recovery planning.
+
+### DynamoDB Design Checklist
+
+1. **Access patterns:** Which full-key lookups, partition queries, ranges, and alternate indexes are needed?
+2. **Keys and sizes:** Are hot keys, growing collections, item sizes, and index limits understood?
+3. **Writes:** Should a put replace, an update upsert, or a condition reject a conflicting action?
+4. **Reads:** What freshness is needed, and does the chosen table/index/Region mode support it?
+5. **Capacity:** Account for item sizes, consistency, transactions, indexes, peaks, and throttling.
+6. **Operations:** Define permissions, retries, monitoring, backup/restore, and the team's recovery process.
+
+> **Recall:** Keys shape access; indexes add access paths; capacity units measure sized work; replication supports resilience; the read option determines freshness. AWS manages the infrastructure, while the application still defines correct behavior.
 
 ## Column-Family Databases
 
@@ -1534,7 +1936,9 @@ Databases organize application information; DBMSs supply operations and configur
 
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
-The later sections above reserve space for deeper study of particular families and implementations; their internals are not covered by this introduction.
+The remaining placeholders reserve space for deeper study of column-family and graph databases and their named implementations.
+
+The [DynamoDB example](#amazon-dynamodb) connects keys, APIs, indexes, sized capacity units, and read guarantees. Its historical architecture discussion is separate from current documented service behavior.
 
 The [selection guide](#database-selection-by-requirements) maps requirements to database candidates and shows how a banking platform can combine authoritative records with optional caches, search, and analytical views. Each added system needs a clear role and a justified operating cost.
 
@@ -1577,6 +1981,24 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [MongoDB: Limits and Document Size](https://www.mongodb.com/docs/manual/reference/limits/)
 - [DynamoDB: Transactions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transactions.html)
 - [DynamoDB: Read Consistency](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html)
+- [DynamoDB: Tables, Items, Attributes, and Keys](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.CoreComponents.html)
+- [DynamoDB: Physical Partitions and Item Collections](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html)
+- [DynamoDB API: PutItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html)
+- [DynamoDB API: UpdateItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html)
+- [DynamoDB API: GetItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html)
+- [DynamoDB API: DeleteItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html)
+- [DynamoDB: Query Pagination](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.Pagination.html)
+- [DynamoDB: Filters and Evaluated Data](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.FilterExpression.html)
+- [DynamoDB: Global and Local Secondary Indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SecondaryIndexes.html)
+- [DynamoDB: Capacity Modes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/capacity-mode.html)
+- [DynamoDB: Read/Write Unit Accounting](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html)
+- [DynamoDB: Item and Capacity Constraints](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html)
+- [DynamoDB: Burst and Adaptive Capacity](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html)
+- [DynamoDB: Warm Throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/warm-throughput.html)
+- [DynamoDB: Application-Level Write Sharding](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-sharding.html)
+- [DynamoDB: Global Tables and Their Consistency Modes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html)
+- [DynamoDB: Point-in-Time Backups](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Point-in-time-recovery.html)
+- [AWS Authors: DynamoDB Architecture and Evolution — USENIX ATC 2022](https://www.usenix.org/conference/atc22/presentation/elhemali)
 - [Redis: Data Types](https://redis.io/docs/latest/develop/data-types/)
 - [Redis: String Values and Key-Based Operations](https://redis.io/docs/latest/develop/data-types/strings/)
 - [Dynamo: Amazon's Highly Available Key-Value Store — Original 2007 Paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf)
