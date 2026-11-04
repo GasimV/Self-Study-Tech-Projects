@@ -1578,6 +1578,10 @@ The documented maximum item size is **400 KB**, including attribute names and va
 | **Horizontal partitioning** | Rows/items | Put student rows 1–2 in one group and row 3 in another |
 | **Vertical partitioning** | Attributes | Separate names from subjects/grades, retaining the student ID |
 
+**Visual overview:** Both methods start from the same table. The left branch divides rows; the right branch separates columns while keeping `ID` in both pieces.
+
+![The student table split horizontally into row groups and vertically into related column groups sharing ID.](assets/database-horizontal-vertical-partitioning.svg)
+
 **Original table**
 
 | ID | Name | Subject | Grade |

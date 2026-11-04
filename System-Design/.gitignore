@@ -3,6 +3,7 @@
 !assets/consistent-hashing-virtual-nodes.svg
 !assets/merkle-tree-repair.svg
 !assets/dynamodb-burst-capacity.svg
+!assets/database-horizontal-vertical-partitioning.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
 /examples/merkle_tree/merkle_tree_dsa

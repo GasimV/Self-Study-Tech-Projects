@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title description">
+<title id="title">Horizontal and vertical partitioning of the same student table</title>
+<desc id="description">The original table has Tom, Mike, and Rob with their IDs, subjects, and grades. Horizontal partitioning keeps all columns but separates Tom and Mike from Rob. Vertical partitioning separates names from subjects and grades, retaining the same ID in both pieces. This is a general modeling illustration, not DynamoDB physical placement.</desc>
+<rect width="1200" height="800" fill="#ffffff"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="600" y="42" font-size="30" font-weight="700" text-anchor="middle" fill="#172033">One table, two ways to divide it</text>
+<text x="600" y="73" font-size="20" font-weight="400" text-anchor="middle" fill="#475569">Horizontal splits rows. Vertical splits attributes and keeps the linking ID.</text>
+<text x="600" y="111" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">ORIGINAL TABLE</text>
+<rect x="350" y="128" width="70" height="42" fill="#fde68a" stroke="#cbd5e1"/>
+<text x="385" y="156" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">ID</text>
+<rect x="420" y="128" width="130" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="485" y="156" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Name</text>
+<rect x="550" y="128" width="180" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="640" y="156" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Subject</text>
+<rect x="730" y="128" width="120" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="790" y="156" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Grade</text>
+<rect x="350" y="170" width="70" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="385" y="198" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">1</text>
+<rect x="420" y="170" width="130" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="485" y="198" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Tom</text>
+<rect x="550" y="170" width="180" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="640" y="198" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Math</text>
+<rect x="730" y="170" width="120" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="790" y="198" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<rect x="350" y="212" width="70" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="385" y="240" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">2</text>
+<rect x="420" y="212" width="130" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="485" y="240" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Mike</text>
+<rect x="550" y="212" width="180" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="640" y="240" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">English</text>
+<rect x="730" y="212" width="120" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="790" y="240" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">B</text>
+<rect x="350" y="254" width="70" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="385" y="282" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">3</text>
+<rect x="420" y="254" width="130" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="485" y="282" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Rob</text>
+<rect x="550" y="254" width="180" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="640" y="282" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Physics</text>
+<rect x="730" y="254" width="120" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="790" y="282" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<line x1="600" y1="296" x2="600" y2="324" stroke="#64748b" stroke-width="2"/>
+<line x1="300" y1="324" x2="900" y2="324" stroke="#64748b" stroke-width="2"/>
+<line x1="300" y1="324" x2="300" y2="358" stroke="#64748b" stroke-width="2"/>
+<polygon points="293,347 307,347 300,358" fill="#64748b"/>
+<line x1="900" y1="324" x2="900" y2="358" stroke="#64748b" stroke-width="2"/>
+<polygon points="893,347 907,347 900,358" fill="#64748b"/>
+<rect x="28" y="370" width="558" height="382" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="614" y="370" width="558" height="382" fill="#f8fafc" stroke="#cbd5e1"/>
+<text x="307" y="405" font-size="24" font-weight="700" text-anchor="middle" fill="#172033">HORIZONTAL: split rows</text>
+<text x="307" y="433" font-size="19" font-weight="400" text-anchor="middle" fill="#475569">Same columns in both partitions</text>
+<text x="54" y="466" font-size="19" font-weight="700" text-anchor="start" fill="#172033">Partition A: Tom and Mike</text>
+<rect x="54" y="478" width="68" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="88" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">ID</text>
+<rect x="122" y="478" width="124" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="184" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Name</text>
+<rect x="246" y="478" width="166" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="329" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Subject</text>
+<rect x="412" y="478" width="120" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="472" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Grade</text>
+<rect x="54" y="520" width="68" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="88" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">1</text>
+<rect x="122" y="520" width="124" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="184" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Tom</text>
+<rect x="246" y="520" width="166" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="329" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Math</text>
+<rect x="412" y="520" width="120" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="472" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<rect x="54" y="562" width="68" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="88" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">2</text>
+<rect x="122" y="562" width="124" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="184" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Mike</text>
+<rect x="246" y="562" width="166" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="329" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">English</text>
+<rect x="412" y="562" width="120" height="42" fill="#dcfce7" stroke="#cbd5e1"/>
+<text x="472" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">B</text>
+<text x="54" y="638" font-size="19" font-weight="700" text-anchor="start" fill="#172033">Partition B: Rob</text>
+<rect x="54" y="650" width="68" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="88" y="678" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">ID</text>
+<rect x="122" y="650" width="124" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="184" y="678" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Name</text>
+<rect x="246" y="650" width="166" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="329" y="678" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Subject</text>
+<rect x="412" y="650" width="120" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="472" y="678" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Grade</text>
+<rect x="54" y="692" width="68" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="88" y="720" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">3</text>
+<rect x="122" y="692" width="124" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="184" y="720" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Rob</text>
+<rect x="246" y="692" width="166" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="329" y="720" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Physics</text>
+<rect x="412" y="692" width="120" height="42" fill="#ffedd5" stroke="#cbd5e1"/>
+<text x="472" y="720" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<text x="893" y="405" font-size="24" font-weight="700" text-anchor="middle" fill="#172033">VERTICAL: split columns</text>
+<text x="893" y="433" font-size="19" font-weight="400" text-anchor="middle" fill="#475569">Keep ID in both pieces to relate the rows</text>
+<text x="730" y="466" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Names</text>
+<text x="1008" y="466" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Grades</text>
+<rect x="638" y="478" width="60" height="42" fill="#fde68a" stroke="#cbd5e1"/>
+<text x="668" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">ID</text>
+<rect x="698" y="478" width="124" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="760" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Name</text>
+<rect x="638" y="520" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="668" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">1</text>
+<rect x="698" y="520" width="124" height="42" fill="#ede9fe" stroke="#cbd5e1"/>
+<text x="760" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Tom</text>
+<rect x="638" y="562" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="668" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">2</text>
+<rect x="698" y="562" width="124" height="42" fill="#ede9fe" stroke="#cbd5e1"/>
+<text x="760" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Mike</text>
+<rect x="638" y="604" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="668" y="632" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">3</text>
+<rect x="698" y="604" width="124" height="42" fill="#ede9fe" stroke="#cbd5e1"/>
+<text x="760" y="632" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Rob</text>
+<rect x="844" y="478" width="60" height="42" fill="#fde68a" stroke="#cbd5e1"/>
+<text x="874" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">ID</text>
+<rect x="904" y="478" width="144" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="976" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Subject</text>
+<rect x="1048" y="478" width="100" height="42" fill="#dbeafe" stroke="#cbd5e1"/>
+<text x="1098" y="506" font-size="19" font-weight="700" text-anchor="middle" fill="#172033">Grade</text>
+<rect x="844" y="520" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="874" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">1</text>
+<rect x="904" y="520" width="144" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="976" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Math</text>
+<rect x="1048" y="520" width="100" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="1098" y="548" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<rect x="844" y="562" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="874" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">2</text>
+<rect x="904" y="562" width="144" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="976" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">English</text>
+<rect x="1048" y="562" width="100" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="1098" y="590" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">B</text>
+<rect x="844" y="604" width="60" height="42" fill="#fff6cf" stroke="#cbd5e1"/>
+<text x="874" y="632" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">3</text>
+<rect x="904" y="604" width="144" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="976" y="632" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Physics</text>
+<rect x="1048" y="604" width="100" height="42" fill="#e0f2fe" stroke="#cbd5e1"/>
+<text x="1098" y="632" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">A</text>
+<text x="893" y="682" font-size="19" font-weight="400" text-anchor="middle" fill="#172033">Example: ID 1 links Tom to Math / A.</text>
+<text x="893" y="714" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">Yellow = the shared identifier</text>
+<text x="600" y="783" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">General partitioning concepts; these boxes do not describe DynamoDB physical placement.</text>
+</g></svg>
