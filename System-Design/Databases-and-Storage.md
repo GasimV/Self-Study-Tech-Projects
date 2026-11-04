@@ -1578,21 +1578,48 @@ The documented maximum item size is **400 KB**, including attribute names and va
 | **Horizontal partitioning** | Rows/items | Put student rows 1–2 in one group and row 3 in another |
 | **Vertical partitioning** | Attributes | Separate names from subjects/grades, retaining the student ID |
 
-```mermaid
-flowchart TB
-    STUDENTS["Students: Id, Name, Subject, Grade<br/>1 Tom Math A<br/>2 Mike English B<br/>3 Rob Physics A"]
-    STUDENTS --> HORIZONTAL["Horizontal: divide rows"]
-    STUDENTS --> VERTICAL["Vertical: divide attributes"]
-    HORIZONTAL --> H1["Rows 1 and 2<br/>Tom / Math / A<br/>Mike / English / B"]
-    HORIZONTAL --> H2["Row 3<br/>Rob / Physics / A"]
-    VERTICAL --> V1["Id + Name<br/>1 Tom<br/>2 Mike<br/>3 Rob"]
-    VERTICAL --> V2["Id + Subject + Grade<br/>1 Math A<br/>2 English B<br/>3 Physics A"]
+**Original table**
 
-    classDef source fill:#dbeafe,stroke:#111,color:#111
-    classDef split fill:#fff3cd,stroke:#111,color:#111
-    class STUDENTS source
-    class HORIZONTAL,VERTICAL,H1,H2,V1,V2 split
-```
+| ID | Name | Subject | Grade |
+| --- | --- | --- | --- |
+| 1 | Tom | Math | A |
+| 2 | Mike | English | B |
+| 3 | Rob | Physics | A |
+
+**Horizontal partitioning — split the rows; keep the same columns.**
+
+Partition A:
+
+| ID | Name | Subject | Grade |
+| --- | --- | --- | --- |
+| 1 | Tom | Math | A |
+| 2 | Mike | English | B |
+
+Partition B:
+
+| ID | Name | Subject | Grade |
+| --- | --- | --- | --- |
+| 3 | Rob | Physics | A |
+
+**Vertical partitioning — split the columns; retain an identifier connecting the pieces.**
+
+Names:
+
+| ID | Name |
+| --- | --- |
+| 1 | Tom |
+| 2 | Mike |
+| 3 | Rob |
+
+Grades:
+
+| ID | Subject | Grade |
+| --- | --- | --- |
+| 1 | Math | A |
+| 2 | English | B |
+| 3 | Physics | A |
+
+> **Horizontal = different rows. Vertical = different attributes linked by ID.**
 
 **This is a general modeling illustration, not actual DynamoDB placement.** Horizontal grouping here is arbitrary, not a claim about hash results. Vertical modeling remains possible with flexible attributes—for example, separating information into related items. It is also different from a physical column-oriented storage layout.
 
