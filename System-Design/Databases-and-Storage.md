@@ -61,6 +61,7 @@
   - [Design Review and Interview Checklist](#design-review-and-interview-checklist)
 - [Amazon DynamoDB](#amazon-dynamodb)
   - [DynamoDB Overview and Responsibilities](#dynamodb-overview-and-responsibilities)
+  - [When to Choose DynamoDB](#when-to-choose-dynamodb)
   - [Tables, Items, Attributes, and Flexible Schema](#tables-items-attributes-and-flexible-schema)
   - [Partitioning and Primary Keys](#partitioning-and-primary-keys)
     - [Horizontal and Vertical Partitioning](#horizontal-and-vertical-partitioning)
@@ -1700,6 +1701,38 @@ DynamoDB stores partitions on SSD-backed infrastructure and replicates them acro
 
 **DynamoDB is a separate service from the historical Dynamo system.** Do not assume the earlier leaderless teaching design describes DynamoDB's internals. Compare the [original Dynamo explanation](#design-topics-to-study-next) and the [published DynamoDB architecture](#published-dynamodb-architecture-2022) below.
 
+### When to Choose DynamoDB
+
+**Evaluate DynamoDB when your important queries are known in advance and map well to keys or indexes, and you want AWS to operate the database infrastructure.**
+
+| Good fit | Simple example | What still needs design |
+| --- | --- | --- |
+| **Known key/range queries** | Read one customer's order or list that customer's orders | Partition/sort keys, indexes, pagination, and read consistency |
+| **High-traffic operational access** | Read/update shopping carts, sessions, or player state | Traffic distribution, conditional writes, latency targets, and cost |
+| **AWS serverless applications** | An API Gateway/Lambda application stores user profiles | Permissions, retries, capacity choices, and recovery; these integrations are optional |
+| **Device state and modeled history** | Retrieve a device's latest state or readings for a bounded period | Hot devices, time-based keys, retention, and item sizes |
+| **Flexible records and content metadata** | Store different profile attributes or references to uploaded media | Validation and compatible readers; large media can live in [object storage](#object-storage-and-amazon-s3) |
+
+A gaming leaderboard can also be modeled, but score ordering, ranking, updates, and hot-key behavior need deliberate design; it is not automatically provided by a generic key lookup. See [AWS's DynamoDB introduction and use cases](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Introduction.html) and [access-pattern modeling guidance](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html).
+
+**When another primary store or a complementary service may fit better:**
+
+| Requirement | What to evaluate instead or alongside DynamoDB |
+| --- | --- |
+| **Frequent joins, database-enforced relationships, or changing ad-hoc queries** | A relational database such as PostgreSQL; DynamoDB has no native SQL JOIN operator |
+| **Heavy historical reporting and large cross-dataset aggregations** | An analytical warehouse or engine; copying/querying data through an appropriate pipeline may be preferable to repeated operational scans |
+| **Full-text search, relevance ranking, and broad text exploration** | A search engine or a database with suitable full-text indexes; a post-read filter is not a full-text index |
+
+DynamoDB can support documents with varying attributes. **Flexible data is supported; constantly changing query requirements are the harder issue.** It also supports transactions within its [documented scope](#current-read-consistency-and-transactions); do not interpret these selection rules as “NoSQL has no transactions.”
+
+**Performance needs qualification.** AWS describes single-digit-millisecond performance for operational access, not a guarantee for every request or complete application response. Measure realistic queries, item sizes, concurrency, network paths, and tail latency.
+
+On-demand capacity can accommodate changing traffic, but quotas, configured limits, hot keys, and sudden growth beyond prepared capacity can still cause throttling. Avoid “unlimited scale without performance degradation.” See [on-demand scaling behavior](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/on-demand-capacity-mode.html).
+
+For a concrete choice, revisit the [customer-order alternative in the delivery platform](#storage-roles-in-the-delivery-platform) and the [worked DynamoDB API requests](#worked-requests-customer-orders).
+
+> **Recall:** Choose DynamoDB for well-modeled operational access and managed infrastructure. Evaluate relational querying, analytics, and search separately when those requirements dominate.
+
 ### Tables, Items, Attributes, and Flexible Schema
 
 Use a fictional table named **Orders**:
@@ -2543,6 +2576,9 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [DynamoDB: Transactions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transactions.html)
 - [DynamoDB: Read Consistency](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html)
 - [DynamoDB: Tables, Items, Attributes, and Keys](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.CoreComponents.html)
+- [DynamoDB: Introduction and Use Cases](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Introduction.html)
+- [DynamoDB: Modeling Around Access Patterns](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html)
+- [DynamoDB: On-Demand Scaling Behavior and Limits](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/on-demand-capacity-mode.html)
 - [DynamoDB: Physical Partitions and Item Collections](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html)
 - [DynamoDB API: PutItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html)
 - [DynamoDB API: UpdateItem](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html)
