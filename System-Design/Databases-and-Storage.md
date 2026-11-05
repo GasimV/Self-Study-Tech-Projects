@@ -83,6 +83,21 @@
 - [Apache HBase](#apache-hbase)
 - [Graph Databases](#graph-databases)
 - [Neo4j](#neo4j)
+- [Object Storage and Amazon S3](#object-storage-and-amazon-s3)
+  - [What Is Object Storage?](#what-is-object-storage)
+  - [What Is Typically Stored There?](#what-is-typically-stored-there)
+  - [Object Storage vs. File Storage, Block Storage, and Databases](#object-storage-vs-file-storage-block-storage-and-databases)
+  - [Amazon S3: Responsibilities and Operations](#amazon-s3-responsibilities-and-operations)
+    - [Worked Object Operations](#worked-object-operations)
+    - [Large Transfers and Checksums](#large-transfers-and-checksums)
+  - [Worked Application Example: Product Details and Images](#worked-application-example-product-details-and-images)
+  - [Consistency, Security, Lifecycle, and Recovery](#consistency-security-lifecycle-and-recovery)
+  - [Prominent Object-Storage Solutions](#prominent-object-storage-solutions)
+    - [Major Cloud Platforms](#major-cloud-platforms)
+    - [Additional Managed Services](#additional-managed-services)
+    - [Self-Hosted and Open-Source Projects](#self-hosted-and-open-source-projects)
+    - [Commercial Self-Hosted Platforms](#commercial-self-hosted-platforms)
+  - [When to Choose Object Storage](#when-to-choose-object-storage)
 - [Summary](#summary)
 - [Related Notes](#related-notes)
 - [Further Reading](#further-reading)
@@ -95,7 +110,7 @@ Applications need to retain information, find it efficiently, and modify it with
 | --- | --- | --- |
 | **Database** | An organized collection of application data | Customers, orders, and payment records |
 | **Database management system (DBMS)** | Software that manages data, queries, concurrency, and supported guarantees | PostgreSQL or MongoDB |
-| **Storage infrastructure** | Resources and services used to retain bytes | Local SSDs, network-attached block volumes, or object storage used by a system |
+| **Storage infrastructure** | Resources and services used to retain bytes | Local SSDs, network-attached block volumes, or [object storage](#object-storage-and-amazon-s3) used by a system |
 
 A DBMS can run within an application process, on one server, or across multiple nodes. Its data model is separate from its physical deployment. Different engines use different storage resources; an object-storage service is not automatically a transactional application database.
 
@@ -958,6 +973,8 @@ flowchart TB
 7. **Review results:** Analytical queries summarize cost and delay by warehouse, country, and month. These prepared copies can lag; they are not the source for deciding whether D4821 is currently paid, reserved, or delivered.
 
 #### Combine Roles Before Adding Engines
+
+**Media content is another storage role:** Delivery photographs and recordings can reside in [object storage](#object-storage-and-amazon-s3), with keys and access-related references in operational records. A stored photograph does not by itself prove that a delivery occurred.
 
 A modest first version might use **PostgreSQL centrally and SQLite on robots**, evaluating JSONB, full-text search, PostGIS, or pgvector within PostgreSQL as requirements arise. This is a possible starting point, not a guarantee that it satisfies every workload.
 
@@ -1961,6 +1978,337 @@ An eventual read can succeed while returning an older committed value. Replicati
 
 > Study notes to be added.
 
+## Object Storage and Amazon S3
+
+### What Is Object Storage?
+
+> **Store a piece of content under a key; retrieve it through a storage API.**
+
+**Object storage** retains content as named objects, with metadata describing that content. Think of a product image stored under a name that the application can request later.
+
+| Concept | Meaning | Product-image example |
+| --- | --- | --- |
+| **Bucket/container** | A named container for objects; terminology varies by service | `shop-media-example` |
+| **Object key** | The object's identifier within its bucket | `products/P100/front.jpg` |
+| **Content/payload** | The actual bytes being stored | The JPEG image's bytes |
+| **Metadata** | System information and supported descriptive fields | Content type `image/jpeg`, byte size, and a product ID |
+| **Version** | A retained revision when versioning is enabled | An earlier image retained after replacement |
+
+An object here is **not an object-oriented programming class** and need not be a JSON document. Its content can be text, an image, or another binary format.
+
+Applications normally address objects through a **service endpoint, bucket, and key**. Storage software manages how the bytes are placed on underlying servers and disks; the key is not a physical server address. The service can be cloud-managed or self-hosted. See the [S3 overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) and [Ceph Object Gateway](https://docs.ceph.com/en/latest/radosgw/) as examples of these deployment choices.
+
+```mermaid
+flowchart TB
+    APP["Application"] -->|"Storage API"| BUCKET["Bucket: shop-media-example"]
+    BUCKET --> PHOTO["Object: front.jpg"]
+    BUCKET --> PDF["Object: spec.pdf"]
+    PHOTO --> KEY["Key: products/P100/front.jpg"]
+    PHOTO --> META["Metadata: image/jpeg, size, product ID"]
+    PHOTO --> DATA["Content: JPEG bytes"]
+    PDF --> PDFKEY["Key: products/P100/spec.pdf"]
+
+    classDef container fill:#dbeafe,stroke:#111,color:#111
+    classDef object fill:#fff3cd,stroke:#111,color:#111
+    class APP,BUCKET container
+    class PHOTO,PDF,KEY,META,DATA,PDFKEY object
+```
+
+This is an **object anatomy and naming map**, not a message trace or a requirement to create separate objects for each metadata field. Each object includes its own content and associated metadata.
+
+**Keys can look like paths.** In an ordinary S3 general-purpose bucket, `products/P100/` is a key prefix, not a conventional filesystem directory or nested bucket. Consoles can display prefixes as folders. See [S3 object keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html). Metadata capabilities also vary: S3 distinguishes system metadata, upload-time user metadata, tags, and other supported metadata features. See [object metadata](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html).
+
+### What Is Typically Stored There?
+
+| Content | Illustrative use |
+| --- | --- |
+| **Images** | Product photographs, avatars, scanned documents |
+| **Video** | Uploaded clips, recordings, prepared streaming segments |
+| **Audio** | Podcasts, voice recordings, music |
+| **Documents** | PDFs, invoices, reports |
+| **Application files** | Installers, archives, static assets |
+| **Backups and exports** | Database backup files and recovery copies |
+| **Logs and analytical files** | JSON, CSV, Parquet, and ORC datasets |
+| **AI/ML artifacts** | Training datasets, model weights, checkpoints |
+| **IoT and robotic data** | Recorded sensor batches, images, and mission recordings |
+
+Object storage holds **structured, semi-structured, and unstructured content**. A Parquet file can contain structured rows even though the storage service exposes it as an object. See [Azure Blob Storage's use cases](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-overview) and [Google Cloud Storage](https://docs.cloud.google.com/storage/docs/introduction).
+
+Storing a video or audio file does not itself transcode it, prepare adaptive streaming formats, or provide a complete playback service. Object storage can serve the bytes; processing, players, and delivery infrastructure supply the other functions.
+
+Similarly, storing backup files does not prove that restoration works. Retaining datasets does not automatically establish a catalog, data quality, ownership, or a governed data lake. Continue with [warehouse and data-lake architectures](Data-Engineering-for-Solution-Architecture.md#warehouse-and-data-lake) rather than treating a bucket as the whole data platform.
+
+### Object Storage vs. File Storage, Block Storage, and Databases
+
+| Approach | Access model | Typical operations | Suitable example |
+| --- | --- | --- | --- |
+| **Block storage** | A volume exposes addressable blocks | Read/write block ranges; a filesystem or engine organizes them | A supported volume for a database server |
+| **File storage** | Files and directories through filesystem interfaces, locally or over protocols such as NFS/SMB | Open, read, write, rename, and manage paths | A shared team filesystem |
+| **Object storage** | Named content and metadata through object APIs | Put, get, head, list, and delete objects | Product images or analytical files |
+| **Database** | Modeled records and supported query interfaces | Query, index, constrain, and transact within the engine's guarantees | Products, orders, and account records |
+
+These layers can coexist. A database may use block storage beneath its files, while the application keeps media in object storage. Databases can also store binary content; separate object storage is a design choice, not a requirement for every small file.
+
+The ordinary object API does not supply all filesystem semantics or automatically provide row-level queries and transactions. A mount adapter can expose objects through file-like paths, but applications must check its supported behavior. Some database and analytical engines are designed to use object storage; that does not mean an arbitrary database engine can safely use any bucket as its normal disk.
+
+> **A database commonly stores what the file means and who may access it; object storage holds the file's content.**
+
+### Amazon S3: Responsibilities and Operations
+
+**S3 means Amazon Simple Storage Service.** It is AWS's managed object-storage service. This introduction uses **ordinary general-purpose buckets**; specialized bucket types and their different APIs are outside the walkthrough.
+
+| AWS manages | Application designers manage |
+| --- | --- |
+| Underlying storage servers, placement, and service infrastructure | Bucket/location choices, object keys, and access patterns |
+| Service facilities for replication and protection | Applicable storage classes, versioning, retention, and recovery requirements |
+| Storage APIs and managed capabilities | Permissions, upload validation, application correctness, retries, monitoring, and costs |
+
+The storage class affects resilience and access behavior. For example, S3 Standard spans multiple Availability Zones, while One Zone choices have a different failure scope. Do not assume every object-storage configuration is multi-AZ. See [S3 storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html).
+
+#### Worked Object Operations
+
+**The following is language-neutral API-style pseudocode, not executable SDK syntax.** The fictional bucket `shop-media-example` already exists, initially contains no objects, and has never had versioning enabled. Assume valid permissions, no concurrent changes, and successful requests. The two payloads below are illustrative JPEG byte sequences, not files supplied by this note.
+
+**1. Upload product P100's image.**
+
+```text
+PutObject(
+    Bucket = "shop-media-example",
+    Key = "products/P100/front.jpg",
+    Body = JPEG_BYTES_V1,             // 120000 bytes
+    ContentType = "image/jpeg",
+    Metadata = {"product-id": "P100"}
+)
+Expected: success; the object is stored under this key.
+```
+
+**2. Read its metadata without downloading the image.**
+
+```text
+HeadObject(
+    Bucket = "shop-media-example",
+    Key = "products/P100/front.jpg"
+)
+Expected metadata:
+    ContentLength = 120000
+    ContentType = "image/jpeg"
+    Metadata = {"product-id": "P100"}
+Expected body: none
+```
+
+**3. Download the image.**
+
+```text
+GetObject(
+    Bucket = "shop-media-example",
+    Key = "products/P100/front.jpg"
+)
+Expected body: JPEG_BYTES_V1 (120000 bytes)
+```
+
+**4. List keys under the product's prefix.**
+
+```text
+ListObjectsV2(
+    Bucket = "shop-media-example",
+    Prefix = "products/P100/",
+    MaxKeys = 1000
+)
+Expected relevant response fields:
+    Contents = [{Key: "products/P100/front.jpg", Size: 120000}]
+    IsTruncated = false
+```
+
+For a larger result, when `IsTruncated` is true, pass `NextContinuationToken` as the next request's `ContinuationToken`. Continue until no page remains. General-purpose bucket results are ordered lexicographically by key; a prefix listing is not an arbitrary query over the image's contents. See [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html).
+
+**5. Replace the image using the same key.**
+
+```text
+PutObject(
+    Bucket = "shop-media-example",
+    Key = "products/P100/front.jpg",
+    Body = JPEG_BYTES_V2,             // 150000 bytes
+    ContentType = "image/jpeg",
+    Metadata = {"product-id": "P100"}
+)
+Expected: success; GetObject now returns JPEG_BYTES_V2.
+```
+
+In this unversioned example, the old image is not retained as an addressable previous version. With **versioning enabled**, a successful replacement instead creates a new version; earlier versions remain until deleted according to the applicable rules. These ordinary puts replace the object rather than patching one field inside its content. See [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html).
+
+**6. Delete the image.**
+
+```text
+DeleteObject(
+    Bucket = "shop-media-example",
+    Key = "products/P100/front.jpg"
+)
+Expected: success; the unversioned object is removed.
+A subsequent GetObject finds no current object.
+```
+
+With permission to list the bucket, the missing-object read returns `404 NoSuchKey`. Without that permission, a missing-object read can return `403` instead; error interpretation must account for access policy. See [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html) and [HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).
+
+**Versioned deletion behaves differently.** In a versioning-enabled bucket, a delete without `VersionId` adds a **delete marker**. Normal reads then treat the key as deleted, while older data versions still exist. Permanently deleting a particular version requires its version ID and permission, subject to retention protections. A suspended-versioning bucket has additional rules. See [DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html) and [deleting object versions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
+
+#### Large Transfers and Checksums
+
+- **Multipart upload:** Upload parts independently, retry failed parts, then complete the upload to assemble one object. Incomplete uploads need completion, abortion, or suitable lifecycle cleanup; uploaded parts are not a finished object. See [multipart upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html).
+- **Range reads:** Retrieve a byte range instead of the whole object. For example, `Range = "bytes=0-1023"` requests the first 1024 bytes when they exist. See [GetObject range requests](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html).
+- **Checksums and ETags:** Use the supported checksum facilities to check transfer integrity. An ETag is **not universally the content's MD5 hash**, especially with multipart uploads or different encryption methods. Checksums detect differences; they do not grant access or replace encryption. See [S3 metadata and ETags](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html).
+
+### Worked Application Example: Product Details and Images
+
+Keep the same product and storage identifiers:
+
+| Component | Responsibility |
+| --- | --- |
+| **PostgreSQL** | Product P100's name, price, owner, and stored image reference |
+| **Object storage** | The image bytes in `shop-media-example` under `products/P100/front.jpg` |
+| **Application** | Authorize changes and reads, validate uploads, and manage the reference |
+| **Optional CDN** | Cache and deliver eligible content; private content still needs appropriate access controls |
+
+The sequence below is a **separate application walkthrough**, starting with a new upload opportunity after the operation examples. It assumes the product exists and the image key is available.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as Application
+    participant S as S3: shop-media-example
+    participant D as PostgreSQL
+    Note over B,D: Product P100
+    Note over B,S: Key: products/P100/front.jpg
+    B->>A: Request image upload
+    A->>A: Authorize product owner
+    A->>D: Record pending upload
+    A-->>B: Presigned PUT permission
+    B->>S: Upload image directly
+    S-->>B: Upload succeeded
+    B->>A: Request finalization
+    A->>S: Check stored object
+    A->>A: Validate content and size
+    A->>D: Save image reference as ready
+    A-->>B: Image ready
+    B->>A: Request image access
+    A->>A: Authorize read
+    A->>D: Read ready image reference
+    A-->>B: Presigned GET permission
+    B->>S: Download image
+    S-->>B: Image bytes
+```
+
+The direct upload avoids carrying the image bytes through the application server. The application still checks that the expected object was uploaded; a browser's success message is not sufficient verification. Content checks may run in a worker, and an object can remain quarantined until approved. Cross-origin browser requests also need appropriate CORS settings; CORS does not grant storage permission.
+
+A **presigned URL** grants time-limited access for a particular object and operation, within the signer's permissions. The bucket can remain private. Anyone possessing the URL can use its granted access, and it can generally be reused until it expires or becomes invalid. Keep it out of sensitive logs. See [AWS's presigned-URL guidance](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html).
+
+The diagram omits some failure branches. Use these simple state rules:
+
+| Situation | Application response |
+| --- | --- |
+| Permission issued but upload fails | Keep the upload pending or failed; do not publish a ready reference |
+| Upload succeeds but database update fails | Retry finalization safely; track and later clean abandoned uploads |
+| Finalization is repeated | Recognize the same upload and avoid duplicate records or side effects |
+| Object changes after validation | Bind readiness to the validated version or otherwise prevent unapproved replacement |
+| Old uploads are abandoned | Reconcile pending records and objects before cleanup; avoid deleting active data |
+
+**The database and bucket do not automatically share one transaction.** A practical design records the bucket, key, and, where needed, the verified version or checksum. The fixed key here is for learning; real upload flows need a controlled key/version strategy so a still-valid upload permission cannot silently replace approved content. For production validation, metadata alone does not establish that the bytes are safe or correct.
+
+See [ACID and transaction boundaries](#transactions-and-acid), [application authorization](Identity-and-Access-Management.md#authorization-in-practice), and [pipeline recovery and reconciliation](Data-Engineering-for-Solution-Architecture.md#recovery-backfills-and-exactly-once-claims).
+
+An optional **content delivery network (CDN)** adds an independent cache in front of eligible content. Updating S3 does not automatically remove every cached copy; define cache lifetimes, invalidation, or versioned asset URLs. A presigned S3 URL alone is not a CDN access-control design.
+
+### Consistency, Security, Lifecycle, and Recovery
+
+**Current S3 object operations have strong consistency:** after a successful put, overwrite, or delete, later reads and listings reflect the completed change within S3's documented scope. That does not make a separate database update atomic, force an asynchronous replica to be current, or refresh external caches. Other object-storage systems can offer different guarantees. See [S3 strong consistency](https://aws.amazon.com/s3/consistency/).
+
+| Concern | Simple design rule |
+| --- | --- |
+| **Private access and least privilege** | Give each identity only the required object/prefix operations; the application still enforces business permissions |
+| **Transport and encryption** | Use TLS and suitable at-rest encryption/key controls; encryption does not replace authorization |
+| **Upload safety** | Check size and actual content; quarantine or scan when required before publication |
+| **Versioning** | Retain earlier revisions for recovery, with policies for old-version retention and cost |
+| **Lifecycle rules** | Transition or expire eligible objects; current and noncurrent versions require appropriate rules |
+| **Retention / Object Lock** | Protect specified versions using configured retention or legal holds; new versions and delete markers can still be created |
+| **Replication** | Provide copies in the configured failure scope; replication is not a substitute for backup or restoration tests |
+| **Backup and recovery** | Decide what must be recoverable, who can delete recovery copies, and how restoration will be tested |
+| **Cost and performance** | Consider stored bytes, operations, retrieval, transfer, object size, access frequency, concurrency, and recovery needs |
+| **Events and integration** | Handle retries, duplicate notifications, and out-of-order events; a notification is not a cross-system commit |
+
+See [S3 security practices](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html), [lifecycle expiration](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html), [Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html), and [notification delivery behavior](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html).
+
+**Storage classes reflect access and recovery needs:**
+
+| Access pattern | S3 examples | What to check |
+| --- | --- | --- |
+| **Frequent access** | S3 Standard | Latency, request/transfer costs, and required resilience |
+| **Infrequent access** | S3 Standard-IA or One Zone-IA | Retrieval charges, minimum storage rules, and the failure scope |
+| **Archive** | S3 Glacier Instant Retrieval, Flexible Retrieval, or Deep Archive | Some offer immediate access; others need a restore request and waiting time |
+
+These are categories, not universal performance or price guarantees. Do not describe every archive class as offline, every object store as cheap, or every class as multi-AZ. Choose using the current [storage-class documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html) and the application's [retention and deletion requirements](Data-Engineering-for-Solution-Architecture.md#access-privacy-and-lifecycle).
+
+### Prominent Object-Storage Solutions
+
+These are **representative implementations**, not an exhaustive list, ranking, or claim that their guarantees are identical. The common object-storage concept matters more than memorizing every product name.
+
+#### Major Cloud Platforms
+
+| Solution | Deployment model | Concept to recognize | Official reference |
+| --- | --- | --- | --- |
+| **Amazon S3** | AWS-managed | Buckets, keys, objects, and storage-class choices | [S3 overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) |
+| **Azure Blob Storage** | Microsoft-managed | Blob containers and objects; part of Azure Storage | [Blob Storage overview](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-overview) |
+| **Google Cloud Storage** | Google-managed | Buckets, objects, and location/access choices | [Cloud Storage overview](https://docs.cloud.google.com/storage/docs/introduction) |
+| **OCI Object Storage** | Oracle-managed | Object storage separate from compute instances | [OCI overview](https://docs.oracle.com/en-us/iaas/Content/Object/Concepts/objectstorageoverview.htm) |
+| **IBM Cloud Object Storage** | IBM-managed | Buckets with configured location and resilience | [IBM overview](https://cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-about-cloud-object-storage) |
+| **Alibaba Cloud OSS** | Alibaba-managed | Object Storage Service with multiple access tiers | [OSS overview](https://www.alibabacloud.com/help/en/oss/user-guide/oss-overview) |
+| **Tencent Cloud COS** | Tencent-managed | Cloud Object Storage accessed through service APIs | [COS overview](https://www.tencentcloud.com/document/product/436/6222) |
+| **Huawei Cloud OBS** | Huawei-managed | Object Storage Service for named stored content | [OBS overview](https://support.huaweicloud.com/intl/en-us/productdesc-obs/en-us_topic_0045853681.html) |
+
+#### Additional Managed Services
+
+| Solution | Deployment model | Concept to recognize | Official reference |
+| --- | --- | --- | --- |
+| **Cloudflare R2** | Cloudflare-managed | Object storage with an S3-compatible interface | [R2 documentation](https://developers.cloudflare.com/r2/) |
+| **Backblaze B2** | Backblaze-managed | B2 object storage with S3-compatible and native interfaces | [B2 S3 API](https://www.backblaze.com/docs/cloud-storage-call-the-s3-compatible-api) |
+| **Wasabi** | Wasabi-managed | Managed object storage with documented S3 API variations | [Wasabi API reference](https://docs.wasabi.com/apidocs/wasabi-api) |
+| **DigitalOcean Spaces** | DigitalOcean-managed | S3-compatible object storage with optional CDN delivery | [Spaces documentation](https://docs.digitalocean.com/products/spaces/) |
+
+#### Self-Hosted and Open-Source Projects
+
+| Solution | Deployment model | Concept to recognize | Official reference |
+| --- | --- | --- | --- |
+| **Ceph Object Gateway** | Operator-managed Ceph cluster | Gateway exposing S3/Swift-compatible object interfaces | [Ceph gateway](https://docs.ceph.com/en/latest/radosgw/) |
+| **OpenStack Swift** | Operator-managed distributed service | Object/container/account model and Swift's documented consistency | [Swift documentation](https://docs.openstack.org/swift/latest/) |
+| **SeaweedFS** | Operator-managed storage system | Object storage through an S3 interface alongside other interfaces | [SeaweedFS project](https://github.com/seaweedfs/seaweedfs) |
+| **Apache Ozone** | Operator-managed distributed storage | An S3 gateway over Ozone's object store | [Ozone S3 interface](https://ozone.apache.org/docs/2.1.2/user-guide/client-interfaces/s3/s3-api/) |
+
+#### Commercial Self-Hosted Platforms
+
+| Solution | Deployment model | Concept to recognize | Official reference |
+| --- | --- | --- | --- |
+| **MinIO AIStor** | Self-hosted vendor platform | S3 object access; distinct from the legacy community repository | [AIStor documentation](https://docs.min.io/aistor/) |
+| **Cloudian HyperStore** | Self-hosted vendor platform | Distributed enterprise object storage with S3 interfaces | [HyperStore overview](https://cloudian.com/products/hyperstore/) |
+| **Scality RING / ARTESCA** | Self-hosted vendor platforms | Object-storage offerings with different deployment/workload emphases | [Scality products](https://www.scality.com/products) |
+
+**Historical MinIO clarification:** As checked on **5 November 2026**, the [legacy MinIO community repository](https://github.com/minio/minio) is archived and marked unmaintained. Do not treat its old installation guidance as current AIStor documentation or assume the editions share licensing and support terms.
+
+**S3-compatible does not mean identical to AWS S3.** Check the exact operations, policy model, consistency, versioning, limits, and error behavior the implementation supports. Cloudflare publishes a [feature-by-feature compatibility list](https://developers.cloudflare.com/r2/api/s3/api/); Wasabi also documents variations. Do not assume every object-storage service uses the S3 API.
+
+Self-hosting means the operator must arrange capacity, upgrades, access control, monitoring, and recovery. Open-source availability does not remove those responsibilities; a commercial edition does not automatically supply every capability or guarantee.
+
+### When to Choose Object Storage
+
+| Requirement | What to evaluate | Simple example |
+| --- | --- | --- |
+| **Large named content, media, backups, or datasets** | Object storage | Keep P100's images and exported analytical files |
+| **Shared filesystem operations** | File storage | Several applications need a shared directory with supported file semantics |
+| **Filesystem/database-engine volumes** | Block storage | Provide the volume required by a conventional database engine |
+| **Record-level queries and transactions** | A suitable database | Change a product's price and related operational records |
+| **Fast repeated delivery** | Caching/CDN alongside the authoritative store | Deliver a frequently viewed product image from a nearby cache |
+
+For a small application, local files or database binary fields may be sufficient. Introduce object storage when access, durability, sharing, scale, delivery, or operating requirements justify another service. Check recovery and total cost instead of assuming one storage model is always better.
+
+> **Object storage keeps content by key. Databases organize application records. Use them together when their different responsibilities fit the application.**
+
 ## Summary
 
 Databases organize application information; DBMSs supply operations and configurable guarantees; storage resources retain the underlying bytes. Relational, key-value, document, column-family, and graph models emphasize different ways to represent and access data.
@@ -1968,6 +2316,8 @@ Databases organize application information; DBMSs supply operations and configur
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
 The remaining placeholders reserve space for deeper study of column-family and graph databases and their named implementations.
+
+The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
 
 The [DynamoDB example](#amazon-dynamodb) connects keys, APIs, indexes, sized capacity units, and read guarantees. Its historical architecture discussion is separate from current documented service behavior.
 
@@ -2071,3 +2421,23 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Qdrant: Vector Similarity Search and Metadata Filtering](https://qdrant.tech/documentation/overview/)
 - [KurrentDB: Event Streams and the EventStoreDB Rename](https://docs.kurrent.io/getting-started/kurrent-ecosystem)
 - [immudb: Verifiable History](https://github.com/codenotary/immudb)
+- [Amazon S3: Overview and Responsibilities](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html)
+- [Amazon S3: Object Keys and Prefixes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html)
+- [Amazon S3: Metadata and ETags](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html)
+- [Amazon S3: PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html)
+- [Amazon S3: HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)
+- [Amazon S3: GetObject and Range Reads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)
+- [Amazon S3: ListObjectsV2 and Pagination](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html)
+- [Amazon S3: DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html)
+- [Amazon S3: Deleting Versions and Delete Markers](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html)
+- [Amazon S3: Multipart Uploads](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html)
+- [Amazon S3: Presigned Uploads and Downloads](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)
+- [Amazon S3: Strong Consistency](https://aws.amazon.com/s3/consistency/)
+- [Amazon S3: Storage Classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html)
+- [Amazon S3: Security Practices](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html)
+- [Amazon S3: Lifecycle Expiration](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html)
+- [Amazon S3: Object Lock and Retention](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)
+- [Amazon S3: Event Delivery, Ordering, and Duplicates](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
+- [Cloudflare R2: S3 API Compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
+- [MinIO Community Repository — Archived, Unmaintained](https://github.com/minio/minio)
+- [MinIO AIStor: Current Vendor Documentation](https://docs.min.io/aistor/)
