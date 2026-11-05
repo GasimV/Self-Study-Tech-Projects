@@ -2055,6 +2055,28 @@ The paper describes an evolution:
 | Global admission control | Table-wide request-router token coordination |
 | Automatic splitting for consumed load | Divide eligible hot ranges; single hot items remain constrained |
 
+**Token buckets: how requests were admitted**
+
+A **token** represents permission to consume throughput. A request spends tokens according to its capacity cost.
+
+The earlier storage-node design described in the paper used **two buckets per partition plus one shared node bucket**:
+
+| Bucket | What it controls |
+| --- | --- |
+| **Partition allocated bucket** | The partition's regular throughput allowance |
+| **Partition burst bucket** | Saved allowance for temporary excess traffic |
+| **Shared node bucket** | Capacity available on the storage server hosting multiple partitions |
+
+1. **Regular allowance available:** Admit the request using the partition's allocated tokens and charge the node bucket.
+2. **Regular allowance exhausted:** Allow bursting only when both the partition's burst bucket and the node bucket have sufficient tokens.
+3. **Required tokens unavailable:** Throttle the request. Saved burst tokens alone do not guarantee admission.
+
+Burst writes also checked capacity at the other replica nodes. This protected shared servers and replicated writes from overload. See **Section 4.1.1** of the [2022 DynamoDB paper](https://www.usenix.org/system/files/atc22-elhemali.pdf).
+
+The paper later describes moving table-budget admission decisions to request routers through **global admission control (GAC)**, while retaining partition token buckets as safeguards.
+
+**Keep the timeframes separate:** This is historical architecture. Current [AWS guidance](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html) describes adaptive capacity as automatic and immediate within its limits; do not teach it as only a slow, long-term mechanism. Compare [burst, adaptive, and warm throughput](#burst-adaptive-and-warm-throughput).
+
 “Global” here is table-wide, not necessarily multi-Region. These are historical internals; current “adaptive capacity” is customer-facing terminology.
 
 #### Failure Handling and Gray Failures (2022)
