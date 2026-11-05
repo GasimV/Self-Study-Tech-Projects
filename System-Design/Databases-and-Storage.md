@@ -937,6 +937,24 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 
 The [general selection table](#database-types-requirements-and-examples) explains the categories. This table applies them to **one platform**, without claiming that each role requires a separate installation.
 
+**Alternative: DynamoDB for customer-order storage**
+
+Suppose the order service mainly creates/updates individual orders and lists one customer's orders. Evaluate **[Amazon DynamoDB](#amazon-dynamodb)** when these key-based access patterns fit and AWS-managed infrastructure is desired.
+
+Reuse the keys from the [worked DynamoDB requests](#worked-requests-customer-orders):
+
+| Application need | DynamoDB access pattern |
+| --- | --- |
+| Read customer 42's order D4821 | `GetItem` with `PK = CUSTOMER#42` and `SK = ORDER#D4821` |
+| List customer 42's orders | `Query` with `PK = CUSTOMER#42`; continue through result pages as needed |
+| Change D4821's status | `UpdateItem` using the full key and appropriate conditions |
+
+**Why it fits:** The required lookups map directly to table keys, while AWS operates the underlying database infrastructure. These order records are persistent application data, unlike a disposable cached copy. See [AWS's core components](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.CoreComponents.html).
+
+**Trade-off:** Additional searches may need indexes or another prepared view. Evaluate hot customers, item sizes, read consistency, capacity, and recovery. If the service depends heavily on joins, database-enforced relationships, or changes that must commit with existing SQL records, the PostgreSQL design may fit better.
+
+This is an **alternative design for the order-service role**, not a mandatory additional database. Choose which store owns the authoritative orders; do not maintain independent authoritative copies in PostgreSQL and DynamoDB or assume they share one transaction.
+
 #### Follow One Package Through the System
 
 ```mermaid
