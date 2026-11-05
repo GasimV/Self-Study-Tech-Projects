@@ -1987,6 +1987,25 @@ These are unit calculations, not guaranteed request rates. They exclude extra in
 | **Adaptive capacity** | AWS accommodates uneven traffic across partitions within the applicable limits | It does not remove the table's total constraints or every hot-item limit |
 | **Warm throughput** | The table/index has prepared throughput it can support when appropriately configured | Readiness is distinct from burst savings and does not override other constraints |
 
+**How the saved-capacity bank works**
+
+In provisioned mode, DynamoDB automatically saves some unused read/write capacity and may use it for later spikes. There is no separate burst switch to enable. AWS currently documents retention of up to **five minutes (300 seconds) of unused capacity**.
+
+**Five minutes describes the amount saved, not a fixed maximum burst duration.** The duration depends on the available savings and how quickly excess demand consumes them.
+
+**Illustrative calculation:** Assume a 150-RCU baseline, a hypothetical full bank after complete idleness, and no competing use of the savings:
+
+| Quantity | Calculation |
+| --- | --- |
+| Hypothetical saved read units | `150 × 300 = 45,000` |
+| Demand during the spike | 200 read units/second |
+| Extra demand above the baseline | `200 − 150 = 50` read units/second |
+| Time until this hypothetical bank empties | `45,000 ÷ 50 = 900 seconds = 15 minutes` |
+
+This is arithmetic for the teaching model, **not guaranteed DynamoDB throughput or a freely shared table-wide credit balance**. Partition placement, available savings, and other limits affect actual behavior.
+
+Bursting can temporarily help a hot partition exceed its allocation, but cannot bypass its maximum capacity or other limits. Requests can still throttle. AWS may also consume savings for maintenance; size steady demand without relying on burst capacity. See [AWS's burst and adaptive capacity guidance](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html).
+
 ![Illustrative demand and admitted traffic with and without saved burst capacity: saved capacity absorbs a short spike, but sustained excess demand still throttles.](assets/dynamodb-burst-capacity.svg)
 
 The dashed line is a **100-unit/second illustrative baseline**, not an arbitrary item count. Both panels use the same demand. The right panel saves unused units, serves the first spike, then exhausts its savings during later excess demand. It is a simplified teaching model, not an AWS benchmark or an exposed “enable bursting” setting. Actual behavior includes other capacity-management mechanisms.
