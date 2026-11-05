@@ -43,6 +43,7 @@
 - [Key-Value Stores](#key-value-stores)
   - [What Is a Key-Value Store?](#what-is-a-key-value-store)
   - [Why Use Key-Value Stores in Distributed Systems?](#why-use-key-value-stores-in-distributed-systems)
+  - [Why Key-Value Lookups Can Be Fast: Complexity, RAM, and Disk](#why-key-value-lookups-can-be-fast-complexity-ram-and-disk)
   - [Functional Requirements and a Simple API](#functional-requirements-and-a-simple-api)
   - [Non-Functional Requirements and Trade-Offs](#non-functional-requirements-and-trade-offs)
   - [Design Topics to Study Next](#design-topics-to-study-next)
@@ -1057,6 +1058,126 @@ flowchart TB
 ```
 
 The routing arrows show alternative destinations for a key, not a broadcast to every partition. Dotted arrows show replication relationships; they do not prescribe synchronous or asynchronous acknowledgments. Routing can reside in a client or service. **Partitioning divides data; replication copies it.** The diagram does not define a complete failover protocol.
+
+### Why Key-Value Lookups Can Be Fast: Complexity, RAM, and Disk
+
+A key-value store retrieves a value using its key:
+
+```text
+GET("customer:42") → "Alice"
+```
+
+**A hash-table-based implementation can locate a key in expected O(1) time:** roughly constant lookup work as the number of stored entries grows. This describes the lookup algorithm—not the complete database request or every key-value implementation.
+
+**1. Why does hashing give expected O(1) lookup?**
+
+Imagine a cabinet with numbered drawers. A hash function calculates which drawer to open directly:
+
+```text
+"customer:42" → hash calculation → bucket 17
+```
+
+The store checks bucket 17 rather than searching every stored key.
+
+As more entries arrive, the hash table increases its number of buckets to keep the average bucket occupancy small:
+
+| Stored entries | Buckets | Average entries per bucket |
+| --- | --- | --- |
+| 100 | 100 | 1 |
+| 1,000 | 1,000 | 1 |
+| 10,000 | 10,000 | 1 |
+
+These numbers are illustrative. Implementations choose their own growth rules. Here, buckets are positions in a local hash table, not the storage-server partitions discussed elsewhere.
+
+Different keys can map to the same bucket—a **hash collision**. The store must compare the actual keys to find the correct entry. Good hash distribution and controlled occupancy keep the number of entries examined small on average.
+
+**O(1) does not mean exactly one instruction or a guaranteed response time.** It means lookup work does not normally grow in proportion to the total entry count.
+
+**2. What physically happens in RAM?**
+
+In a simplified implementation, RAM contains a bucket array and stored entries:
+
+```text
+CPU hashes "customer:42"
+          ↓
+Calculates bucket 17
+          ↓
+Reads bucket 17 from the array
+          ↓
+Follows a pointer to the stored entry
+          ↓
+Checks the key and returns "Alice"
+```
+
+A **pointer** is a stored memory address.
+
+Because array slots have a fixed size, the processor can calculate a slot's address:
+
+```text
+Slot address = starting address + bucket number × slot size
+```
+
+For example:
+
+```text
+Starting address = 1000
+Bucket number    = 17
+Slot size        = 8 bytes
+
+Slot address = 1000 + 17 × 8 = 1136
+```
+
+These are illustrative program addresses; the operating system maps them to physical memory.
+
+**The processor accesses the calculated location rather than scanning every preceding memory address.** CPU caches may satisfy some accesses before RAM is needed.
+
+**3. What is the space complexity?**
+
+| Measure | Typical complexity |
+| --- | --- |
+| Store N fixed-size key-value entries and their hash index | **O(N) total space** |
+| Perform one ordinary lookup | **O(1) additional space** |
+| Locate a key with well-distributed hashing and controlled occupancy | **Expected O(1) time** |
+
+More entries require more memory even when locating one entry remains fast. With variable-size keys and values, also account for their total bytes: hashing a longer key and transferring a larger value require more work.
+
+Growing the bucket array can require redistributing existing entries. **Resizing is occasionally expensive; constant-time lookup does not mean every maintenance operation is constant-time.**
+
+**4. What changes when data is stored on disk?**
+
+One possible disk-backed design keeps an index in RAM that identifies where a value is stored:
+
+```text
+Key → RAM index → file location → read storage page → value
+```
+
+A cached page may already be in memory. Otherwise, the database must request it from SSD/HDD, adding storage latency.
+
+Other designs use different structures. For example, RocksDB combines in-memory structures with sorted files on storage; its key-value interface does not imply a simple O(1) hash-table lookup. [RocksDB overview](https://github.com/meta/rocksdb/wiki/RocksDB-Overview)
+
+RAM is volatile. An in-memory database can additionally write logs or snapshots to disk for recovery, depending on its configuration. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
+
+**5. Are key-value stores always faster than relational databases?**
+
+No. Compare the access structure and requested operation:
+
+| Approach | Typical work to locate an entry among N entries |
+| --- | --- |
+| **Hash table** | Expected **O(1)** |
+| **Balanced tree index** | **O(log N)** |
+| **Full scan** | **O(N)** |
+
+> **O(1) scales better than O(log N):** With constant-time lookup, the expected amount of work stays roughly unchanged as more entries are stored. With logarithmic lookup, the work grows slowly.
+>
+> For illustration, a binary search over **1,024 entries** needs about **10 steps**; over **1,048,576 entries**, about **20 steps**. A well-maintained hash table still examines roughly a constant number of entries on average.
+>
+> **This describes growth in work, not guaranteed elapsed time.** An O(1) lookup requiring a disk read can take longer than an O(log N) lookup served entirely from RAM. Constant factors and hardware still matter.
+
+Redis documents `GET` as O(1). PostgreSQL supports both B-tree and hash indexes, so hashing is not exclusive to key-value databases. An indexed relational lookup can also be very fast. [Redis GET](https://redis.io/docs/latest/commands/get/), [PostgreSQL index types](https://www.postgresql.org/docs/current/indexes-types.html)
+
+Actual response time also depends on network latency, caching, storage I/O, concurrency, replication, and durability requirements.
+
+> **Recall:** Hashing calculates where to look. RAM or disk holds the bytes. Expected O(1) lookup can coexist with O(N) storage; the key-value label alone does not guarantee either constant-time access or better performance.
 
 ### Functional Requirements and a Simple API
 
@@ -2441,3 +2562,7 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Cloudflare R2: S3 API Compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
 - [MinIO Community Repository — Archived, Unmaintained](https://github.com/minio/minio)
 - [MinIO AIStor: Current Vendor Documentation](https://docs.min.io/aistor/)
+- [Redis: GET and Lookup Complexity](https://redis.io/docs/latest/commands/get/)
+- [Redis: Persistence, Snapshots, and Append-Only Logs](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
+- [PostgreSQL: B-Tree and Hash Index Types](https://www.postgresql.org/docs/current/indexes-types.html)
+- [RocksDB: Storage-Engine Overview](https://github.com/meta/rocksdb/wiki/RocksDB-Overview)
