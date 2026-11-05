@@ -24,6 +24,7 @@
 - [Evaluation and Observability](#evaluation-and-observability)
   - [Evaluating Quality](#evaluating-quality)
   - [Measuring Production Behavior](#measuring-production-behavior)
+  - [Langfuse: Tracing and Evaluating LLM Applications](#langfuse-tracing-and-evaluating-llm-applications)
 - [Security, Privacy, and Data Residency](#security-privacy-and-data-residency)
   - [Threats and Controls](#threats-and-controls)
   - [Data Handling and Deployment Choices](#data-handling-and-deployment-choices)
@@ -315,6 +316,37 @@ Example tests include incomplete code for code completion, source-backed reposit
 
 Trace a request across API, retrieval, tools, gateway, and model calls. Log enough to diagnose problems while avoiding unnecessary storage of prompts, outputs, and personal data.
 
+### Langfuse: Tracing and Evaluating LLM Applications
+
+**Langfuse helps you inspect and improve an LLM application.** A **trace** records one request's path; its individual steps can include retrieval, model calls, and agent/tool actions. Your application or integrations must instrument the steps you want to observe.
+
+| Capability | What it helps you understand |
+| --- | --- |
+| **Tracing** | Which steps ran, their timing, and recorded inputs, outputs, or errors |
+| **Usage and cost tracking** | Token usage and estimated model costs; accuracy depends on captured usage and pricing information |
+| **Prompt management** | Which prompt version produced a result, and how a proposed version compares |
+| **Evaluation** | How outputs score against defined checks, datasets, or human feedback |
+
+See the official [observability overview](https://langfuse.com/docs/observability/overview), [prompt management](https://langfuse.com/docs/prompt-management/overview), and [evaluation overview](https://langfuse.com/docs/evaluation/overview).
+
+**Example: “Why was this chatbot answer slow, expensive, or incorrect?”**
+
+Follow one request: **Question → retrieval → model call → answer**.
+
+| Problem | What to inspect | Possible finding |
+| --- | --- | --- |
+| **Slow answer** | Time spent in each traced step | Retrieval took most of the request time |
+| **Expensive answer** | Token counts and repeated model calls | The application repeatedly sent a large conversation history |
+| **Incorrect answer** | Retrieved evidence, prompt version, output, and evaluation results | Retrieval supplied an outdated policy, or the model ignored relevant evidence |
+
+These are illustrative findings, not automatic diagnoses. A trace shows what was recorded; it does not prove an answer is true. Use the [quality-evaluation methods](#evaluating-quality) above to assess correctness.
+
+**Deployment:** Langfuse Cloud is managed by the provider; self-hosting gives you control over its deployment while making your team responsible for operation, upgrades, access, and recovery. Feature availability can depend on the edition. See [self-hosting and deployment choices](https://langfuse.com/self-hosting).
+
+**Protect trace data:** Minimize captured content and redact secrets or personal information **before exporting it**. Configure access, retention, and processing/storage locations for both traces and evaluation data. Self-hosting does not automatically make collection safe. See [Langfuse masking](https://langfuse.com/docs/observability/features/masking) and [these data-handling notes](#data-handling-and-deployment-choices).
+
+> **Recall:** Trace what happened; measure time and usage; evaluate quality; compare changes.
+
 ## Security, Privacy, and Data Residency
 
 ### Threats and Controls
@@ -372,3 +404,8 @@ Minimize transferred context, encrypt data in transit and at rest, apply tenant-
 - [Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks](https://arxiv.org/abs/2005.11401)
 - [OWASP Top 10 for LLM and Generative AI Applications](https://genai.owasp.org/llm-top-10/)
 - [NIST Generative AI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf)
+- [Langfuse: Observability and Application Tracing](https://langfuse.com/docs/observability/overview)
+- [Langfuse: Prompt Management](https://langfuse.com/docs/prompt-management/overview)
+- [Langfuse: Evaluation](https://langfuse.com/docs/evaluation/overview)
+- [Langfuse: Masking Sensitive Trace Data](https://langfuse.com/docs/observability/features/masking)
+- [Langfuse: Self-Hosting and Deployment Choices](https://langfuse.com/self-hosting)
