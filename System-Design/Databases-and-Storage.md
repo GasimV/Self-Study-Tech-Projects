@@ -2112,6 +2112,27 @@ flowchart TB
 
 Illustration only; log-only members lack a full item index and are omitted here. Leaders handle writes/strong reads; storage replicas can serve eventual reads. Writes await quorum log persistence. Compare [Paxos](Distributed-Systems-Theorems-and-Data-Structures.md#paxos) and [replication](#replication-models-and-replica-placement).
 
+**Write walkthrough: three storage replicas A, B, and C**
+
+Assume A is leader:
+
+1. A router sends order D4821's status update to A.
+2. A creates a write-ahead-log record and replicates it.
+3. Acknowledgment requires persisted logs from a quorum—two of three in this illustration.
+
+Storage replicas apply log records to maintain their own B-tree. Ordinary replication does not broadcast the whole index for every write. See **Section 3** of the [2022 paper](https://www.usenix.org/system/files/atc22-elhemali.pdf).
+
+**Read example: availability versus freshness**
+
+Assume a base-table write changes D4821 from `CREATED` to `DISPATCHED` and succeeds, with no later writes:
+
+| Successful read | Possible result |
+| --- | --- |
+| **Strongly consistent read** | `DISPATCHED` |
+| **Eventually consistent read** | `CREATED` or `DISPATCHED` until the read reflects the update |
+
+Returning an older committed value can satisfy the eventual-read contract. **A successful read is available; its consistency option determines the freshness guarantee.** See [current AWS read guarantees](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html).
+
 #### Admission Control and Splitting (2022)
 
 The paper describes an evolution:
@@ -2168,6 +2189,18 @@ These mechanisms are described in **Sections 4.2 and 4.4** of the [2022 DynamoDB
 
 Peers can initiate elections. Replacements respect the old lease before serving protected operations. Gray failures involve partial reachability; peer cross-checks reduce spurious elections. Leader loss can interrupt service; recovery remains possible. See [failure detection](#membership-gossip-and-failure-detection).
 
+**Leader failover**
+
+1. Leader A fails.
+2. B or C can initiate an election; the old leader need not coordinate it.
+3. A replacement waits for the old lease to expire before serving writes/strong reads. A healthy quorum remains necessary.
+
+Leader failure can interrupt service; it does not permanently prevent another quorum.
+
+**Replacing an unhealthy replica**
+
+A leader can recruit a **log replica**, copying recent logs without first copying the full B-tree. This restores log redundancy quickly while storage-replica rebuilding proceeds. Log-only replicas cannot serve ordinary item reads. See **Sections 5.1 and 6.1–6.2** of the [2022 paper](https://www.usenix.org/system/files/atc22-elhemali.pdf).
+
 #### Current Read Consistency and Transactions
 
 **Current public API guarantees are separate from the historical implementation sketch.**
@@ -2196,7 +2229,7 @@ See [AWS's read-consistency documentation](https://docs.aws.amazon.com/amazondyn
 | **Durability** | Are acknowledged writes retained under the specified failure assumptions? |
 | **Backup / recovery** | Can we restore an appropriate state after deletion, corruption, or other loss? |
 
-An eventual read can succeed while returning an older committed value. Replication can improve availability and durability but also propagate an accidental deletion. Configure and test suitable backup/restore and [point-in-time recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Point-in-time-recovery.html). Neither multi-AZ replication nor an availability claim replaces application-level correctness and recovery planning.
+An eventual read can succeed while returning an older committed value. Replication can improve availability and durability but also propagate an accidental deletion. Configure and test suitable backup/restore and [point-in-time recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Point-in-time-recovery.html). Neither multi-AZ (Availability Zone) replication nor an availability claim replaces application-level correctness and recovery planning.
 
 ### DynamoDB Design Checklist
 
@@ -2310,7 +2343,7 @@ The ordinary object API does not supply all filesystem semantics or automaticall
 | Service facilities for replication and protection | Applicable storage classes, versioning, retention, and recovery requirements |
 | Storage APIs and managed capabilities | Permissions, upload validation, application correctness, retries, monitoring, and costs |
 
-The storage class affects resilience and access behavior. For example, S3 Standard spans multiple Availability Zones, while One Zone choices have a different failure scope. Do not assume every object-storage configuration is multi-AZ. See [S3 storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html).
+The storage class affects resilience and access behavior. For example, S3 Standard spans multiple Availability Zones, while One Zone choices have a different failure scope. Do not assume every object-storage configuration is multi-AZ (Availability Zone). See [S3 storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html).
 
 #### Worked Object Operations
 
@@ -2491,7 +2524,7 @@ See [S3 security practices](https://docs.aws.amazon.com/AmazonS3/latest/userguid
 | **Infrequent access** | S3 Standard-IA or One Zone-IA | Retrieval charges, minimum storage rules, and the failure scope |
 | **Archive** | S3 Glacier Instant Retrieval, Flexible Retrieval, or Deep Archive | Some offer immediate access; others need a restore request and waiting time |
 
-These are categories, not universal performance or price guarantees. Do not describe every archive class as offline, every object store as cheap, or every class as multi-AZ. Choose using the current [storage-class documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html) and the application's [retention and deletion requirements](Data-Engineering-for-Solution-Architecture.md#access-privacy-and-lifecycle).
+These are categories, not universal performance or price guarantees. Do not describe every archive class as offline, every object store as cheap, or every class as multi-AZ (Availability Zone). Choose using the current [storage-class documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html) and the application's [retention and deletion requirements](Data-Engineering-for-Solution-Architecture.md#access-privacy-and-lifecycle).
 
 ### Prominent Object-Storage Solutions
 
