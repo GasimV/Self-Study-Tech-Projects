@@ -2140,7 +2140,25 @@ The earlier storage-node design described in the paper used **two buckets per pa
 
 Burst writes also checked capacity at the other replica nodes. This protected shared servers and replicated writes from overload. See **Section 4.1.1** of the [2022 DynamoDB paper](https://www.usenix.org/system/files/atc22-elhemali.pdf).
 
-The paper later describes moving table-budget admission decisions to request routers through **global admission control (GAC)**, while retaining partition token buckets as safeguards.
+**Global admission control (GAC): the table's admitted workload**
+
+In the 2022 design:
+
+1. Request routers receive local token allowances coordinated by GAC.
+2. Requests consume tokens according to their capacity cost.
+3. Routers request replenishment as tokens are consumed or expire.
+
+GAC coordinates the **table-wide budget**; it does not make traffic equal across partitions. Partition safeguards still apply.
+
+**Automatic splitting: spreading eligible hot data**
+
+DynamoDB monitored consumed throughput and automatically split eligible partitions when thresholds were crossed. It selected split points using observed key/access distribution rather than always choosing the midpoint.
+
+**Illustration:** If busy items lie on both sides of a chosen split, two resulting partitions can share their workload. If all traffic targets one item, that item remains in one resulting partition; splitting does not divide the item. Some sequential access patterns also cannot benefit.
+
+These mechanisms are described in **Sections 4.2 and 4.4** of the [2022 DynamoDB paper](https://www.usenix.org/system/files/atc22-elhemali.pdf).
+
+**Customers do not manually split or merge DynamoDB physical partitions.** Application write sharding changes logical keys; it is a separate choice. See [AWS partition management](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html).
 
 **Keep the timeframes separate:** This is historical architecture. Current [AWS guidance](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html) describes adaptive capacity as automatic and immediate within its limits; do not teach it as only a slow, long-term mechanism. Compare [burst, adaptive, and warm throughput](#burst-adaptive-and-warm-throughput).
 
