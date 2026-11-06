@@ -82,6 +82,16 @@
     - [Availability, Freshness, Durability, and Recovery](#availability-freshness-durability-and-recovery)
   - [DynamoDB Design Checklist](#dynamodb-design-checklist)
 - [Column-Family Databases](#column-family-databases)
+  - [Column-Family Concepts and Terminology](#column-family-concepts-and-terminology)
+  - [Cassandra: Keys, Partitions, and Clustering](#cassandra-keys-partitions-and-clustering)
+  - [Worked CQL Example: Robot Telemetry](#worked-cql-example-robot-telemetry)
+    - [Create the Telemetry Table](#create-the-telemetry-table)
+    - [Insert and Query Readings](#insert-and-query-readings)
+    - [Correct and Delete a Reading](#correct-and-delete-a-reading)
+  - [How Cassandra Stores and Retrieves Data](#how-cassandra-stores-and-retrieves-data)
+  - [Distribution, Replication, and Tunable Consistency](#distribution-replication-and-tunable-consistency)
+  - [Modeling, Operations, and Common Pitfalls](#modeling-operations-and-common-pitfalls)
+  - [When to Choose a Column-Family Database](#when-to-choose-a-column-family-database)
 - [Apache HBase](#apache-hbase)
 - [Graph Databases](#graph-databases)
 - [Neo4j](#neo4j)
@@ -465,7 +475,7 @@ The application checks the relevant rules and groups the debit and credit within
 | --- | --- | --- | --- |
 | **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, [Amazon DynamoDB](#amazon-dynamodb) |
 | **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | [MongoDB](#mongodb-document-modeling-and-queries), Apache CouchDB |
-| **Column-family / wide-column** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, Apache HBase |
+| **[Column-family / wide-column](#column-family-databases)** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, Apache HBase |
 | **Graph** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | Neo4j, Amazon Neptune |
 
 These examples describe common use patterns, not exclusive product capabilities. Redis supports multiple [data types](https://redis.io/docs/latest/develop/data-types/); DynamoDB supports key-value and document patterns. See [CouchDB's document overview](https://docs.couchdb.org/en/stable/intro/overview.html), [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html), and [Neo4j graph concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/).
@@ -830,7 +840,7 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | **Common NoSQL models** | | | |
 | **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, [Amazon DynamoDB](#amazon-dynamodb), Aerospike |
 | **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, [Amazon DynamoDB](#amazon-dynamodb) |
-| **Wide-column** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, Apache HBase, Google Bigtable |
+| **[Wide-column](#column-family-databases)** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, Apache HBase, Google Bigtable |
 | **Graph** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | Neo4j, Amazon Neptune, TigerGraph |
 | **Specialized workloads and capabilities** | | | |
 | **Time-series** | Timestamped ingestion, time-window queries, and retention rules | Calculate hourly temperature and CPU-usage trends from a robot fleet | InfluxDB, TimescaleDB, OpenTSDB |
@@ -926,7 +936,7 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 | **Embedded SQL** | R17 retains its assigned task and local progress during a disconnection | **SQLite:** local storage without a separate database-server process |
 | **Key-value** | Retrieve a session by ID or reuse a cached result | **Redis:** known-key access with defined expiration/invalidation; cached stock is not authority to promise a parcel |
 | **Document** | Store differing package attributes: fragile glass, refrigerated food, or items with different dimensions | **MongoDB or PostgreSQL JSONB:** nested records when their shape and queries fit; a separate document engine is optional |
-| **Wide-column** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or HBase:** model partition/row keys for those queries; use time buckets where needed to bound growth |
+| **[Wide-column](#column-family-databases)** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or HBase:** model partition/row keys for those queries; see the [R17 CQL walkthrough](#worked-cql-example-robot-telemetry) for daily buckets |
 | **Graph** | Investigate customers, accounts, devices, and orders connected to suspicious delivery activity | **Neo4j:** traverse relationships; a shared device is a signal to investigate, not proof of fraud |
 | **Time-series** | Monitor battery and temperature trends across the fleet | **InfluxDB or TimescaleDB:** time-window queries and retention suited to monitoring |
 | **Search** | Search free-text incident reports using terms, filters, and relevance | **Elasticsearch:** evaluate richer text retrieval; an exact lookup of D4821 alone does not justify another search engine |
@@ -2244,7 +2254,332 @@ An eventual read can succeed while returning an older committed value. Replicati
 
 ## Column-Family Databases
 
-> Study notes to be added.
+### Column-Family Concepts and Terminology
+
+**Column-family databases, also called wide-column stores, organize keyed data with related columns and product-specific grouping rules.** They are often used for distributed operational workloads whose reads and writes can be modeled around suitable keys.
+
+“Wide” does not require every record to contain thousands of columns. Some models allow many sparse attributes; Cassandra can group many ordered CQL rows within one partition.
+
+**HBase-style conceptual example:** The families `profile` and `sensors` are defined explicitly; qualifiers such as `model` or `battery` identify values within them.
+
+| Row key | profile:model | sensors:battery | sensors:temperature | sensors:payload |
+| --- | --- | --- | --- | --- |
+| robot:R17 | Courier | 80 | 22.5 | — |
+| robot:R18 | Inspector | 90 | — | Camera |
+
+Here **— means no stored value for that qualifier**, not a literal dash or a requirement to store an empty placeholder. This illustrates sparse records, not the Cassandra schema used below.
+
+| HBase-style term | Simple meaning |
+| --- | --- |
+| **Row key** | Identifies and orders a row |
+| **Column family** | A defined group of related columns |
+| **Qualifier** | Identifies a column within a family, such as `battery` in `sensors:battery` |
+| **Cell** | A value addressed by row, family, and qualifier |
+| **Version** | A timestamp distinguishes a retained version of that value |
+
+See [HBase's data model](https://hbase.apache.org/docs/datamodel/). Version retention is configurable; this example is not a full HBase tutorial.
+
+**Cassandra and HBase do not expose identical models:**
+
+| Concept | Cassandra | HBase |
+| --- | --- | --- |
+| **Organization** | Keyspace → table → partitions → ordered CQL rows | Table → keyed rows → families and qualifiers |
+| **Schema** | Modern CQL declares column names and types; columns can be added through schema changes | Families are explicit; qualifiers can vary between rows |
+| **Key design** | Partition key plus optional clustering columns | Ordered row key |
+| **“Column family”** | Historical terminology commonly corresponding to a table | An explicit group within a table |
+
+Do not apply the textbook's “columns need not be predefined” statement to modern Cassandra CQL. See [Cassandra table and column definitions](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html).
+
+Also distinguish the **logical model** from [analytical columnar storage](#wide-column-vs-analytical-columnar-storage). Cassandra's wide-column classification does not imply ClickHouse-style column scanning or make it an analytical warehouse.
+
+### Cassandra: Keys, Partitions, and Clustering
+
+**CQL means Cassandra Query Language.** Its tables and statements resemble SQL, while modeling and query capabilities differ. A **keyspace** contains tables and defines options such as replication.
+
+Our telemetry table uses:
+
+```text
+Table: robotics.readings_by_robot_day
+
+Partition key: (robot_id, reading_day)
+Clustering columns: observed_at, sample_no
+Other columns: battery_percent, temperature_c
+```
+
+| Key component | Responsibility | Example |
+| --- | --- | --- |
+| **Partition key** | Groups rows and participates in hash-based placement | `(R17, 2026-11-06)` |
+| **Clustering columns** | Order rows within a partition and complete row identity | `(10:01:00Z, 2)` |
+| **Full primary key** | Identifies one CQL row | Robot, day, observation timestamp, and sample number |
+
+`sample_no` distinguishes readings with the same timestamp. `reading_day` is an application-supplied UTC date bucket; Cassandra does not automatically derive or validate its relationship to `observed_at`. See [CQL keys](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html) and [date/timestamp types](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/types.html).
+
+```mermaid
+flowchart TB
+    KS["Keyspace: robotics"] --> T["Table: readings_by_robot_day"]
+    T --> P17
+    T --> P18
+    subgraph P17["Partition: R17 / 2026-11-06"]
+        A["10:00:00Z / sample 1"] -->|"Next clustering key"| B["10:01:00Z / sample 2"]
+    end
+    subgraph P18["Partition: R18 / 2026-11-06"]
+        C["10:00:00Z / sample 1"]
+    end
+
+    classDef schema fill:#dbeafe,stroke:#111,color:#111
+    classDef reading fill:#fff3cd,stroke:#111,color:#111
+    class KS,T schema
+    class A,B,C reading
+```
+
+This shows **logical grouping and ordering**, not network traffic. There is no promised global time order across partitions. A logical partition is not a physical server: a node stores many partitions and replica copies.
+
+A day bucket bounds history relative to storing a robot's entire lifetime together. It does not guarantee a suitably sized partition: high-frequency robots may need shorter intervals or additional sharding. Evaluate row counts, bytes, access frequency, and queries using [Cassandra's partition-sizing guidance](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/data-modeling_refining.html).
+
+### Worked CQL Example: Robot Telemetry
+
+These illustrative statements use **Cassandra 5.0-compatible CQL**, following the cited documentation's 5.0 model; this is not a claim that 5.0 is the latest release. No installation or live database is required to read the example.
+
+**Assumptions:** An illustrative `robotics` keyspace already exists, with replication factor three in one datacenter. The example table does not yet exist. Requests succeed sequentially, there are no concurrent writers, and later corrections have newer mutation timestamps. The client uses `LOCAL_QUORUM` for reads and writes.
+
+Consistency is a **request/client setting**, not a clause in these CQL statements. The expected outputs below show logical values with timestamps normalized to UTC, not exact `cqlsh` formatting.
+
+#### Create the Telemetry Table
+
+```cql
+CREATE TABLE robotics.readings_by_robot_day (
+    robot_id text,
+    reading_day date,
+    observed_at timestamp,
+    sample_no int,
+    battery_percent int,
+    temperature_c double,
+    PRIMARY KEY ((robot_id, reading_day), observed_at, sample_no)
+) WITH CLUSTERING ORDER BY (observed_at ASC, sample_no ASC);
+```
+
+The inner parentheses group the two partition-key columns. The remaining primary-key columns define clustering order. A different reading at the same time needs a different `sample_no`.
+
+#### Insert and Query Readings
+
+**Insert three readings:**
+
+```cql
+INSERT INTO robotics.readings_by_robot_day
+    (robot_id, reading_day, observed_at, sample_no, battery_percent, temperature_c)
+VALUES ('R17', '2026-11-06', '2026-11-06T10:00:00Z', 1, 80, 22.5);
+
+INSERT INTO robotics.readings_by_robot_day
+    (robot_id, reading_day, observed_at, sample_no, battery_percent, temperature_c)
+VALUES ('R17', '2026-11-06', '2026-11-06T10:01:00Z', 2, 79, 23.0);
+
+INSERT INTO robotics.readings_by_robot_day
+    (robot_id, reading_day, observed_at, sample_no, battery_percent, temperature_c)
+VALUES ('R18', '2026-11-06', '2026-11-06T10:00:00Z', 1, 90, 21.0);
+```
+
+The starting data has **two partitions and three rows**:
+
+| robot_id | reading_day | observed_at, UTC | sample_no | battery_percent | temperature_c |
+| --- | --- | --- | --- | --- | --- |
+| R17 | 2026-11-06 | 2026-11-06T10:00:00Z | 1 | 80 | 22.5 |
+| R17 | 2026-11-06 | 2026-11-06T10:01:00Z | 2 | 79 | 23.0 |
+| R18 | 2026-11-06 | 2026-11-06T10:00:00Z | 1 | 90 | 21.0 |
+
+**Query one robot/day partition:**
+
+```cql
+SELECT observed_at, sample_no, battery_percent, temperature_c
+FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06';
+```
+
+Expected rows, in clustering order:
+
+| observed_at, UTC | sample_no | battery_percent | temperature_c |
+| --- | --- | --- | --- |
+| 2026-11-06T10:00:00Z | 1 | 80 | 22.5 |
+| 2026-11-06T10:01:00Z | 2 | 79 | 23.0 |
+
+**Query a bounded time range within that partition:**
+
+```cql
+SELECT observed_at, sample_no, battery_percent, temperature_c
+FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06'
+  AND observed_at >= '2026-11-06T10:00:30Z'
+  AND observed_at < '2026-11-06T10:02:00Z';
+```
+
+Expected: only **sample 2 at 10:01:00Z**, with battery `79` and temperature `23.0`.
+
+**Look up one row by its complete primary key:**
+
+```cql
+SELECT battery_percent, temperature_c
+FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06'
+  AND observed_at = '2026-11-06T10:00:00Z' AND sample_no = 1;
+```
+
+Expected: battery `80` and temperature `22.5`. The partition key locates the group; the clustering values identify the reading.
+
+#### Correct and Delete a Reading
+
+**Correct sample 2's battery value, then verify:**
+
+```cql
+UPDATE robotics.readings_by_robot_day
+SET battery_percent = 78
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06'
+  AND observed_at = '2026-11-06T10:01:00Z' AND sample_no = 2;
+
+SELECT battery_percent, temperature_c
+FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06'
+  AND observed_at = '2026-11-06T10:01:00Z' AND sample_no = 2;
+```
+
+| battery_percent | temperature_c |
+| --- | --- |
+| 78 | 23.0 |
+
+Ordinary `INSERT` and `UPDATE` do not require a row to exist first: they can **upsert**. Reusing a full primary key updates supplied values instead of creating a duplicate row. This is not the same as a default SQL insert rejecting an existing primary key.
+
+**Delete sample 1, then query R17's partition again:**
+
+```cql
+DELETE FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06'
+  AND observed_at = '2026-11-06T10:00:00Z' AND sample_no = 1;
+
+SELECT observed_at, sample_no, battery_percent, temperature_c
+FROM robotics.readings_by_robot_day
+WHERE robot_id = 'R17' AND reading_day = '2026-11-06';
+```
+
+| observed_at, UTC | sample_no | battery_percent | temperature_c |
+| --- | --- | --- | --- |
+| 2026-11-06T10:01:00Z | 2 | 78 | 23.0 |
+
+R18's reading is unchanged. Deletion writes a **tombstone** so replicas and storage files can reconcile the removal; it does not immediately erase every older physical copy.
+
+See [CQL data manipulation](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html). These snippets were documentation-checked; the displayed results are a worked state sequence, not a claim of execution against a Cassandra server.
+
+### How Cassandra Stores and Retrieves Data
+
+Cassandra uses a **log-structured merge-tree (LSM)** storage approach. At one replica, a mutation is recorded in the **commit log** and applied to a **memtable** in RAM. Memtable contents later flush into immutable **SSTables—Sorted String Tables** on persistent storage. See the [storage-engine overview](https://cassandra.apache.org/doc/latest/cassandra/architecture/storage-engine.html).
+
+```mermaid
+flowchart TB
+    W["Mutation at one replica"] --> LOG
+    W --> MEM
+    subgraph RAM["RAM"]
+        MEM["Memtable"]
+    end
+    subgraph DISK["Persistent storage"]
+        LOG["Commit log"]
+        SST["Existing SSTables"]
+        NEW["New merged SSTables"]
+    end
+    subgraph BACKGROUND["Background work"]
+        COMPACT["Compaction"]
+    end
+    MEM -->|"Flush"| SST
+    SST -->|"Inputs"| COMPACT
+    COMPACT -->|"New files"| NEW
+
+    classDef volatile fill:#dbeafe,stroke:#111,color:#111
+    classDef stored fill:#fff3cd,stroke:#111,color:#111
+    class MEM volatile
+    class W,LOG,SST,NEW,COMPACT stored
+```
+
+The arrows show storage relationships, not a complete acknowledgment protocol. **Acknowledgment durability depends on commit-log synchronization settings:** batch synchronization waits for the required disk sync, while periodic synchronization can acknowledge before the next sync. A successful response must not automatically be interpreted as an immediate `fsync` on every replica. See [commit-log durability settings](https://cassandra.apache.org/doc/latest/cassandra/architecture/storage-engine.html).
+
+**Reading:** A replica may need memory plus several relevant SSTables to assemble the visible values. Indexes locate relevant data; Bloom filters can skip files that definitely lack a queried partition, while false positives can still cause extra reads. See [Cassandra Bloom filters](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/bloom_filters.html) and the existing [Bloom-filter explanation](Distributed-Systems-Theorems-and-Data-Structures.md#bloom-filters).
+
+**Compaction** merges immutable files and reconciles older values and tombstones under the applicable rules. It consumes disk bandwidth, CPU, and temporary space; obsolete data is removed only when safe. See [compaction](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/overview.html).
+
+This design can support efficient writes, but does not guarantee fast arbitrary queries or O(1) operations. Disk reads, partition size, cache behavior, replication, and background work affect response time. Compare [lookup complexity versus hardware latency](#why-key-value-lookups-can-be-fast-complexity-ram-and-disk).
+
+### Distribution, Replication, and Tunable Consistency
+
+The **coordinator** is the node handling a request. It routes work to the relevant replicas and gathers responses. For ordinary operations, this role is not a permanent per-partition leader; the coordinator can itself be one of the replicas. See [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html).
+
+```mermaid
+flowchart TB
+    CLIENT["Client"] --> COORD["Coordinator role"]
+    COORD -->|"Write"| A["Replica A"]
+    COORD -->|"Write"| B["Replica B"]
+    COORD -->|"Write"| C["Replica C"]
+    A -.->|"Ack"| COORD
+    B -.->|"Ack"| COORD
+    C -.->|"Ack"| COORD
+
+    classDef request fill:#dbeafe,stroke:#111,color:#111
+    classDef replica fill:#fff3cd,stroke:#111,color:#111
+    class CLIENT,COORD request
+    class A,B,C replica
+```
+
+This is illustrative **write fan-out**, not a requirement to wait for every arrow. The diagram separates roles; it does not require a fourth physical node. Read requests can use data/digest requests and different fan-out behavior.
+
+With **replication factor three in one datacenter**, ordinary operation requirements include:
+
+| Requested consistency level | Required replica responses | One replica unavailable |
+| --- | --- | --- |
+| `ONE` / `LOCAL_ONE` | One in the applicable scope | Can still complete if an appropriate replica responds |
+| `QUORUM` / `LOCAL_QUORUM` | Two in the applicable scope | Can still complete if both remaining replicas respond |
+| `ALL` | Three | Cannot satisfy this requirement |
+
+For multiple datacenters, global and local levels have different scopes. Higher response requirements need more reachable replicas and can increase latency; lower levels can permit older observations. The setting controls responses required, not how many copies the system intends to maintain. See [replication and consistency levels](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html).
+
+Ordinary conflicts are reconciled using mutation timestamps and the documented tie rules. **`observed_at` is application event time; it is separate from those mutation timestamps.** Clock and timestamp discipline therefore matter.
+
+Quorum overlap alone is not a general linearizable transaction protocol. In the 5.0 model used here, **lightweight transactions (LWT)** provide conditional compare-and-set behavior using Paxos, with additional coordination. Do not treat arbitrary batches as unrestricted SQL transactions or assume later releases have identical transaction capabilities. See [Cassandra guarantees](https://cassandra.apache.org/doc/latest/cassandra/architecture/guarantees.html), [Paxos](Distributed-Systems-Theorems-and-Data-Structures.md#paxos), and [the quorum explanation](#coordinating-reads-and-writes).
+
+Reuse the existing explanations of [hashing](#scalability-partitioning-and-consistent-hashing), [replica placement](#replication-models-and-replica-placement), [hinted handoff](#temporary-failures-sloppy-quorums-and-hinted-handoff), [repair and Merkle trees](#replica-repair-and-merkle-trees), and [failure detection](#membership-gossip-and-failure-detection). Replication does not remove the need for repair or tested backups.
+
+**Cassandra and HBase consistency are not interchangeable:**
+
+| System | Read/availability distinction |
+| --- | --- |
+| **Cassandra** | Required responses depend on the operation's consistency level; operations can fail when that requirement cannot be met |
+| **HBase** | Default `STRONG` reads use primary regions; optional `TIMELINE` reads with region replicas may return older data to improve read availability |
+
+HBase's default strong behavior does not mean every failure makes the entire database unavailable. Conversely, Cassandra's distributed architecture does not mean every operation always succeeds. Consider the operation, affected data, failure, and configured guarantee. See [HBase read consistency](https://hbase.apache.org/docs/architecture/timeline-consistent-reads/) and [CAP's partition-time trade-off](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem). Detailed HBase notes remain in the [separate section](#apache-hbase).
+
+### Modeling, Operations, and Common Pitfalls
+
+Start from required queries. This telemetry primary key efficiently supports **one robot/day and a clustering-key time range**. It does not by itself efficiently answer “find every robot with battery below 20 across all history.”
+
+| Concern | Practical guidance |
+| --- | --- |
+| **Query-specific tables** | Duplicate selected data deliberately when different queries need different keys; define how copies stay correct |
+| **Indexes** | Evaluate suitable indexes, including **Storage-Attached Indexing (SAI)** in supported versions; measure selectivity, fan-out, storage, and write work |
+| **`ALLOW FILTERING`** | May permit expensive filtering/scanning; it is not a general performance fix |
+| **Partitions and hot keys** | Bound history and measure per-key traffic; day buckets are a starting point, not a universal size |
+| **Retention / TTL** | **Time to live (TTL)** expires data according to policy, but does not mean all physical bytes disappear immediately |
+| **Tombstones and repair** | Coordinate safe cleanup and repair; careless retention settings can allow stale data to reappear |
+| **Operations and recovery** | Allow capacity for compaction and failures; monitor latency, partition growth, repair, disk usage, and tested restores |
+| **Scaling out** | New nodes require data movement and balancing; more nodes do not guarantee linear speedup |
+
+CQL's familiar syntax does not supply native relational joins or remove query-modeling constraints. See [query-first modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html), [SAI](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-overview.html), [filtering and TTL syntax](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html), [tombstone handling](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/overview.html), and [repair operations](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html).
+
+### When to Choose a Column-Family Database
+
+| Requirement | What to evaluate |
+| --- | --- |
+| **Device or sensor history by device and bounded time** | Cassandra-style partition/clustering keys; test volume, skew, and retention |
+| **Event feeds and high-volume operational access** | A query-specific wide-column model with suitable replication and consistency |
+| **Join-heavy relationships and database-enforced constraints** | A relational model may reduce duplication and application coordination |
+| **Exploratory analytics over large historical datasets** | An analytical engine or warehouse may fit better than repeated operational scans |
+| **Full-text relevance search** | A suitable search engine or full-text indexing capability, rather than assuming primary-key filtering supplies it |
+
+These are evaluation directions, not product rankings. Workload design, consistency, storage, and operation determine actual performance—not the database-family label alone.
+
+> **Choose the queries first. Partition keys group and place data; clustering keys order it; replication and consistency settings determine how requests complete.**
 
 ## Apache HBase
 
@@ -2595,7 +2930,7 @@ Databases organize application information; DBMSs supply operations and configur
 
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
-The remaining placeholders reserve space for deeper study of column-family and graph databases and their named implementations.
+The [column-family section](#column-family-databases) contrasts Cassandra and HBase, then connects R17's CQL queries to partition keys, storage, replication, and consistency. The remaining placeholders reserve space for deeper study of HBase, graph databases, and Neo4j.
 
 The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
 
@@ -2671,6 +3006,16 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Apache Cassandra: Token Placement, Replication, and Membership](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html)
 - [Apache Cassandra: Hints and Hinted Handoff](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/hints.html)
 - [Apache Cassandra: Replica Repair and Merkle Trees](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html)
+- [Apache Cassandra: CQL Tables, Columns, and Primary Keys](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html)
+- [Apache Cassandra: CQL Queries and Mutations](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html)
+- [Apache Cassandra: CQL Data Types and Timestamps](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/types.html)
+- [Apache Cassandra: Query-First Data Modeling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html)
+- [Apache Cassandra: Storage Engine and Commit-Log Synchronization](https://cassandra.apache.org/doc/latest/cassandra/architecture/storage-engine.html)
+- [Apache Cassandra: Consistency and Lightweight-Transaction Guarantees](https://cassandra.apache.org/doc/latest/cassandra/architecture/guarantees.html)
+- [Apache Cassandra: Storage-Attached Indexing](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-overview.html)
+- [Apache Cassandra: Compaction and Tombstones](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/overview.html)
+- [Apache Cassandra: Bloom Filters](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/bloom_filters.html)
+- [Apache HBase: Strong and Timeline-Consistent Reads](https://hbase.apache.org/docs/architecture/timeline-consistent-reads/)
 - [RFC 9162: Merkle Trees and Certificate Transparency](https://www.rfc-editor.org/rfc/rfc9162.html#section-2.1)
 - [Bitcoin Developer Guide: Merkle Trees](https://developer.bitcoin.org/devguide/block_chain.html#merkle-trees)
 - [BitTorrent BEP 52: Protocol v2 Merkle Trees](https://www.bittorrent.org/beps/bep_0052.html)
