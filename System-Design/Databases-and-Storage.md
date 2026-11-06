@@ -2063,6 +2063,22 @@ The dashed line is a **100-unit/second illustrative baseline**, not an arbitrary
 
 Do not describe bursting simply as borrowing neighbouring partitions' spare allocations. Current AWS documentation explains saved unused capacity; historical node-level resource controls are discussed [separately below](#admission-control-and-splitting-2022).
 
+**Adaptive capacity example: one busy partition**
+
+Suppose a table has **400 WCUs**, initially illustrated as four partitions with an allowance of 100 WCUs each:
+
+| Partition | Initial allowance | Current demand |
+| --- | ---: | ---: |
+| P1 | 100 WCUs | 50 write units/second |
+| P2 | 100 WCUs | 50 write units/second |
+| P3 | 100 WCUs | 50 write units/second |
+| P4: hot partition | 100 WCUs | 150 write units/second |
+| **Total** | **400 WCUs** | **300 write units/second** |
+
+P4 needs more than its initial allowance, while total demand is still below the table's provisioned capacity. **Adaptive capacity can increase P4's allowance to sustain 150 write units/second without increasing the table's 400-WCU total.** This is not simply spending saved burst units.
+
+The requests remain unevenly distributed: P4 still receives more traffic. DynamoDB accommodates the imbalance by adjusting available capacity. Table and partition limits still apply, and these units are not arbitrary-size write counts. This simplified example follows [AWS's adaptive-capacity illustration](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html).
+
 Do not teach adaptive capacity as universally a slow learning process. AWS describes automatic, immediate adjustment within its documented bounds; that is not a promise that every workload surge, physical split, or single-item hot spot is resolved instantly. For an expected large peak, assess warm throughput and the appropriate mode/limits in advance. Users can request more warm throughput; they do not manually split physical partitions.
 
 Observe throttling and latency, use appropriate retry/backoff behavior, and evaluate cache, partition-key distribution, or application write sharding when required. See [burst/adaptive capacity](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html), [warm throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/warm-throughput.html), and [write-sharding patterns](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-sharding.html).
