@@ -1433,7 +1433,7 @@ Initially, **every row is `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`**. The first four eve
 - **B and D share h2 column 3 and h4 column 7:** After D, these cells each become **2**.
 - Other rows can still separate those keys, letting the minimum recover the exact counts in this example.
 
-> **Figure correction:** The supplied snapshots contain missing or misplaced increments. These states follow the hash table consistently: A uses **h4 column 8**, B increments **h5 column 2**, and D increments **h1 column 8** and **h5 column 1**. Each row's sum after four unit events must be **4**.
+> **Checking the counters:** A increments **h4 column 8**, B increments **h5 column 2**, and D increments **h1 column 8** and **h5 column 1**. After four unit events, each row's counters sum to **4**.
 
 ### Corrected Counter-Matrix Diagram
 

@@ -172,7 +172,7 @@ Z: estimate 5, exact 0 (never inserted)
 
 The estimates happen to be exact for these four letters. That is **not** guaranteed generally. In the one-column example, every row combines X's three occurrences and Y's two: X is overestimated as 5, and even never-inserted Z is estimated as 5. More rows cannot fix a sketch in which every row collides.
 
-The matrices follow the supplied hash-position table, correcting missing/misplaced entries in the textbook screenshots. See the [main notes](../../Distributed-Systems-Theorems-and-Data-Structures.md#count-min-sketch) for the table and Mermaid matrix.
+The matrices use the hash-position table in the [main notes](../../Distributed-Systems-Theorems-and-Data-Structures.md#count-min-sketch).
 
 ## Complexity Breakdown
 

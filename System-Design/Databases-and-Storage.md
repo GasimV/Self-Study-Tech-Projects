@@ -2288,7 +2288,7 @@ See [HBase's data model](https://hbase.apache.org/docs/datamodel/). Version rete
 | **Key design** | Partition key plus optional clustering columns | Ordered row key |
 | **“Column family”** | Historical terminology commonly corresponding to a table | An explicit group within a table |
 
-Do not apply the textbook's “columns need not be predefined” statement to modern Cassandra CQL. See [Cassandra table and column definitions](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html).
+**Modern Cassandra CQL declares column names and types explicitly.** The schema can be changed using supported schema operations. See [Cassandra table and column definitions](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html).
 
 Also distinguish the **logical model** from [analytical columnar storage](#wide-column-vs-analytical-columnar-storage). Cassandra's wide-column classification does not imply ClickHouse-style column scanning or make it an analytical warehouse.
 
