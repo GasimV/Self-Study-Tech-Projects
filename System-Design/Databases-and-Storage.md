@@ -899,7 +899,7 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | --- | --- | --- | --- |
 | **Relational approaches** | | | |
 | **Relational SQL / OLTP** | Related records, constraints, and changes that must commit together | Transfer $100: debit one account and credit another in one transaction | PostgreSQL, MySQL, SQL Server, Oracle Database |
-| **Distributed SQL** | Transactional SQL with required distribution, partitioning, and geographic placement | Keep account operations consistent across the regions the service must support | CockroachDB, YugabyteDB, Google Spanner |
+| **Distributed SQL** | Transactional SQL with required distribution, partitioning, and geographic placement | Keep account operations consistent across the regions the service must support | CockroachDB, [TiDB](https://docs.pingcap.com/tidb/stable/overview/), YugabyteDB, Google Spanner |
 | **Embedded SQL** | Local relational storage without a separate database server | A mobile app keeps offline preferences and locally saved data | SQLite |
 | **Common NoSQL models** | | | |
 | **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, [Amazon DynamoDB](#amazon-dynamodb), Aerospike |
@@ -996,7 +996,7 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 | Database type or capability | Where it fits in this platform | Candidate and reason to evaluate it |
 | --- | --- | --- |
 | **Relational SQL / OLTP** | Store D4821, its customer, payment records, and related operational changes | **PostgreSQL:** transactions and constraints for changes that must commit together within this database |
-| **Distributed SQL** | Coordinate stock reservations if the required transaction spans regions | **CockroachDB or Spanner:** evaluate distributed transactional SQL; this may replace the core relational deployment rather than duplicate it |
+| **Distributed SQL** | Coordinate stock reservations if the required transaction spans regions | **CockroachDB, [TiDB](https://docs.pingcap.com/tidb/stable/overview/), or Spanner:** evaluate distributed transactional SQL; this may replace the core relational deployment rather than duplicate it |
 | **Embedded SQL** | R17 retains its assigned task and local progress during a disconnection | **SQLite:** local storage without a separate database-server process |
 | **Key-value** | Retrieve a session by ID or reuse a cached result | **Redis:** known-key access with defined expiration/invalidation; cached stock is not authority to promise a parcel |
 | **Document** | Store differing package attributes: fragile glass, refrigerated food, or items with different dimensions | **MongoDB or PostgreSQL JSONB:** nested records when their shape and queries fit; a separate document engine is optional |
