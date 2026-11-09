@@ -93,6 +93,19 @@
   - [Modeling, Operations, and Common Pitfalls](#modeling-operations-and-common-pitfalls)
   - [When to Choose a Column-Family Database](#when-to-choose-a-column-family-database)
 - [Apache HBase](#apache-hbase)
+  - [HBase Overview and Core Mental Model](#hbase-overview-and-core-mental-model)
+  - [HBase Rows, Families, Qualifiers, and Versions](#hbase-rows-families-qualifiers-and-versions)
+  - [Regions and HBase Cluster Components](#regions-and-hbase-cluster-components)
+  - [Finding the Region: First and Subsequent Requests](#finding-the-region-first-and-subsequent-requests)
+  - [Worked HBase Shell Example: Robot Telemetry](#worked-hbase-shell-example-robot-telemetry)
+    - [Create and Populate the HBase Table](#create-and-populate-the-hbase-table)
+    - [Get a Row and Scan a Bounded Range](#get-a-row-and-scan-a-bounded-range)
+    - [Correct a Cell, Read Versions, and Delete a Row](#correct-a-cell-read-versions-and-delete-a-row)
+  - [HBase Writes, Flushes, Reads, and Compaction](#hbase-writes-flushes-reads-and-compaction)
+    - [Write and Persistence Path](#write-and-persistence-path)
+    - [Read and Merge Path](#read-and-merge-path)
+  - [HBase Consistency, Availability, and Recovery](#hbase-consistency-availability-and-recovery)
+  - [HBase Modeling, Operations, and Selection](#hbase-modeling-operations-and-selection)
 - [Graph Databases](#graph-databases)
 - [Neo4j](#neo4j)
 - [Object Storage and Amazon S3](#object-storage-and-amazon-s3)
@@ -475,7 +488,7 @@ The application checks the relevant rules and groups the debit and credit within
 | --- | --- | --- | --- |
 | **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, [Amazon DynamoDB](#amazon-dynamodb) |
 | **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | [MongoDB](#mongodb-document-modeling-and-queries), Apache CouchDB |
-| **[Column-family / wide-column](#column-family-databases)** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, Apache HBase |
+| **[Column-family / wide-column](#column-family-databases)** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, [Apache HBase](#apache-hbase) |
 | **Graph** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | Neo4j, Amazon Neptune |
 
 These examples describe common use patterns, not exclusive product capabilities. Redis supports multiple [data types](https://redis.io/docs/latest/develop/data-types/); DynamoDB supports key-value and document patterns. See [CouchDB's document overview](https://docs.couchdb.org/en/stable/intro/overview.html), [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html), and [Neo4j graph concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/).
@@ -492,7 +505,7 @@ Read guarantees can also differ within one product: for example, DynamoDB docume
 
 The terms sound similar but describe different ideas:
 
-- **Wide-column / column-family model:** A logical organization around keyed rows and column families, with product-specific rules. HBase is an example; row-key design strongly affects access patterns.
+- **Wide-column / column-family model:** A logical organization around keyed rows and column families, with product-specific rules. [HBase](#apache-hbase) is an example; row-key design strongly affects access patterns.
 - **Analytical columnar storage:** Physically stores values by column to support workloads such as scanning and aggregating selected columns.
 
 Do not infer an analytical columnar layout merely from the label “column-family.” These model and storage-layout concepts can overlap in some systems, but are not synonyms. Compare [HBase's data model](https://hbase.apache.org/docs/datamodel/) with the [ClickHouse column-oriented overview](https://clickhouse.com/docs/get-started/about/intro).
@@ -840,7 +853,7 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | **Common NoSQL models** | | | |
 | **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, [Amazon DynamoDB](#amazon-dynamodb), Aerospike |
 | **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, [Amazon DynamoDB](#amazon-dynamodb) |
-| **[Wide-column](#column-family-databases)** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, Apache HBase, Google Bigtable |
+| **[Wide-column](#column-family-databases)** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, [Apache HBase](#apache-hbase), Google Bigtable |
 | **Graph** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | Neo4j, Amazon Neptune, TigerGraph |
 | **Specialized workloads and capabilities** | | | |
 | **Time-series** | Timestamped ingestion, time-window queries, and retention rules | Calculate hourly temperature and CPU-usage trends from a robot fleet | InfluxDB, TimescaleDB, OpenTSDB |
@@ -936,7 +949,7 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 | **Embedded SQL** | R17 retains its assigned task and local progress during a disconnection | **SQLite:** local storage without a separate database-server process |
 | **Key-value** | Retrieve a session by ID or reuse a cached result | **Redis:** known-key access with defined expiration/invalidation; cached stock is not authority to promise a parcel |
 | **Document** | Store differing package attributes: fragile glass, refrigerated food, or items with different dimensions | **MongoDB or PostgreSQL JSONB:** nested records when their shape and queries fit; a separate document engine is optional |
-| **[Wide-column](#column-family-databases)** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or HBase:** model partition/row keys for those queries; see the [R17 CQL walkthrough](#worked-cql-example-robot-telemetry) for daily buckets |
+| **[Wide-column](#column-family-databases)** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or [HBase](#apache-hbase):** model partition/row keys for those queries; compare the [R17 CQL walkthrough](#worked-cql-example-robot-telemetry) with the [HBase Shell walkthrough](#worked-hbase-shell-example-robot-telemetry) |
 | **Graph** | Investigate customers, accounts, devices, and orders connected to suspicious delivery activity | **Neo4j:** traverse relationships; a shared device is a signal to investigate, not proof of fraud |
 | **Time-series** | Monitor battery and temperature trends across the fleet | **InfluxDB or TimescaleDB:** time-window queries and retention suited to monitoring |
 | **Search** | Search free-text incident reports using terms, filters, and relevance | **Elasticsearch:** evaluate richer text retrieval; an exact lookup of D4821 alone does not justify another search engine |
@@ -2548,7 +2561,7 @@ Reuse the existing explanations of [hashing](#scalability-partitioning-and-consi
 | **Cassandra** | Required responses depend on the operation's consistency level; operations can fail when that requirement cannot be met |
 | **HBase** | Default `STRONG` reads use primary regions; optional `TIMELINE` reads with region replicas may return older data to improve read availability |
 
-HBase's default strong behavior does not mean every failure makes the entire database unavailable. Conversely, Cassandra's distributed architecture does not mean every operation always succeeds. Consider the operation, affected data, failure, and configured guarantee. See [HBase read consistency](https://hbase.apache.org/docs/architecture/timeline-consistent-reads/) and [CAP's partition-time trade-off](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem). Detailed HBase notes remain in the [separate section](#apache-hbase).
+HBase's default strong behavior does not mean every failure makes the entire database unavailable. Conversely, Cassandra's distributed architecture does not mean every operation always succeeds. Consider the operation, affected data, failure, and configured guarantee. See [HBase read consistency](https://hbase.apache.org/docs/architecture/timeline-consistent-reads/) and [CAP's partition-time trade-off](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem). See the [HBase architecture and Shell walkthrough](#apache-hbase) for its keyed-row model.
 
 ### Modeling, Operations, and Common Pitfalls
 
@@ -2583,7 +2596,376 @@ These are evaluation directions, not product rankings. Workload design, consiste
 
 ## Apache HBase
 
-> Study notes to be added.
+### HBase Overview and Core Mental Model
+
+> **HBase keeps rows ordered by their keys. RegionServers serve portions of that key space, while distributed storage retains the underlying files.**
+
+**Apache HBase is an open-source, distributed, sparse wide-column database inspired by Google's Bigtable.** This section uses a conventional deployment backed by **HDFS—Hadoop Distributed File System**.
+
+HDFS stores files as distributed blocks. HBase adds keyed records, cell versions, and read/write services over its storage files. An application asks HBase for a row or key range; it does not normally locate and edit HDFS blocks itself.
+
+HBase is useful when an application needs direct access to records within a large dataset. **A bounded scan means reading a selected key range**, not performing arbitrary SQL joins or warehouse analytics. Actual latency depends on keys, caches, storage, load, and failures; “real-time access” is not a response-time guarantee.
+
+### HBase Rows, Families, Qualifiers, and Versions
+
+Recall the [column-family terminology](#column-family-concepts-and-terminology). An HBase column name combines a **defined family** with a **qualifier**, such as `m:battery_percent`. Qualifiers can vary between rows without defining a new family.
+
+One R17 reading can be represented as follows:
+
+| Part | Example |
+| --- | --- |
+| **Table** | `robot_readings` |
+| **Row key** | `R17#2026-11-06T10:01:00Z#0002` |
+| **Column family** | `m`, grouping this example's measurements |
+| **Qualifiers** | `battery_percent`, `temperature_c` |
+| **Battery cell versions** | Value `79` at version timestamp `1793962800000`; correction `78` at `1793963100000` |
+| **Temperature cell** | Value `23.0` at version timestamp `1793962800000` |
+| **Absent qualifier** | No `m:humidity` value is stored; no empty placeholder is required |
+
+A stored version has this address:
+
+`row key + family + qualifier + timestamp → value`
+
+**Row keys, qualifiers, and values are bytes.** Applications choose their encoding. Here, keys and measurement values use readable text; the value `"78"` is not automatically a database integer. Row keys are ordered lexicographically by their bytes.
+
+The version timestamp is a long integer conventionally expressed as milliseconds since the Unix epoch. In this example, `1793962800000` means **2026-11-06 11:00 UTC**, and `1793963100000` means **11:05 UTC**. These are write/correction times; the **10:01 event time in the row key is separate**.
+
+A normal read selects the visible value with the greatest cell-version timestamp. That is not necessarily the last request to arrive if applications supply timestamps out of order. Version retention is configured per family; it is not an unlimited audit history or a backup. See [HBase's data model and versions](https://hbase.apache.org/docs/datamodel/).
+
+### Regions and HBase Cluster Components
+
+A **region** holds a contiguous range of a table's row keys. Its start key is inclusive and its end key is exclusive. For illustration, a split at `R18#` could give:
+
+| Illustrative region | Key range | Example rows |
+| --- | --- | --- |
+| **Region A** | Beginning of table up to, but excluding, `R18#` | Both R17 readings |
+| **Region B** | `R18#` through the end of the table | The R18 reading |
+
+The open ends mean “no lower/upper bound,” not literal keys. This is a placement illustration, not a promise that creating the example table produces these regions.
+
+| Component | Responsibility |
+| --- | --- |
+| **Client** | Locates regions, caches their locations, and sends read/write requests |
+| **RegionServer** | Hosts regions and serves their data |
+| **HMaster** | Coordinates region assignment, balancing, and administrative operations |
+| **ZooKeeper** | Supports coordination, including server membership and master election in the illustrated deployment |
+| **`hbase:meta`** | An HBase catalog table recording regions and their locations |
+| **HDFS NameNode** | Manages the filesystem namespace and block-location metadata |
+| **HDFS DataNodes** | Store file blocks and their configured replicas |
+
+```mermaid
+flowchart TB
+    C["HBase client"]
+    HM["HMaster<br/>Assignment and administration"]
+    ZK["ZooKeeper<br/>Coordination"]
+    META["hbase:meta<br/>Hosted by a RegionServer"]
+    R1["RegionServer 1<br/>Region A"]
+    R2["RegionServer 2<br/>Region B"]
+
+    C -->|"Data RPC"| R1
+    C -->|"Data RPC"| R2
+    C -.->|"Locate regions"| META
+    HM -.->|"Assign / balance"| R1
+    HM -.->|"Assign / balance"| R2
+    ZK -.->|"Cluster state"| HM
+    R1 -.->|"Liveness"| ZK
+    R2 -.->|"Liveness"| ZK
+
+    subgraph FS["HDFS: persistent storage"]
+        NN["NameNode<br/>File and block metadata"]
+        DN["DataNodes<br/>WAL and HFile blocks"]
+    end
+
+    R1 -.->|"File metadata"| NN
+    R2 -.->|"File metadata"| NN
+    R1 -->|"Block I/O"| DN
+    R2 -->|"Block I/O"| DN
+```
+
+**Solid arrows show data access; dotted arrows show lookup, management, or coordination.** The catalog is served by a RegionServer; its separate box emphasizes its role, not another mandatory server type. This map omits detailed bootstrap messages, which appear below.
+
+A region is a **logical key range**; a RegionServer is a **software process**. A host can run several related processes, and one RegionServer can serve many regions. RegionServer/DataNode co-location is common for data locality, but the roles remain separate and storage blocks can also be remote.
+
+Regions can split and move as the system grows. Region sizes, split policies, and safe region counts depend on the deployment; they are not fixed universal capacities. See [regions](https://hbase.apache.org/docs/architecture/regions/) and [HDFS integration](https://hbase.apache.org/docs/architecture/hdfs/).
+
+### Finding the Region: First and Subsequent Requests
+
+The client needs to find **which RegionServer currently serves the requested row**:
+
+1. Obtain bootstrap metadata through the configured **connection registry**.
+2. Locate and query `hbase:meta` when the desired region location is not cached.
+3. Cache the location for that key range.
+4. Send the row request directly to its RegionServer.
+5. Refresh stale information and retry appropriately after a split, move, or server failure.
+
+```mermaid
+sequenceDiagram
+    participant C as HBase client
+    participant G as Connection registry
+    participant M as RegionServer serving meta
+    participant R as RegionServer serving the row
+    rect rgb(238, 242, 255)
+        Note over C,R: Initial lookup or cache miss
+        C->>G: 1. Bootstrap
+        G-->>C: 2. Meta location
+        C->>M: 3. Locate key range
+        M-->>C: 4. Region location
+        Note over C: Cache the location
+        C->>R: 5. Get or Put
+        R-->>C: 6. Result
+    end
+    rect rgb(236, 248, 240)
+        Note over C,R: Later request with a valid cache entry
+        C->>R: 7. Get or Put
+        R-->>C: 8. Result
+    end
+```
+
+The traditional registry obtains bootstrap information from ZooKeeper. Newer **RPC—remote procedure call—based registries** are also available; their endpoints and defaults depend on version and configuration. Direct client contact with ZooKeeper is therefore not a universal requirement.
+
+The master does not normally proxy application row data, although connection bootstrap, reassignment, and recovery can depend on management services. A cached location is an optimization, not permanent ownership information. See [client discovery and registries](https://hbase.apache.org/docs/architecture/client/) and [catalog tables](https://hbase.apache.org/docs/architecture/catalog-tables/).
+
+### Worked HBase Shell Example: Robot Telemetry
+
+This example uses **HBase 2.6-compatible Shell syntax**, not SQL. The Shell uses Ruby-style command arguments; applications can instead use supported client APIs.
+
+Assume an existing illustrative environment, an absent `robot_readings` table, valid permissions, default strong reads, successful sequential requests, and no concurrent writers. No family TTL is configured. The server clock at deletion is later than the explicit version timestamps below. Outputs show **logical results**, not exact Shell formatting.
+
+Use the same three readings as the [Cassandra walkthrough](#worked-cql-example-robot-telemetry), with a different key and cell model:
+
+`robot_id#UTC_timestamp#zero_padded_sample`
+
+| Row key | m:battery_percent | m:temperature_c |
+| --- | --- | --- |
+| `R17#2026-11-06T10:00:00Z#0001` | 80 | 22.5 |
+| `R17#2026-11-06T10:01:00Z#0002` | 79 | 23.0 |
+| `R18#2026-11-06T10:00:00Z#0001` | 90 | 21.0 |
+
+These fixed-width UTC timestamps sort chronologically **within the same robot prefix**; the padded sample distinguishes readings sharing a timestamp. Arbitrary timestamp formats or unpadded numbers need not sort as intended. Keys beginning with different robot identifiers are grouped by that identifier, not globally by time.
+
+#### Create and Populate the HBase Table
+
+**Create family `m` with up to two retained versions per cell:**
+
+```ruby
+create 'robot_readings', {NAME => 'm', VERSIONS => 2}
+```
+
+**Insert the readings.** The final argument is an explicit cell-version timestamp, here the shared ingestion time **2026-11-06 11:00 UTC**:
+
+```ruby
+put 'robot_readings', 'R17#2026-11-06T10:00:00Z#0001', 'm:battery_percent', '80', 1793962800000
+put 'robot_readings', 'R17#2026-11-06T10:00:00Z#0001', 'm:temperature_c', '22.5', 1793962800000
+
+put 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002', 'm:battery_percent', '79', 1793962800000
+put 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002', 'm:temperature_c', '23.0', 1793962800000
+
+put 'robot_readings', 'R18#2026-11-06T10:00:00Z#0001', 'm:battery_percent', '90', 1793962800000
+put 'robot_readings', 'R18#2026-11-06T10:00:00Z#0001', 'm:temperature_c', '21.0', 1793962800000
+```
+
+The three rows now contain the values in the starting table. Each line is a separate mutation. **Two independent Shell puts do not demonstrate an atomic update of both measurements.** An application can place multiple cell changes for one row into one supported atomic mutation.
+
+#### Get a Row and Scan a Bounded Range
+
+**Read the second R17 reading:**
+
+```ruby
+get 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002'
+```
+
+| Column | Value | Version timestamp |
+| --- | --- | --- |
+| `m:battery_percent` | `79` | 1793962800000 |
+| `m:temperature_c` | `23.0` | 1793962800000 |
+
+**Read R17's readings for 6 November:**
+
+```ruby
+scan 'robot_readings', {STARTROW => 'R17#2026-11-06', STOPROW => 'R17#2026-11-07', COLUMNS => ['m:battery_percent', 'm:temperature_c']}
+```
+
+The start is **inclusive**, and the stop is **exclusive**. With the stated key format, this returns:
+
+| Row key | Battery | Temperature |
+| --- | --- | --- |
+| `R17#2026-11-06T10:00:00Z#0001` | 80 | 22.5 |
+| `R17#2026-11-06T10:01:00Z#0002` | 79 | 23.0 |
+
+R18 falls outside this range. The Shell lists cells; the table above groups them into rows for readability.
+
+#### Correct a Cell, Read Versions, and Delete a Row
+
+**Correct the second battery value using the newer version timestamp, 11:05 UTC:**
+
+```ruby
+put 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002', 'm:battery_percent', '78', 1793963100000
+
+get 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002', {COLUMN => 'm:battery_percent'}
+
+get 'robot_readings', 'R17#2026-11-06T10:01:00Z#0002', {COLUMN => 'm:battery_percent', VERSIONS => 2}
+```
+
+The ordinary get returns **78**. The versioned get returns:
+
+| Column | Value | Version timestamp |
+| --- | --- | --- |
+| `m:battery_percent` | `78` | 1793963100000 |
+| `m:battery_percent` | `79` | 1793962800000 |
+
+The temperature remains **23.0**. Repeating a put at a **different** version timestamp can retain another value; writing the same row, column, and version replaces that version's value. The family limit and retention rules bound what remains retrievable.
+
+**Delete the first R17 row and repeat the day scan:**
+
+```ruby
+deleteall 'robot_readings', 'R17#2026-11-06T10:00:00Z#0001'
+
+scan 'robot_readings', {STARTROW => 'R17#2026-11-06', STOPROW => 'R17#2026-11-07', COLUMNS => ['m:battery_percent', 'm:temperature_c']}
+```
+
+| Remaining row key | Battery | Temperature |
+| --- | --- | --- |
+| `R17#2026-11-06T10:01:00Z#0002` | 78 | 23.0 |
+
+R18 is unchanged. A delete records **deletion markers**, also called tombstones; ordinary reads stop showing the covered cells before all their physical bytes are necessarily removed. Later compaction can reclaim eligible data.
+
+See the [Shell guide](https://hbase.apache.org/docs/shell/), [2.6 Get command help](https://github.com/apache/hbase/blob/rel/2.6.0/hbase-shell/src/main/ruby/shell/commands/get.rb), and [2.6 Put command help](https://github.com/apache/hbase/blob/rel/2.6.0/hbase-shell/src/main/ruby/shell/commands/put.rb).
+
+### HBase Writes, Flushes, Reads, and Compaction
+
+| Component | Simple role |
+| --- | --- |
+| **WAL—write-ahead log** | Records mutations for recovery on persistent storage |
+| **MemStore** | Keeps recent mutations in memory; each region has a Store per family, with its own MemStore |
+| **HFiles** | Immutable sorted files containing stored cells |
+| **BlockCache** | Caches file blocks to avoid repeated storage reads |
+| **Indexes and Bloom filters** | Help seek relevant blocks and skip files that cannot contain the requested key |
+
+#### Write and Persistence Path
+
+For an ordinary WAL-enabled write, the RegionServer records the mutation, updates memory, and completes the required publication and WAL synchronization before acknowledging it. The simplified path is:
+
+```mermaid
+flowchart TB
+    P["Client Put"]
+    W["Append to WAL<br/>HDFS-backed log"]
+    M["MemStore<br/>RAM"]
+    G["Publish mutation<br/>and meet WAL policy"]
+    A["Client acknowledgment"]
+
+    P --> W
+    W --> M
+    M --> G
+    G --> A
+
+    subgraph BG["Background persistence"]
+        F["Flush snapshot"]
+        H["Immutable HFiles<br/>HDFS"]
+        C["Compaction"]
+        N["Merged HFiles"]
+        F --> H
+        H --> C
+        C --> N
+    end
+
+    M -.->|"Flush"| F
+```
+
+An acknowledgment does **not** wait for the MemStore to become an HFile. Its durability depends on the selected policy. In HBase 2.6, `SYNC_WAL` synchronizes to the filesystem; for HDFS, this reaches the designated DataNodes but does not necessarily force every device to physical media. `FSYNC_WAL` requests stronger disk synchronization, while `ASYNC_WAL` and `SKIP_WAL` have weaker recovery guarantees. Storage and failure assumptions still matter. See [the 2.6 durability definitions](https://hbase.apache.org/2.6/devapidocs/org/apache/hadoop/hbase/client/Durability.html).
+
+A flush writes a snapshot of sorted in-memory cells to new files while subsequent writes can continue in memory. **Flush progress and sequence metadata identify which edits are already represented in stored files.** During recovery, WAL replay restores relevant edits not yet safely flushed.
+
+Compaction merges stored files and can remove obsolete versions or deletion-covered cells when retention and safety rules permit. It consumes CPU and storage I/O. Compression can save space and I/O while adding computation; performance depends on the storage system and workload, including SSD-based systems.
+
+#### Read and Merge Path
+
+A read combines relevant in-memory cells with stored cells. The BlockCache supplies cached **HFile blocks**; on a cache miss, the system reads relevant blocks from storage.
+
+```mermaid
+flowchart TB
+    Q["Get or Scan"]
+    M["Relevant MemStore cells<br/>RAM"]
+    I["Indexes and Bloom filters"]
+    B["BlockCache lookup"]
+    H["Read relevant HFile blocks<br/>HDFS"]
+    F["Stored cells<br/>Cached or fetched"]
+    V["Merge cells<br/>Apply versions and deletions"]
+    R["Result"]
+
+    Q --> M
+    Q --> I
+    I --> B
+    B -->|"Hit"| F
+    B -->|"Miss"| H
+    H --> F
+    H -.->|"Cache eligible blocks"| B
+    M --> V
+    F --> V
+    V --> R
+```
+
+This is a responsibility map, not a mandatory instruction-by-instruction order. The BlockCache is an acceleration layer, not a separate authoritative row store. HBase need not read an entire HFile to find one row; indexes and [Bloom filters](Distributed-Systems-Theorems-and-Data-Structures.md#bloom-filters) reduce unnecessary work. Cache implementations and eviction policies vary.
+
+See [RegionServer storage and caching](https://hbase.apache.org/docs/architecture/regionserver/) and [Stores, MemStores, HFiles, and compaction](https://hbase.apache.org/docs/architecture/regions/).
+
+### HBase Consistency, Availability, and Recovery
+
+**Strong reads are the default.** They use the primary region. With configured region replicas, optional `TIMELINE` reads can use secondary regions and return older values. Secondary regions do not become independent ordinary write leaders merely because they can serve reads.
+
+| Guarantee or mechanism | What it means |
+| --- | --- |
+| **Single-row mutation** | A supported mutation is atomic within one row, including changes across families |
+| **Multi-row batch** | Several rows can have different outcomes; a batch is not automatically one atomic transaction |
+| **Ordinary scan** | Rows can reflect different moments during the scan; it is not a table-wide snapshot transaction |
+| **Write durability** | Depends on the write policy, functioning storage, and surviving copies |
+| **RegionServer recovery** | Detection, reassignment, and WAL recovery can temporarily interrupt affected requests |
+| **Request timeout** | The result may be uncertain; the mutation might already have succeeded |
+
+A repeatable put to the same row, column, version, and value can help safe retries. Increment-like operations need their documented retry mechanisms; a timeout does not justify blindly applying the business action twice.
+
+Keep the different forms of replication separate:
+
+| Mechanism | Primary purpose |
+| --- | --- |
+| **HDFS block replication** | Retain copies of underlying file blocks |
+| **HBase region replicas** | Provide additional read-serving instances; secondary reads may lag |
+| **Cross-cluster replication** | Copy edits between clusters under the configured mode and guarantees |
+| **Snapshots and backups** | Preserve recovery points; require suitable retention, protection, and tested restoration |
+
+These are complementary mechanisms, not substitutes for application correctness or a complete recovery plan. A snapshot in the same storage system is not automatically an independent backup.
+
+Compare [Cassandra's request consistency](#distribution-replication-and-tunable-consistency): HBase does not expose the same ordinary-read/write `R/W` quorum choices. Neither product guarantees every operation succeeds through every partition or failure. See [HBase operation guarantees](https://hbase.apache.org/acid-semantics/), [timeline-consistent reads](https://hbase.apache.org/docs/architecture/timeline-consistent-reads/), and [ACID's scope](#transactions-and-acid).
+
+### HBase Modeling, Operations, and Selection
+
+Start from the query: **“Find R17's readings during this day.”** A robot-first row key keeps those rows near each other. It does not efficiently answer every other query, such as all robots with a high temperature across their entire histories.
+
+| Concern | Design guidance |
+| --- | --- |
+| **Row-key locality** | Put values together when they are commonly read together; test actual key encoding and ranges |
+| **Hot ranges** | Monotonically growing keys or a busy robot can concentrate writes; splitting does not eliminate an indivisible hot row |
+| **Salting or sharding** | A prefix can spread writes, but a range query may need multiple scans and result merging |
+| **Families** | Keep a small, deliberate set with suitable storage and retention policies; qualifiers provide flexible attributes |
+| **Scans and extra queries** | Bound key ranges; filtering is not a universal secondary index. Plan additional tables or supported indexing layers |
+| **Versions and TTL** | Set retention deliberately. Expiration/deletion visibility and physical cleanup happen at different stages |
+| **Operations** | Monitor request latency, hot regions, cache effectiveness, WAL/flush pressure, compaction, disk space, and recovery |
+| **Security and recovery** | Configure authentication, least privilege, protected transport, backups, and restore tests; distribution supplies none of these automatically |
+
+**TTL means time to live.** Cell retention uses version timestamps, so application-supplied timestamps must be consistent with the intended retention policy.
+
+Region splitting and balancing distribute ranges, but moving ranges requires work and cannot guarantee uniform traffic or linear scaling. For integrations with Hadoop processing, Spark, Hive, or SQL layers such as Phoenix, verify the particular connector, supported versions, and semantics. HBase's native keyed APIs do not supply relational joins or full-text relevance search.
+
+| Requirement | Good fit or alternative to evaluate |
+| --- | --- |
+| **Large keyed histories and device readings** | Evaluate HBase when ordered keys and bounded scans match the workload |
+| **Hadoop-based data platform needing operational row access** | Evaluate HBase with the existing storage, processing, and operational skills |
+| **Multi-row relational transactions and many joins** | Evaluate a relational DBMS and its documented transaction guarantees |
+| **Exploratory analytics over historical data** | Evaluate a warehouse or analytical engine rather than repeated unbounded operational scans |
+| **Keyword relevance and full-text search** | Evaluate a suitable search engine or dedicated indexing capability |
+
+Link the operational store to [data-processing pipelines](Data-Engineering-for-Solution-Architecture.md) when a separate analytical view is useful. Use [the database-selection checklist](#database-selection-checklist) to validate workload, concurrency, failure behavior, recovery, and operating cost.
+
+> **Design the row key around the reads. Regions divide its ordered range; RegionServers serve requests; WALs, memory, and HFiles support persistence and recovery.**
 
 ## Graph Databases
 
@@ -2930,7 +3312,7 @@ Databases organize application information; DBMSs supply operations and configur
 
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
-The [column-family section](#column-family-databases) contrasts Cassandra and HBase, then connects R17's CQL queries to partition keys, storage, replication, and consistency. The remaining placeholders reserve space for deeper study of HBase, graph databases, and Neo4j.
+The [column-family section](#column-family-databases) connects R17's CQL queries to Cassandra's partition keys, storage, replication, and consistency. The [HBase section](#apache-hbase) follows the same readings through ordered row keys, retained cell versions, region discovery, and storage/recovery paths. The remaining placeholders reserve space for graph databases and Neo4j.
 
 The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
 
@@ -3022,6 +3404,16 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [PostgreSQL: Primary-Standby and Synchronous Replication](https://www.postgresql.org/docs/current/warm-standby.html)
 - [PostgreSQL: Failover and Preventing Competing Primaries](https://www.postgresql.org/docs/current/warm-standby-failover.html)
 - [Apache HBase: Data Model](https://hbase.apache.org/docs/datamodel/)
+- [Apache HBase: Client Discovery and Connection Registries](https://hbase.apache.org/docs/architecture/client/)
+- [Apache HBase: Catalog Tables and hbase:meta](https://hbase.apache.org/docs/architecture/catalog-tables/)
+- [Apache HBase: Regions, MemStores, HFiles, and Compaction](https://hbase.apache.org/docs/architecture/regions/)
+- [Apache HBase: RegionServer Storage and BlockCache](https://hbase.apache.org/docs/architecture/regionserver/)
+- [Apache HBase: HDFS Integration](https://hbase.apache.org/docs/architecture/hdfs/)
+- [Apache HBase: Shell Guide](https://hbase.apache.org/docs/shell/)
+- [Apache HBase 2.6.0: Get Command Help](https://github.com/apache/hbase/blob/rel/2.6.0/hbase-shell/src/main/ruby/shell/commands/get.rb)
+- [Apache HBase 2.6.0: Put Command Help](https://github.com/apache/hbase/blob/rel/2.6.0/hbase-shell/src/main/ruby/shell/commands/put.rb)
+- [Apache HBase 2.6: Write Durability Policies](https://hbase.apache.org/2.6/devapidocs/org/apache/hadoop/hbase/client/Durability.html)
+- [Apache HBase: Atomicity, Visibility, and Scan Guarantees](https://hbase.apache.org/acid-semantics/)
 - [ClickHouse: Column-Oriented Database Overview](https://clickhouse.com/docs/get-started/about/intro)
 - [Greenplum Transaction Snapshots — Historical Vendor Explanation](https://blogs.vmware.com/tanzu/improving-backup-performance-and-reliability-with-distributed-snapshots/)
 - [ClickHouse: SQL JOIN Support](https://clickhouse.com/docs/reference/statements/select/join)
