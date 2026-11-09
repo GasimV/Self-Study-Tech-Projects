@@ -102,6 +102,7 @@
     - [Get a Row and Scan a Bounded Range](#get-a-row-and-scan-a-bounded-range)
     - [Correct a Cell, Read Versions, and Delete a Row](#correct-a-cell-read-versions-and-delete-a-row)
   - [HBase Writes, Flushes, Reads, and Compaction](#hbase-writes-flushes-reads-and-compaction)
+    - [Inside a RegionServer](#inside-a-regionserver)
     - [Write and Persistence Path](#write-and-persistence-path)
     - [Read and Merge Path](#read-and-merge-path)
   - [HBase Consistency, Availability, and Recovery](#hbase-consistency-availability-and-recovery)
@@ -2690,6 +2691,17 @@ Regions can split and move as the system grows. Region sizes, split policies, an
 
 ### Finding the Region: First and Subsequent Requests
 
+**A small `hbase:meta` example:** The catalog lets the client map a table and key range to the RegionServer currently serving it.
+
+| Table | Region | Start key (inclusive) | End key (exclusive) | Serving RegionServer |
+| --- | --- | --- | --- | --- |
+| `robot_readings` | A | Beginning of table | `R18#` | RegionServer 1 |
+| `robot_readings` | B | `R18#` | End of table | RegionServer 2 |
+
+R17's reading keys fall in **Region A**, so the client contacts **RegionServer 1**. R18's keys fall in **Region B**, served by **RegionServer 2**.
+
+This is a readable summary, not the catalog's literal column layout. Actual catalog entries identify the table, region start key, and region ID; fields include region information and the serving server's address. A move can change the serving server without changing the row key. See [catalog structure](https://hbase.apache.org/docs/architecture/catalog-tables/).
+
 The client needs to find **which RegionServer currently serves the requested row**:
 
 1. Obtain bootstrap metadata through the configured **connection registry**.
@@ -2840,6 +2852,53 @@ See the [Shell guide](https://hbase.apache.org/docs/shell/), [2.6 Get command he
 | **HFiles** | Immutable sorted files containing stored cells |
 | **BlockCache** | Caches file blocks to avoid repeated storage reads |
 | **Indexes and Bloom filters** | Help seek relevant blocks and skip files that cannot contain the requested key |
+
+#### Inside a RegionServer
+
+**A RegionServer can host several regions. Each region has one Store per column family; each Store manages a MemStore and HFiles.** The BlockCache is shared across the RegionServer's regions.
+
+```mermaid
+flowchart TB
+    subgraph RS["One RegionServer process: generic structure"]
+        BC["Shared BlockCache<br/>Cached HFile blocks"]
+        WW["WAL writer"]
+
+        subgraph RX["Region X"]
+            subgraph SX["Store for family m"]
+                MX["MemStore<br/>RAM"]
+                HX["HFile references"]
+            end
+        end
+
+        subgraph RY["Region Y"]
+            subgraph SY["Store for family m"]
+                MY["MemStore<br/>RAM"]
+                HY["HFile references"]
+            end
+        end
+    end
+
+    subgraph STORAGE["HDFS: persistent files outside the process"]
+        WF["WAL files<br/>Replicated blocks"]
+        HF["HFiles for the Stores<br/>Replicated blocks"]
+    end
+
+    WW -->|"Append"| WF
+    HX -->|"File access"| HF
+    HY -->|"File access"| HF
+    MX -.->|"Flush"| HF
+    MY -.->|"Flush"| HF
+    HF -.->|"Cache eligible blocks"| BC
+
+    style RS fill:#eef2ff,stroke:#8795b5,color:#111
+    style STORAGE fill:#fff3d6,stroke:#b69b58,color:#111
+```
+
+**Read the boxes as containment:** process → regions → family Stores. Region X and Region Y illustrate the internal structure of one process; they are not the A/B assignments in the earlier routing example.
+
+The HFile boxes inside the Stores are **references to files**, not file bytes held entirely in RAM. Actual HFiles and WAL files reside in HDFS; their blocks can be local or remote. The diagram groups persistent files by role without implying that both Stores share the same HFile. Only family `m` is shown; another family would have its own Store and MemStore within each region.
+
+The shared WAL writer box summarizes logging; deployments can use more than one WAL group. See [the region/Store hierarchy](https://hbase.apache.org/docs/architecture/regions/) and [RegionServer caching](https://hbase.apache.org/docs/architecture/regionserver/).
 
 #### Write and Persistence Path
 
