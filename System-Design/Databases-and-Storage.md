@@ -40,6 +40,23 @@
     - [Follow One Package Through the System](#follow-one-package-through-the-system)
     - [Combine Roles Before Adding Engines](#combine-roles-before-adding-engines)
   - [How to Justify the Choice](#how-to-justify-the-choice)
+- [Query Performance and Database Access](#query-performance-and-database-access)
+  - [Practical Indexing and Query Plans](#practical-indexing-and-query-plans)
+    - [Worked Orders Access Pattern](#worked-orders-access-pattern)
+    - [Reading a Query Plan](#reading-a-query-plan)
+  - [Efficient Queries and Pagination](#efficient-queries-and-pagination)
+    - [Offset vs. Keyset Pagination](#offset-vs-keyset-pagination)
+  - [Connection Pools, Caches, and Precomputed Results](#connection-pools-caches-and-precomputed-results)
+    - [Reusing Database Connections](#reusing-database-connections)
+    - [Cached Results vs. Materialized Views](#cached-results-vs-materialized-views)
+- [Partitioning and Sharding](#partitioning-and-sharding)
+  - [Partition and Shard Key Strategies](#partition-and-shard-key-strategies)
+  - [PostgreSQL Monthly Range Partitions](#postgresql-monthly-range-partitions)
+  - [Connecting Placement to the Existing Examples](#connecting-placement-to-the-existing-examples)
+- [Distributed Transactions](#distributed-transactions)
+  - [Two-Phase Commit: Orders and Inventory](#two-phase-commit-orders-and-inventory)
+  - [Failure, Blocking, and Uncertain Outcomes](#failure-blocking-and-uncertain-outcomes)
+  - [Atomic Commit vs. Paxos and Raft](#atomic-commit-vs-paxos-and-raft)
 - [Key-Value Stores](#key-value-stores)
   - [What Is a Key-Value Store?](#what-is-a-key-value-store)
   - [Why Use Key-Value Stores in Distributed Systems?](#why-use-key-value-stores-in-distributed-systems)
@@ -49,6 +66,8 @@
   - [Design Topics to Study Next](#design-topics-to-study-next)
   - [Scalability: Partitioning and Consistent Hashing](#scalability-partitioning-and-consistent-hashing)
   - [Replication Models and Replica Placement](#replication-models-and-replica-placement)
+    - [Multi-Leader Replication](#multi-leader-replication)
+    - [Replication Lag and Read-Your-Writes](#replication-lag-and-read-your-writes)
   - [Coordinating Reads and Writes](#coordinating-reads-and-writes)
   - [Temporary Failures: Sloppy Quorums and Hinted Handoff](#temporary-failures-sloppy-quorums-and-hinted-handoff)
   - [Replica Repair and Merkle Trees](#replica-repair-and-merkle-trees)
@@ -246,6 +265,8 @@ Each order belongs to **exactly one existing customer** in this example; a custo
 **Indexes** provide additional access paths. They can accelerate suitable lookups and joins but consume storage and add write/maintenance work. Joins are **not inherently slow**: cost depends on query shape, indexes, cardinality estimates, data size/distribution, and the execution plan. Inspect and measure actual plans rather than assuming one data model is faster. See [PostgreSQL query-plan documentation](https://www.postgresql.org/docs/current/using-explain.html).
 
 Examples of relational DBMSs include **MySQL, PostgreSQL, Oracle Database, Microsoft SQL Server, SQLite, and IBM Db2**. These differ in deployment, concurrency, extensions, and operational characteristics; the list is not a ranking.
+
+For worked index choices, query plans, pagination, and connection pools, see [Query Performance and Database Access](#query-performance-and-database-access).
 
 #### Greenplum: Relational Analytics with MPP
 
@@ -488,6 +509,8 @@ The application checks the relevant rules and groups the debit and credit within
 - **Error handling is engine-specific.** A failing statement, deadlock, explicit rollback, and disconnected client need not have identical effects. Do not assume every SQL error automatically rolls back the whole transaction. For example, [MySQL InnoDB documents different rollback scopes](https://dev.mysql.com/doc/refman/8.4/en/innodb-error-handling.html).
 
 > **Recall:** Transactions are a tool for enforcing specified rules. Choose transaction boundaries, isolation, and durability deliberately; “supports ACID” is not a complete application-correctness design.
+
+When one logical operation spans separate databases, see [Distributed Transactions](#distributed-transactions) for the additional commit and recovery requirements.
 
 ### NoSQL Databases
 
@@ -1063,6 +1086,424 @@ Use the [existing checklist](#database-selection-checklist) and [database operat
 
 > **Choose by required operations and guarantees. Add another database when its benefit justifies another system to synchronize and operate.**
 
+## Query Performance and Database Access
+
+**Start with a slow or expensive access pattern, then measure why it costs work.** A different database is not always the first remedy: query shape, indexes, excessive round trips, and uncontrolled concurrency may be the actual problem.
+
+The PostgreSQL snippets below are a self-contained teaching sequence. Assume an isolated illustrative database, absent example objects, sufficient permissions, successful sequential statements, and no concurrent writers. Results are logical values; timestamps are shown in UTC. The earlier Customers/Orders example is unchanged.
+
+### Practical Indexing and Query Plans
+
+An **index** is an additional structure that helps find qualifying records or produce useful ordering. It costs storage and must be maintained when indexed data changes.
+
+| Access path | Useful question | Important limit |
+| --- | --- | --- |
+| **B-tree** | Find an exact value, a range, or suitably ordered rows | A large match can still require substantial scanning and row retrieval |
+| **Hash** | Find records equal to a key | PostgreSQL hash indexes support equality, not ordered range retrieval |
+| **Full-text indexing** | Find documents matching words or language-aware search expressions | Needs suitable text processing and query semantics; not an ordinary scalar equality index |
+
+Full-text search is a capability implemented through suitable structures: PostgreSQL commonly uses **GIN (Generalized Inverted Index)** structures over text-search values. It is not simply a third universally identical storage layout. **Composite** means multiple key columns; **covering** means the index contains the values a query needs. These describe index design, not competing physical types. See [PostgreSQL index types](https://www.postgresql.org/docs/current/indexes-types.html) and [text-search indexes](https://www.postgresql.org/docs/current/textsearch-indexes.html).
+
+**Selectivity** describes how much data a condition matches. A rare customer lookup and a condition matching most rows can favor different plans. More indexes do not guarantee faster operation: they increase storage, cache pressure, and write/maintenance work. Changes to non-indexed fields need not maintain every index in the same way.
+
+#### Worked Orders Access Pattern
+
+Extend the existing order story using a separate table. Customer 1 is Mina; customer 2 is Rashad. The customer IDs are illustrative references here, without a dependency on an existing Customers table.
+
+```sql
+CREATE TABLE orders_access_example (
+    order_id BIGINT PRIMARY KEY,
+    customer_id INTEGER NOT NULL,
+    total NUMERIC(12, 2) NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+INSERT INTO orders_access_example
+    (order_id, customer_id, total, status, created_at)
+VALUES
+    (101, 1, 20.00, 'paid',    '2026-11-06 10:00:00+00'),
+    (102, 1,  5.00, 'pending', '2026-11-06 10:01:00+00'),
+    (103, 2, 15.00, 'paid',    '2026-11-06 10:00:00+00'),
+    (104, 1, 12.00, 'paid',    '2026-11-06 10:01:00+00'),
+    (105, 1,  8.00, 'paid',    '2026-11-06 10:02:00+00');
+```
+
+| Order | Customer | Total | Status | Created at, UTC |
+| --- | --- | --- | --- | --- |
+| 101 | 1 | 20.00 | paid | 2026-11-06 10:00 |
+| 102 | 1 | 5.00 | pending | 2026-11-06 10:01 |
+| 103 | 2 | 15.00 | paid | 2026-11-06 10:00 |
+| 104 | 1 | 12.00 | paid | 2026-11-06 10:01 |
+| 105 | 1 | 8.00 | paid | 2026-11-06 10:02 |
+
+The main request is **“return one customer's latest orders.”** A candidate index is:
+
+```sql
+CREATE INDEX orders_access_customer_time_idx
+ON orders_access_example
+    (customer_id, created_at DESC, order_id DESC)
+INCLUDE (total, status);
+```
+
+Equality on `customer_id` narrows the customer range. The following keys support ordering by creation time and order ID. Column order should follow the required access patterns; separate single-column indexes do not automatically provide the same filtering and ordering.
+
+The `INCLUDE` values are **payload**, not additional search-order keys. They let this index contain all columns returned by the upcoming query. However, a **covering index does not guarantee an index-only scan without heap visits**: PostgreSQL also considers row visibility, the access method, and cost. See [multicolumn indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html) and [covering/index-only scans](https://www.postgresql.org/docs/current/indexes-index-only-scans.html).
+
+#### Reading a Query Plan
+
+```sql
+EXPLAIN
+SELECT order_id, created_at, total, status
+FROM orders_access_example
+WHERE customer_id = 1
+ORDER BY created_at DESC, order_id DESC
+LIMIT 2;
+```
+
+`EXPLAIN` shows the selected plan, not the query's returned orders. Read its operators from the underlying data access toward the final result:
+
+| Plan element | What to ask |
+| --- | --- |
+| **Sequential scan** | How much of the table is read, and how many rows survive filtering? |
+| **Index scan** | Which conditions bound the index search, and how many table rows must be fetched? |
+| **Index-only scan** | Are required values in the index, and are heap fetches still needed for visibility? |
+| **Sort** | Is sorting necessary, how many rows are sorted, and can it exceed available memory? |
+| **Estimated rows / cost** | Do the estimates fit the data distribution? Costs are planner units, not milliseconds |
+| **Actual rows / time / buffers** | Under measured execution, where did time, repeated loops, and I/O accumulate? |
+
+**A sequential scan can be correct for five rows.** The presence of an index does not require the optimizer to use it. Larger representative data, statistics, parameter values, and concurrency can change the plan.
+
+`EXPLAIN ANALYZE` **executes the statement** and adds observed execution information; `BUFFERS` can add buffer-usage detail. Use suitable test conditions, especially for statements that modify data. Planner estimates, actual execution, and end-to-end application latency are different measurements. No fixed plan or timing is assumed here. See [PostgreSQL EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html).
+
+### Efficient Queries and Pagination
+
+First reduce unnecessary work and round trips:
+
+| Pattern | Simple improvement | Limit to remember |
+| --- | --- | --- |
+| **N+1 queries** | Fetching a page and then one query per result can become one bounded join or batched lookup | A huge join or batch can be expensive too; measure row multiplication and payload |
+| **Unbounded loading** | Fetch the needed page and selected columns | A small response does not prove the database examined little data |
+| **Oversized batches** | Bound rows, bytes, parameter counts, and transaction time | One enormous batch can create lock, memory, and retry pressure |
+| **Values embedded in SQL text** | Pass values through the driver's parameter-binding interface | Parameterization helps separate code from values; plan reuse and plan quality are engine/driver-dependent |
+
+Do not remove joins merely because they are joins. Inspect the actual query and plan. For application request latency, also count database calls, pool waiting, network round trips, and result serialization.
+
+#### Offset vs. Keyset Pagination
+
+**First page:**
+
+```sql
+SELECT order_id, created_at, total, status
+FROM orders_access_example
+WHERE customer_id = 1
+ORDER BY created_at DESC, order_id DESC
+LIMIT 2;
+```
+
+The order IDs are **105, 104**. Both 104 and 102 have timestamp **10:01**, so the unique `order_id` breaks the tie.
+
+**Offset pagination** skips the first two results:
+
+```sql
+SELECT order_id, created_at, total, status
+FROM orders_access_example
+WHERE customer_id = 1
+ORDER BY created_at DESC, order_id DESC
+LIMIT 2 OFFSET 2;
+```
+
+This returns **102, 101** for the unchanged dataset. Large offsets require processing skipped rows; concurrent changes can also shift positions.
+
+**Keyset pagination** continues after the last ordering pair from page one:
+
+```sql
+SELECT order_id, created_at, total, status
+FROM orders_access_example
+WHERE customer_id = 1
+  AND (created_at, order_id)
+      < (TIMESTAMPTZ '2026-11-06 10:01:00+00', 104)
+ORDER BY created_at DESC, order_id DESC
+LIMIT 2;
+```
+
+This also returns **102, 101**. The pair comparison checks time first, then ID on a tie. Because both sort keys are descending, “after this cursor” uses **less than**. Using only the timestamp would skip order 102.
+
+| Choice | Suitable behavior | Trade-off |
+| --- | --- | --- |
+| **Offset** | Request a numbered position/page | Deep offsets can cost more; changing rows can shift pages |
+| **Keyset** | Continue from a known ordering tuple | Efficient access needs a suitable index; jumping to an arbitrary numbered page is less direct |
+
+The cursor must retain the full ordering values and be used with the same filters. These columns are non-null here; nullable sort keys require additional design.
+
+**Stable ordering is not a snapshot guarantee.** Concurrent inserts, edits to ordering values, or deletes can change what later pages see. A consistent export may need an appropriate snapshot or a defined cutoff. See [LIMIT/OFFSET](https://www.postgresql.org/docs/current/queries-limit.html) and [row comparisons](https://www.postgresql.org/docs/current/functions-comparisons.html).
+
+### Connection Pools, Caches, and Precomputed Results
+
+#### Reusing Database Connections
+
+A **connection pool** keeps database connections available for reuse. A request borrows a connection, performs its work, and returns it; it need not create a fresh connection for every query.
+
+| Pool location | Role | Example |
+| --- | --- | --- |
+| **Application-side pool** | Manages a bounded set of connections within each application process | A driver's pool or HikariCP for Java/JDBC applications |
+| **External pooler** | Accepts application connections and manages a bounded set of backend database connections | PgBouncer for PostgreSQL |
+
+For direct application pools, **three application replicas with a maximum of ten connections each can collectively open thirty**. Other services, jobs, migrations, and administration also need capacity. An external pooler can change the mapping between client and server connections, according to its mode and configured limits.
+
+Choose bounded pool sizes and acquisition timeouts. Monitor wait time, active connections, query latency, and database saturation. Return connections reliably, keep transactions short, and avoid holding a transaction open while waiting for an unrelated remote service. Adding connections can increase contention instead of throughput.
+
+PgBouncer's **session pooling** assigns a backend for the client session; **transaction pooling** can reuse it for another client after the transaction. Session-dependent features therefore need compatibility checks. A pooled connection is not a user identity or a guarantee of read/write affinity. See [PgBouncer's mode/feature comparison](https://www.pgbouncer.org/features.html).
+
+#### Cached Results vs. Materialized Views
+
+| Mechanism | What is retained? | Freshness responsibility |
+| --- | --- | --- |
+| **Query-result cache** | A result or application representation under a cache key | Design invalidation, expiration, and ownership of refreshes |
+| **Materialized view** | Stored results of a defined database query | Decide when to refresh and what staleness consumers can accept |
+
+Cache keys and reuse rules must respect tenant, user, permissions, and query parameters where relevant. A **TTL—time to live—bounds intended retention, not transactional freshness**. Prevent many simultaneous misses from overwhelming the database, for example through request coalescing and controlled refreshes. A cache hit must not bypass required authorization or authoritative checks.
+
+Using the original five-row dataset, precompute paid totals:
+
+```sql
+CREATE MATERIALIZED VIEW paid_totals_access_example AS
+SELECT customer_id, SUM(total) AS paid_total
+FROM orders_access_example
+WHERE status = 'paid'
+GROUP BY customer_id;
+
+SELECT customer_id, paid_total
+FROM paid_totals_access_example
+ORDER BY customer_id;
+```
+
+| customer_id | paid_total |
+| --- | --- |
+| 1 | 40.00 |
+| 2 | 15.00 |
+
+Now mark order 102 paid, then query the materialized view again:
+
+```sql
+UPDATE orders_access_example
+SET status = 'paid'
+WHERE order_id = 102;
+
+SELECT customer_id, paid_total
+FROM paid_totals_access_example
+ORDER BY customer_id;
+```
+
+The view still returns **40.00 and 15.00**. Its stored result is not automatically changed by that source update.
+
+```sql
+REFRESH MATERIALIZED VIEW paid_totals_access_example;
+
+SELECT customer_id, paid_total
+FROM paid_totals_access_example
+ORDER BY customer_id;
+```
+
+After refresh, the totals are **45.00 and 15.00**. These are sums of the example's paid order amounts, not a complete accounting definition of revenue.
+
+A refresh consumes resources; the ordinary refresh shown can block readers. PostgreSQL's concurrent-refresh option has prerequisites and restrictions, so “materialized view” does not mean free or automatically nonblocking maintenance. See [materialized views](https://www.postgresql.org/docs/current/rules-materializedviews.html) and [refresh behavior](https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html).
+
+> **Measure → inspect the plan → reduce unnecessary work → choose indexes → control concurrency → measure again.**
+
+## Partitioning and Sharding
+
+**Partitioning divides data into subsets; sharding distributes subsets across database instances or nodes.** The terminology varies by product. A local partition is not automatically another server, and a shard need not map one-to-one to a physical machine.
+
+| Technique | What changes? | Example |
+| --- | --- | --- |
+| **Indexing** | Adds an access path | Find one customer's latest orders |
+| **Partitioning** | Divides a logical dataset into pieces | Store each month's orders in a separate table partition |
+| **Sharding** | Distributes subsets across instances/nodes | Route different customers' orders to different database instances |
+| **Replication** | Retains copies of a subset or dataset | Maintain replicas of each shard for the chosen failure scope |
+
+These techniques can coexist. A shard can contain locally partitioned tables and have its own replicas.
+
+```mermaid
+flowchart TB
+    subgraph LOCAL["Local table partitioning"]
+        LQ["Query one logical table"]
+        subgraph ONE["One database instance"]
+            LP["Partitioned table"]
+            NOV["November partition"]
+            DEC["December partition"]
+            LP --> NOV
+            LP --> DEC
+        end
+        LQ --> LP
+    end
+
+    subgraph DISTRIBUTED["Distributed sharding"]
+        SQ["Query with customer key"]
+        ROUTE["Shard-aware routing"]
+        S1["Database instance A<br/>Shard 1"]
+        S2["Database instance B<br/>Shard 2"]
+        SQ --> ROUTE
+        ROUTE --> S1
+        ROUTE --> S2
+    end
+```
+
+The routing branches are alternatives for a targeted key; some cross-shard queries contact several destinations. Replicas are omitted to focus on placement. This illustrates two deployments, not a rule requiring every database product to use these components.
+
+### Partition and Shard Key Strategies
+
+| Strategy | Simple rule | Benefit and trade-off |
+| --- | --- | --- |
+| **Range** | Group rows by time or another ordered range | Can localize range reads and retention operations; a busy newest range can become hot |
+| **List** | Group explicit values, such as region codes | Supports known groupings; groups can differ greatly in size or traffic |
+| **Hash** | Hash a customer key into a placement scheme | Can spread many distinct keys; range locality is reduced and one hot key remains hot |
+
+**Partition pruning** skips partitions the database can exclude using their bounds and suitable query predicates. It is different from an index locating rows inside a chosen partition. Without a useful partition predicate, a query can still examine many partitions.
+
+For shards, determine where routing metadata lives and what happens when ownership changes. A missing shard key can require **fan-out**, contacting multiple shards and combining results. Cross-shard joins, transactions, and aggregates may require additional coordination.
+
+Rebalancing must transfer data, catch concurrent writes, update routing safely, and handle retries or failures. Replication and fencing protect different aspects of that process. Hashing does not guarantee perfectly balanced traffic, and a geographic key alone does not establish compliance or correct residency for every copy.
+
+### PostgreSQL Monthly Range Partitions
+
+This separate example shows **local declarative partitioning**, not a sharded PostgreSQL cluster. It does not depend on or change `orders_access_example`.
+
+```sql
+CREATE TABLE orders_partition_example (
+    order_id BIGINT NOT NULL,
+    customer_id INTEGER NOT NULL,
+    total NUMERIC(12, 2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (order_id, created_at)
+) PARTITION BY RANGE (created_at);
+
+CREATE TABLE orders_partition_2026_11
+PARTITION OF orders_partition_example
+FOR VALUES FROM ('2026-11-01 00:00:00+00')
+             TO ('2026-12-01 00:00:00+00');
+
+CREATE TABLE orders_partition_2026_12
+PARTITION OF orders_partition_example
+FOR VALUES FROM ('2026-12-01 00:00:00+00')
+             TO ('2027-01-01 00:00:00+00');
+```
+
+Bounds are **start-inclusive and end-exclusive**:
+
+| Created at, UTC | Destination |
+| --- | --- |
+| 2026-11-01 00:00 | November |
+| 2026-11-30 23:59:59 | November |
+| 2026-12-01 00:00 | December |
+| 2027-01-01 00:00 | No matching partition in this example |
+
+The November upper bound and December lower bound meet without overlap. An insert outside both ranges fails unless another suitable partition exists. Future partitions need a deliberate lifecycle.
+
+The composite primary key includes `created_at`, the partition key, as PostgreSQL requires for this partitioned-table constraint. It enforces uniqueness of the **pair**, not independent global uniqueness of `order_id` across all timestamps.
+
+A query that can exclude December is:
+
+```sql
+EXPLAIN
+SELECT order_id, total
+FROM orders_partition_example
+WHERE created_at >= TIMESTAMPTZ '2026-11-01 00:00:00+00'
+  AND created_at <  TIMESTAMPTZ '2026-12-01 00:00:00+00';
+```
+
+With partition pruning enabled, these bounds allow the planner to exclude December. The tables are empty here, so this illustrates access planning rather than useful result rows or measured performance.
+
+Queries within November may still need suitable indexes. Time partitions can simplify archival or removal of old data, but dropping a partition also removes its records; retention, dependent copies, backups, and restore requirements must be considered. See [PostgreSQL partitioning and pruning](https://www.postgresql.org/docs/current/ddl-partitioning.html).
+
+### Connecting Placement to the Existing Examples
+
+| Existing explanation | What it adds |
+| --- | --- |
+| [Consistent hashing](#scalability-partitioning-and-consistent-hashing) | Stable key placement and movement when membership changes |
+| [DynamoDB partition keys](#partition-keys-and-sort-keys) | Application key design with AWS-managed physical partitions |
+| [Cassandra partitions](#cassandra-keys-partitions-and-clustering) | Hash-based partition placement and ordered rows within each partition |
+| [HBase regions](#regions-and-hbase-cluster-components) | Ordered key ranges served by RegionServers |
+| [Greenplum MPP](#greenplum-relational-analytics-with-mpp) | Distributed analytical processing and inter-segment data movement |
+| [Replica placement](#replication-models-and-replica-placement) | Independent copies and failure domains, separate from partition ownership |
+
+> **Indexes help find data; partitions divide it; shards distribute it; replicas copy it. Choose each mechanism for the requirement it actually serves.**
+
+## Distributed Transactions
+
+**A local transaction and an operation spanning separate databases have different boundaries.** One application's `BEGIN` does not automatically include a remote database, an HTTP service, a message broker, or object storage.
+
+| Mechanism | Question answered | What it does not establish alone |
+| --- | --- | --- |
+| **Local transaction** | Which changes commit together within the database's supported scope? | Atomic updates across arbitrary external systems |
+| **Distributed atomic commit** | Do the enlisted participants commit or abort this transaction together? | Complete application correctness or global serializable isolation |
+| **Consensus among replicas** | Which decision/history do participating replicas agree to? | Automatic enlistment and atomic commit across all independent services |
+
+Use the [local ACID explanation](#transactions-and-acid) first. Distributed protocols build on specific participant and recovery capabilities; they do not remove transaction or business-invariant design.
+
+### Two-Phase Commit: Orders and Inventory
+
+Suppose an order database stages **confirmation of order 105**, and an inventory database stages **a stock reduction for product P100**. The desired transaction outcome is that both changes commit or both abort.
+
+This is a separate conceptual scenario, not another step of the SQL access example. Assume the databases support participation in a distributed transaction and an appropriate transaction manager coordinates them. Ordinary API calls to arbitrary services do not acquire these properties automatically.
+
+**Two-phase commit (2PC)** has two stages:
+
+1. **Prepare:** Ask each participant whether it can commit. A participant voting yes records the required recovery state and retains the locks/resources needed to honor that promise.
+2. **Decision:** Commit only when all participants have voted yes; otherwise choose abort. The coordinator durably records the decision and communicates it. Participants record/complete that outcome and release the relevant resources.
+
+Recovery continues an interrupted decision using the durable records. A participant is not free to change its mind after promising to follow the final decision.
+
+```mermaid
+sequenceDiagram
+    participant A as Application
+    participant C as Transaction coordinator
+    participant O as Orders database
+    participant I as Inventory database
+    A->>C: Transaction T105
+    C->>O: Stage order confirmation
+    C->>I: Stage stock reduction
+    C->>O: Prepare
+    C->>I: Prepare
+    Note over O,I: Record prepared state and retain required locks
+    O-->>C: Yes
+    I-->>C: Yes
+    Note over C: Durably record COMMIT
+    C->>O: Commit
+    C->>I: Commit
+    O-->>C: Committed
+    I-->>C: Committed
+    C-->>A: Success
+```
+
+The successful path shown waits for both confirmations before replying to the application. Participants can finish processing messages at different times; this diagram does not promise simultaneous visibility to unrelated reads across both databases.
+
+### Failure, Blocking, and Uncertain Outcomes
+
+| Event | Required reasoning |
+| --- | --- |
+| **Inventory votes no** | The transaction must abort; prepared participants learn and complete the abort decision |
+| **Coordinator fails after preparation, before a known decision** | A prepared participant may have to wait for recovery or another valid way to learn the outcome; unilateral timeout-abort can be unsafe |
+| **Coordinator fails after durably deciding commit** | Recovery must continue commit, even if some participants have not received it yet |
+| **Commit message or acknowledgment is lost** | Retry decision delivery using transaction identity and the protocol's recovery rules; do not create a second business order |
+| **Application times out** | The transaction may have committed. Recover/query the outcome rather than treating timeout as proof of abort |
+
+Prepared transactions can hold resources and obstruct other work while uncertain. Operational procedures must resolve outstanding transactions correctly; abandoning them is not recovery.
+
+PostgreSQL supports prepared transactions for use with an external transaction manager. This capability is not the same as independently opening transactions on two connections and hoping both commits succeed. See [PostgreSQL two-phase transactions](https://www.postgresql.org/docs/current/two-phase.html) and [prepared-state behavior](https://www.postgresql.org/docs/current/sql-prepare-transaction.html).
+
+### Atomic Commit vs. Paxos and Raft
+
+**2PC and consensus solve related but different coordination problems.** A transaction manager needs an atomic outcome across enlisted participants. Paxos/Raft can establish agreement within a replica group and protect replicated state or decision records.
+
+They can be combined. Gray and Lamport's **Paxos Commit** uses consensus within an atomic-commit design; it is not simply a matter of replacing a 2PC call with an ordinary Raft write. Likewise, replicating each database does not automatically make two databases share one transaction.
+
+See [Paxos](Distributed-Systems-Theorems-and-Data-Structures.md#paxos), [Raft](Distributed-Systems-Theorems-and-Data-Structures.md#raft), and [Consensus on Transaction Commit](https://lamport.azurewebsites.net/video/consensus-on-transaction-commit.pdf). Crash-fault consensus does not by itself cover arbitrary malicious participants.
+
+Choose the **smallest transaction boundary that preserves the required invariant**. When the boundary spans systems, define supported participation, isolation, durable outcomes, recovery ownership, and idempotent retries. A lost response must not silently turn one intended order or charge into two.
+
+> **A timeout means “outcome uncertain,” not necessarily “aborted.” Atomic commit needs a recoverable decision; replication alone does not create a cross-system transaction.**
+
 ## Key-Value Stores
 
 ### What Is a Key-Value Store?
@@ -1446,6 +1887,7 @@ See [Consistent Hashing](Distributed-Systems-Theorems-and-Data-Structures.md#con
 | Model | Where client writes are handled | Main design questions |
 | --- | --- | --- |
 | **Primary-secondary / single-leader** | The current primary for that partition orders writes; secondaries apply replicated changes | Replication lag, acknowledgment rules, promotion, and preventing competing primaries |
+| **Multi-leader** | Multiple designated leaders accept writes for overlapping data | Concurrent changes, conflict rules, cross-region coordination, and routing |
 | **Peer-to-peer (leaderless in this example)** | A coordinator sends operations to the key's replica set without a permanent per-key write leader | Response thresholds, concurrent versions, reconciliation, and replica repair |
 
 **Primary-secondary example:**
@@ -1512,6 +1954,51 @@ The two diagrams show **the same model at different levels**: the first shows pe
 Let **N** be the total intended replicas of a key, including its first owner. It differs from **m**, the total physical-node count used in the modulo example. For `N = 3`, a clockwise preference scan such as `A#0 → A#1 → B#0 → C#0 → D#0` selects intended physical owners **A, B, C**: A's second token does not count as another copy. Later candidates such as D can be considered by a fallback policy.
 
 Place replicas across suitable failure domains, such as racks or availability zones, where the deployment supports it. Three copies in one rack do not protect against loss of that rack. Neither replication model automatically provides unlimited availability or durability; persistence, routing, failure assumptions, and recovery remain necessary.
+
+#### Multi-Leader Replication
+
+**Multi-leader replication allows more than one designated leader to accept writes for overlapping data.** It differs from the leaderless example above, where a request coordinator contacts a replica set without a permanent per-key write leader.
+
+For example, two regional leaders both start with customer 1's address as `Old address`. Before they exchange updates, Region A accepts `Address A` and Region B accepts `Address B`:
+
+```mermaid
+flowchart LR
+    CA["Client A"] -->|"Set Address A"| LA["Region A leader<br/>Customer 1"]
+    CB["Client B"] -->|"Set Address B"| LB["Region B leader<br/>Customer 1"]
+    LA -.->|"Replicate changes"| LB
+    LB -.->|"Replicate changes"| LA
+```
+
+These are concurrent alternatives for the **same field**. Replication transports the conflict; it does not decide which address the customer intended.
+
+| Policy | Trade-off |
+| --- | --- |
+| **Last-write-wins by timestamp** | Selects one value and can discard another accepted change; wall-clock skew can misrepresent which happened later |
+| **Domain-specific reconciliation** | Uses application rules or preserves versions for resolution; two addresses usually need a choice rather than concatenation |
+| **Assign one writer for a particular customer** | Reduces conflicts for that customer, while changing routing, failover, and local-write availability |
+
+Multi-leader is not automatically supported by a normal PostgreSQL primary/standby setup. Product support, replication mode, constraints, and conflict rules must be checked. Local writes can reduce some geographic round trips, but coordinating invariants or resolving conflicts adds work and may restrict availability. See [the replication-solution comparison](https://www.postgresql.org/docs/current/different-replication-solutions.html).
+
+#### Replication Lag and Read-Your-Writes
+
+**Read-your-writes** means a client's subsequent reads observe its completed write or a later valid state. It is a session-level requirement, not a claim that every client sees every write immediately.
+
+Consider the first creation of order **105**: the primary commits it and replies successfully. A read replica has not applied that update yet, so an immediate order lookup there may return “not found.” This is a separate timing illustration, not another mutation in the earlier SQL sequence.
+
+| Approach | What must be true |
+| --- | --- |
+| **Read from the current primary** | Route to the authoritative writer and use an appropriately fresh read/snapshot; an old transaction snapshot can still hide later commits |
+| **Wait for replica progress** | Use a supported position/token tied to the write, and wait until the selected replica has replayed it; define timeout and fallback behavior |
+| **Use a supported session/bookmark mechanism** | Carry the required causal progress between related requests; support depends on the database and client |
+| **Serve ordinary stale-tolerant reads from replicas** | Accept that these reads may omit recent writes; do not use them for a decision requiring current authoritative state |
+
+**Sticky routing alone is not a universal guarantee.** Failover, connection pooling, a changed primary, or a replica that has not caught up can invalidate assumptions about “the same server.”
+
+Distinguish replication stages: **received → persisted → replayed/applied**. A synchronous acknowledgment can wait for different stages, so it does not automatically make every replica read current. PostgreSQL's `remote_apply` setting waits for application on the required synchronous standbys; it is not a promise about all asynchronous replicas or old snapshots. See [synchronous replication](https://www.postgresql.org/docs/current/warm-standby.html) and [commit acknowledgment settings](https://www.postgresql.org/docs/current/runtime-config-wal.html).
+
+Monitor replay progress/lag and read latency, not just whether the replica process is running. Use documented history/topology-aware mechanisms after failover; elapsed wall time alone is not proof that a specific write has been applied.
+
+> **A replica can be healthy and still be behind. Route each read according to its freshness requirement, and distinguish acknowledged receipt from applied data.**
 
 ### Coordinating Reads and Writes
 
@@ -1849,6 +2336,8 @@ Grades:
 **This is a general modeling illustration, not actual DynamoDB placement.** Horizontal grouping here is arbitrary, not a claim about hash results. Vertical modeling remains possible with flexible attributes—for example, separating information into related items. It is also different from a physical column-oriented storage layout.
 
 DynamoDB automatically manages physical partition allocation, movement, and splitting. Customers do not manually assign items to storage servers or split physical partitions. Designers can change application-level key patterns or introduce write-sharding keys when justified; those are different decisions from AWS's physical management.
+
+For the general distinction between local partitioning, distributed sharding, indexes, and replicas, see [Partitioning and Sharding](#partitioning-and-sharding).
 
 #### Partition Keys and Sort Keys
 
@@ -3746,6 +4235,8 @@ Databases organize application information; DBMSs supply operations and configur
 
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
+The [performance and access section](#query-performance-and-database-access) works through indexes, query plans, pagination, pools, caches, and materialized results. [Partitioning and sharding](#partitioning-and-sharding) separate data organization from distribution, while [distributed transactions](#distributed-transactions) explain atomic commitment and uncertain outcomes across participants. The [replication expansion](#multi-leader-replication) adds concurrent regional writes and [read-your-writes](#replication-lag-and-read-your-writes) routing.
+
 The [column-family section](#column-family-databases) connects R17's CQL queries to Cassandra's partition keys, storage, replication, and consistency. The [HBase section](#apache-hbase) follows the same readings through ordered row keys, retained cell versions, region discovery, and storage/recovery paths. The [graph section](#graph-databases) compares relationship modeling with SQL, then uses [Neo4j](#neo4j) to follow connections, generate candidates, and explain transactions and storage trade-offs.
 
 The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
@@ -3772,6 +4263,20 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [PostgreSQL: Transaction Isolation](https://www.postgresql.org/docs/current/transaction-iso.html)
 - [PostgreSQL: JSON Types](https://www.postgresql.org/docs/current/datatype-json.html)
 - [PostgreSQL: Query Plans](https://www.postgresql.org/docs/current/using-explain.html)
+- [PostgreSQL: Multicolumn Indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html)
+- [PostgreSQL: Covering Indexes and Index-Only Scans](https://www.postgresql.org/docs/current/indexes-index-only-scans.html)
+- [PostgreSQL: Full-Text Index Choices](https://www.postgresql.org/docs/current/textsearch-indexes.html)
+- [PostgreSQL: LIMIT and OFFSET](https://www.postgresql.org/docs/current/queries-limit.html)
+- [PostgreSQL: Row Constructor Comparisons](https://www.postgresql.org/docs/current/functions-comparisons.html)
+- [PostgreSQL: Materialized Views](https://www.postgresql.org/docs/current/rules-materializedviews.html)
+- [PostgreSQL: Materialized-View Refresh](https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html)
+- [PostgreSQL: Table Partitioning and Pruning](https://www.postgresql.org/docs/current/ddl-partitioning.html)
+- [PgBouncer: Pooling Modes and Feature Compatibility](https://www.pgbouncer.org/features.html)
+- [PostgreSQL: Replication Solution Comparison](https://www.postgresql.org/docs/current/different-replication-solutions.html)
+- [PostgreSQL: WAL and Commit-Acknowledgment Settings](https://www.postgresql.org/docs/current/runtime-config-wal.html)
+- [PostgreSQL: Two-Phase Transactions](https://www.postgresql.org/docs/current/two-phase.html)
+- [PostgreSQL: Prepared-Transaction State and Recovery Responsibilities](https://www.postgresql.org/docs/current/sql-prepare-transaction.html)
+- [Gray and Lamport: Consensus on Transaction Commit](https://lamport.azurewebsites.net/video/consensus-on-transaction-commit.pdf)
 - [PostgreSQL: Backup and Restore](https://www.postgresql.org/docs/current/backup.html)
 - [PostgreSQL: Physical Row Layout and Null Bitmap](https://www.postgresql.org/docs/current/storage-page-layout.html)
 - [MySQL: InnoDB Error Handling and Rollback Scope](https://dev.mysql.com/doc/refman/8.4/en/innodb-error-handling.html)
