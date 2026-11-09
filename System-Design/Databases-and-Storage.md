@@ -446,6 +446,15 @@ Both systems require deliberate permissions, TLS/encryption decisions, recovery 
 
 Both are evaluation scenarios, not guaranteed product winners. Check representative queries, changes, concurrency, and failure behavior on the intended version and deployment; product labels alone do not establish correctness or performance.
 
+**Using both: retailer example**
+
+A retailer could evaluate:
+
+- **Greenplum** for monthly profitability reports combining orders, returns, suppliers, and accounting data.
+- **[ClickHouse](#clickhouse)** for frequently refreshed clickstream and telemetry dashboards.
+
+Shared [data pipelines](Data-Engineering-for-Solution-Architecture.md) can feed different datasets into each system. Define update lag, corrections, access controls, and recovery for each analytical view. Operating both adds synchronization and maintenance work; one database may already satisfy the requirements.
+
 ##### Quick Selection: PostgreSQL, Greenplum, or ClickHouse
 
 | Choose | When you need | Simple example |
