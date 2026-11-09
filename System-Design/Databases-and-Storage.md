@@ -108,7 +108,15 @@
   - [HBase Consistency, Availability, and Recovery](#hbase-consistency-availability-and-recovery)
   - [HBase Modeling, Operations, and Selection](#hbase-modeling-operations-and-selection)
 - [Graph Databases](#graph-databases)
-- [Neo4j](#neo4j)
+  - [Graph Concepts and Terminology](#graph-concepts-and-terminology)
+  - [Social-Network Example](#social-network-example)
+  - [Relational Modeling vs. Graph Modeling](#relational-modeling-vs-graph-modeling)
+  - [Traversal, Use Cases, and Trade-Offs](#traversal-use-cases-and-trade-offs)
+  - [Neo4j](#neo4j)
+    - [Worked Cypher Example: Following and Recommendations](#worked-cypher-example-following-and-recommendations)
+    - [How Storage Supports Traversal](#how-storage-supports-traversal)
+    - [Transactions, History, Scaling, and Operations](#transactions-history-scaling-and-operations)
+    - [When to Choose Neo4j](#when-to-choose-neo4j)
 - [Object Storage and Amazon S3](#object-storage-and-amazon-s3)
   - [What Is Object Storage?](#what-is-object-storage)
   - [What Is Typically Stored There?](#what-is-typically-stored-there)
@@ -490,7 +498,7 @@ The application checks the relevant rules and groups the debit and credit within
 | **Key-value** | Look up a value using a key; values may have rich supported types | Retrieve a session by its ID | Redis, [Amazon DynamoDB](#amazon-dynamodb) |
 | **Document** | Store records as documents with fields and nested structures | Read a product's description and variable attributes together | [MongoDB](#mongodb-document-modeling-and-queries), Apache CouchDB |
 | **[Column-family / wide-column](#column-family-databases)** | Organize records around row/partition keys and related columns | Fetch device measurements within a modeled key/time range | Apache Cassandra, [Apache HBase](#apache-hbase) |
-| **Graph** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | Neo4j, Amazon Neptune |
+| **[Graph](#graph-databases)** | Represent entities and explicit relationships for traversal | Follow account-to-device connections in a fraud investigation | [Neo4j](#neo4j), Amazon Neptune |
 
 These examples describe common use patterns, not exclusive product capabilities. Redis supports multiple [data types](https://redis.io/docs/latest/develop/data-types/); DynamoDB supports key-value and document patterns. See [CouchDB's document overview](https://docs.couchdb.org/en/stable/intro/overview.html), [Cassandra's architecture](https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html), and [Neo4j graph concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/).
 
@@ -855,7 +863,7 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | **Key-value** | Retrieve or update a value using a known key | Look up a user session by its unique session ID | Redis, [Amazon DynamoDB](#amazon-dynamodb), Aerospike |
 | **Document** | Nested records and field queries suited to the access pattern | Laptops have RAM and CPU fields; shoes have size and material fields | MongoDB, Couchbase, [Amazon DynamoDB](#amazon-dynamodb) |
 | **[Wide-column](#column-family-databases)** | Distributed keyed writes and range reads designed around partition/row keys | Retrieve one sensor's readings for a bounded time period | Apache Cassandra, [Apache HBase](#apache-hbase), Google Bigtable |
-| **Graph** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | Neo4j, Amazon Neptune, TigerGraph |
+| **[Graph](#graph-databases)** | Follow relationships across multiple hops | Investigate customers sharing devices, accounts, and transaction connections | [Neo4j](#neo4j), Amazon Neptune, TigerGraph |
 | **Specialized workloads and capabilities** | | | |
 | **Time-series** | Timestamped ingestion, time-window queries, and retention rules | Calculate hourly temperature and CPU-usage trends from a robot fleet | InfluxDB, TimescaleDB, OpenTSDB |
 | **Search** | Keyword matching, filters, and relevance ranking | Search product descriptions or application logs for matching terms | Elasticsearch, OpenSearch, Apache Solr |
@@ -886,7 +894,7 @@ For existing worked comparisons, see [MongoDB document modeling](#mongodb-docume
 | **Optional cache and sessions** | Redis | Reuse selected results and look up session state by key |
 | **Optional keyword search** | Elasticsearch | Search approved documents or permitted operational records by terms and filters |
 | **Optional semantic retrieval** | Qdrant **or** PostgreSQL + pgvector | Find relevant approved knowledge for an AI answer |
-| **Optional relationship analysis** | Neo4j | Explore connections during fraud review; connections alone do not prove fraud |
+| **Optional relationship analysis** | [Neo4j](#neo4j) | Explore connections during fraud review; connections alone do not prove fraud |
 | **Optional analytical reporting** | ClickHouse | Run historical aggregations without placing every report on the operational database |
 
 ```mermaid
@@ -951,7 +959,7 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 | **Key-value** | Retrieve a session by ID or reuse a cached result | **Redis:** known-key access with defined expiration/invalidation; cached stock is not authority to promise a parcel |
 | **Document** | Store differing package attributes: fragile glass, refrigerated food, or items with different dimensions | **MongoDB or PostgreSQL JSONB:** nested records when their shape and queries fit; a separate document engine is optional |
 | **[Wide-column](#column-family-databases)** | Retain a large history of R17's readings, queried by robot and bounded time range | **Cassandra or [HBase](#apache-hbase):** model partition/row keys for those queries; compare the [R17 CQL walkthrough](#worked-cql-example-robot-telemetry) with the [HBase Shell walkthrough](#worked-hbase-shell-example-robot-telemetry) |
-| **Graph** | Investigate customers, accounts, devices, and orders connected to suspicious delivery activity | **Neo4j:** traverse relationships; a shared device is a signal to investigate, not proof of fraud |
+| **[Graph](#graph-databases)** | Investigate customers, accounts, devices, and orders connected to suspicious delivery activity | **[Neo4j](#neo4j):** traverse relationships; a shared device is a signal to investigate, not proof of fraud |
 | **Time-series** | Monitor battery and temperature trends across the fleet | **InfluxDB or TimescaleDB:** time-window queries and retention suited to monitoring |
 | **Search** | Search free-text incident reports using terms, filters, and relevance | **Elasticsearch:** evaluate richer text retrieval; an exact lookup of D4821 alone does not justify another search engine |
 | **Vector** | Retrieve maintenance-manual passages related to an operator's question about R17 | **Qdrant or PostgreSQL + pgvector:** similarity retrieval over approved, access-controlled knowledge |
@@ -3028,11 +3036,378 @@ Link the operational store to [data-processing pipelines](Data-Engineering-for-S
 
 ## Graph Databases
 
-> Study notes to be added.
+### Graph Concepts and Terminology
 
-## Neo4j
+**A graph database represents entities and their connections so applications can query relationship patterns and paths.** Begin with the question: “Which entities are connected, and how?”
 
-> Study notes to be added.
+| Concept | Simple meaning | Social-network example |
+| --- | --- | --- |
+| **Node / vertex** | An entity | Alice's user record |
+| **Relationship / edge** | A connection between entities | Alice follows Bob |
+| **Property** | A value describing an entity or connection | User name; date a follow began |
+| **Node label** | A category in a property graph | `User` |
+| **Relationship type** | The kind of connection | `FOLLOWS` |
+| **Path** | A sequence of connected nodes and relationships | Alice → Bob → Carol |
+| **Traversal** | Expanding selected connections from a starting entity | Find people followed by Alice's follows |
+
+This section uses a **property graph**, with properties on nodes and relationships. Another graph model is **RDF—Resource Description Framework**, which represents statements as subject–predicate–object triples. Graph products differ in their models and query languages; not every graph database uses Cypher. See [RDF concepts](https://www.w3.org/TR/rdf11-concepts/).
+
+In **Neo4j**, a node can have zero or more labels. A relationship connects a source and target, has one type and a stored direction, and can have properties. Queries can follow outgoing or incoming relationships, or ignore direction when the question permits it. **Reading an incoming connection does not require storing a second reverse relationship.** See [Neo4j's graph concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/).
+
+### Social-Network Example
+
+Use these application identifiers throughout:
+
+| User ID | Name | When present |
+| --- | --- | --- |
+| 1 | Alice | Initially |
+| 2 | Bob | Initially |
+| 3 | Carol | Initially |
+| 4 | Dan | Added later |
+
+Initially, **Alice follows Bob and Carol; Bob follows Carol**:
+
+```mermaid
+flowchart TB
+    A(("1: Alice"))
+    B(("2: Bob"))
+    C(("3: Carol"))
+
+    A -->|"FOLLOWS"| B
+    A -->|"FOLLOWS"| C
+    B -->|"FOLLOWS"| C
+```
+
+The numbers are **application user IDs**, not Neo4j's internal record IDs. In the later queries, they are stored in `userId` properties.
+
+| Relationship | Source | Type | Destination |
+| --- | --- | --- | --- |
+| A | 1: Alice | `FOLLOWS` | 2: Bob |
+| B | 1: Alice | `FOLLOWS` | 3: Carol |
+| C | 2: Bob | `FOLLOWS` | 3: Carol |
+
+A, B, and C are teaching labels for the connections, not database-assigned identifiers. The same graph has these adjacency lists:
+
+| User | Outgoing: follows | Incoming: followed by |
+| --- | --- | --- |
+| 1: Alice | 2, 3 | None |
+| 2: Bob | 3 | 1 |
+| 3: Carol | None | 1, 2 |
+
+**Following is directional.** `1 → 2` does not imply `2 → 1`, and neither direction alone means mutual friendship.
+
+### Relational Modeling vs. Graph Modeling
+
+A relational database can represent exactly the same information.
+
+**Users**
+
+| id | name |
+| --- | --- |
+| 1 | Alice |
+| 2 | Bob |
+| 3 | Carol |
+
+**Follows**
+
+| src | dst |
+| --- | --- |
+| 1 | 2 |
+| 1 | 3 |
+| 2 | 3 |
+
+Here, `Users.id` is a primary key. `Follows.src` and `Follows.dst` reference users, and a composite key `(src, dst)` can prevent duplicate follows.
+
+An index beginning with `src` supports finding whom Alice follows. An index beginning with `dst` supports finding who follows Carol. Both lookups use the same relationship rows; no inverse `followed_by` row is required.
+
+**SQL can express a two-hop recommendation using a self-join:**
+
+```sql
+SELECT DISTINCT candidate.id AS user_id, candidate.name
+FROM Follows AS first_hop
+JOIN Follows AS second_hop ON second_hop.src = first_hop.dst
+JOIN Users AS candidate ON candidate.id = second_hop.dst
+WHERE first_hop.src = 1
+  AND candidate.id <> 1
+  AND NOT EXISTS (
+      SELECT 1
+      FROM Follows AS direct
+      WHERE direct.src = 1 AND direct.dst = candidate.id
+  )
+ORDER BY user_id;
+```
+
+Initially, this returns **no rows**: `1 → 2 → 3` reaches Carol, but Alice already follows her. After adding user 4 and `2 → 4`, the equivalent query can recommend user 4.
+
+Storing reverse relationships separately is an optional **denormalization** strategy, with extra writes and synchronization rules. It is not a requirement of relational modeling.
+
+Graph modeling expresses the relationship pattern directly; relational modeling expresses it through tables and joins. Either can work. Query depth, indexes, data distribution, concurrency, and execution plans determine performance—not the label “graph” or “SQL” alone. Compare [normalization and indexes](#normalization-and-indexes).
+
+### Traversal, Use Cases, and Trade-Offs
+
+Separate two tasks:
+
+1. **Locate a starting entity**, such as Alice by `userId = 1`.
+2. **Expand relevant relationships**, such as two outgoing `FOLLOWS` hops, then filter and return candidates.
+
+| Use case | Relationship question | Interpretation |
+| --- | --- | --- |
+| **Recommendations** | Who is connected through people I follow? | Generate candidates; ranking and eligibility are separate decisions |
+| **Fraud investigation** | Which customers share devices, accounts, or transaction connections? | Find investigation signals, not proof of fraud |
+| **Service dependencies** | Which applications depend on a failed service? | Follow modeled dependencies; missing or outdated links affect the answer |
+| **Knowledge graphs** | Which entities and claims connect this topic to another? | A stored connection does not prove a claim is true; provenance and verification matter |
+
+A **high-degree node** has many connections. Expanding several hops from such nodes can produce many candidate paths, including several paths to the same result. Bound traversal depth, choose types and directions deliberately, filter appropriately, and control returned results.
+
+A result `LIMIT` bounds output, but does not by itself guarantee little work; sorting, filtering, or deduplication may still examine many candidates. Neither an entire graph query nor every traversal has a universal O(1) cost. Query planning, data layout, memory/page caches, and storage I/O matter.
+
+### Neo4j
+
+**Neo4j is a transactional property-graph database management system.** Its **Cypher query language** describes graph patterns using syntax that resembles the shape of a connection:
+
+`(node)-[relationship]->(node)`
+
+For example, `(u:User)-[:FOLLOWS]->(v:User)` matches a user following another user. `u` and `v` are query variables; `User` is a label; `FOLLOWS` is a relationship type.
+
+The statements below are Cypher, independent of Neo4j Browser's interface commands or a driver's programming-language calls. An application supplies statements and parameters through a supported API; the database evaluates the patterns.
+
+#### Worked Cypher Example: Following and Recommendations
+
+Use **Neo4j 5-compatible syntax**. Assume an initially empty illustrative database with no conflicting schema definitions, sufficient permissions, successful sequential statements, and no concurrent writers. Execute statements in the shown order; variables do not carry between statements.
+
+The results below are **logical values**, not exact Browser or Shell formatting. Each statement runs in its own automatically committed transaction for this walkthrough.
+
+**1. Define application identity.**
+
+```cypher
+CREATE CONSTRAINT user_id_unique IF NOT EXISTS
+FOR (u:User) REQUIRE u.userId IS UNIQUE;
+```
+
+This prevents duplicate `userId` values among `User` nodes that have the property. **Uniqueness alone does not require every User to have a userId.** Existence/key constraints and their availability must be checked separately. The uniqueness constraint also has a backing index that can help locate users. See [constraint definitions](https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/).
+
+**2. Create the three users and their follows in one statement.**
+
+```cypher
+CREATE (alice:User {userId: 1, name: 'Alice'}),
+       (bob:User {userId: 2, name: 'Bob'}),
+       (carol:User {userId: 3, name: 'Carol'}),
+       (alice)-[:FOLLOWS {since: date('2026-11-06')}]->(bob),
+       (alice)-[:FOLLOWS {since: date('2026-11-06')}]->(carol),
+       (bob)-[:FOLLOWS {since: date('2026-11-06')}]->(carol);
+```
+
+The database now contains **three User nodes and three FOLLOWS relationships**. `since` is an illustrative relationship property, not an automatic history mechanism.
+
+**3. Read whom Alice follows.**
+
+```cypher
+MATCH (:User {userId: 1})-[:FOLLOWS]->(followed:User)
+RETURN followed.userId AS userId, followed.name AS name
+ORDER BY userId;
+```
+
+| userId | name |
+| --- | --- |
+| 2 | Bob |
+| 3 | Carol |
+
+**4. Read who follows Carol.**
+
+```cypher
+MATCH (follower:User)-[:FOLLOWS]->(:User {userId: 3})
+RETURN follower.userId AS userId, follower.name AS name
+ORDER BY userId;
+```
+
+| userId | name |
+| --- | --- |
+| 1 | Alice |
+| 2 | Bob |
+
+No duplicate reverse relationship was needed.
+
+**5. Find new people Alice could follow through exactly two hops.**
+
+```cypher
+MATCH (u:User {userId: 1})-[:FOLLOWS]->(:User)-[:FOLLOWS]->(candidate:User)
+WHERE candidate <> u
+  AND NOT EXISTS {
+      MATCH (u)-[:FOLLOWS]->(candidate)
+  }
+RETURN DISTINCT candidate.userId AS userId, candidate.name AS name
+ORDER BY userId;
+```
+
+**Result: no rows.** The two-hop path reaches Carol, whom Alice already follows. `candidate <> u` excludes Alice herself, and `NOT EXISTS` excludes direct follows. `DISTINCT` prevents multiple matching paths from producing repeated candidates.
+
+**6. Add Dan and Bob's follow in one statement.**
+
+```cypher
+MATCH (bob:User {userId: 2})
+CREATE (dan:User {userId: 4, name: 'Dan'}),
+       (bob)-[:FOLLOWS {since: date('2026-11-06')}]->(dan)
+RETURN dan.userId AS userId, dan.name AS name;
+```
+
+**Result:** userId `4`, name `Dan`. There are now **four users and four follows**.
+
+```mermaid
+flowchart TB
+    A(("1: Alice"))
+    B(("2: Bob"))
+    C(("3: Carol"))
+    D(("4: Dan"))
+
+    A -->|"FOLLOWS"| B
+    A -->|"FOLLOWS"| C
+    B -->|"FOLLOWS"| C
+    B -->|"FOLLOWS"| D
+
+    classDef added fill:#dbeafe,stroke:#2563eb,stroke-width:3px,color:#111
+    class D added
+    linkStyle 3 stroke:#2563eb,stroke-width:3px
+```
+
+**Blue highlights the new user and connection.** Alice can now reach Dan through `1 → 2 → 4`.
+
+**7. Repeat the recommendation query.**
+
+```cypher
+MATCH (u:User {userId: 1})-[:FOLLOWS]->(:User)-[:FOLLOWS]->(candidate:User)
+WHERE candidate <> u
+  AND NOT EXISTS {
+      MATCH (u)-[:FOLLOWS]->(candidate)
+  }
+RETURN DISTINCT candidate.userId AS userId, candidate.name AS name
+ORDER BY userId;
+```
+
+| userId | name |
+| --- | --- |
+| 4 | Dan |
+
+**8. Update Dan's name and read it back.**
+
+```cypher
+MATCH (u:User {userId: 4})
+SET u.name = 'Daniel';
+
+MATCH (u:User {userId: 4})
+RETURN u.userId AS userId, u.name AS name
+ORDER BY userId;
+```
+
+**Result:** userId `4`, name `Daniel`. The relationship remains connected to the same user; changing the name does not change `userId`.
+
+**9. Remove the added relationship, then the isolated user.**
+
+```cypher
+MATCH (:User {userId: 2})-[r:FOLLOWS]->(:User {userId: 4})
+DELETE r;
+
+MATCH (u:User {userId: 4})
+DELETE u;
+```
+
+Ordinary node `DELETE` requires its relationships to be removed first. A broader `DETACH DELETE` also removes attached relationships, but is unnecessary for this targeted example.
+
+**Verify the remaining users and connections:**
+
+```cypher
+MATCH (u:User)
+RETURN u.userId AS userId, u.name AS name
+ORDER BY userId;
+
+MATCH (source:User)-[:FOLLOWS]->(target:User)
+RETURN source.userId AS src, target.userId AS dst
+ORDER BY src, dst;
+```
+
+| userId | name |
+| --- | --- |
+| 1 | Alice |
+| 2 | Bob |
+| 3 | Carol |
+
+| src | dst |
+| --- | --- |
+| 1 | 2 |
+| 1 | 3 |
+| 2 | 3 |
+
+The graph is back to **three users and three follows**; the uniqueness constraint remains. Alice's two-hop recommendation query would again return no rows.
+
+**CREATE vs. MERGE:** `CREATE` adds the specified entities; repeating the initial statement here would violate the user-ID constraint rather than safely re-import the graph. `MERGE` matches or creates its specified pattern. Model identity and use suitable constraints; merging an entire pattern is not the same as independently matching every part, and concurrent writes still need the documented guarantees.
+
+See [MATCH](https://neo4j.com/docs/cypher-manual/5/clauses/match/), [EXISTS subqueries](https://neo4j.com/docs/cypher-manual/5/subqueries/existential/), [CREATE](https://neo4j.com/docs/cypher-manual/5/clauses/create/), [MERGE](https://neo4j.com/docs/cypher-manual/5/clauses/merge/), [SET](https://neo4j.com/docs/cypher-manual/5/clauses/set/), and [DELETE](https://neo4j.com/docs/cypher-manual/5/clauses/delete/).
+
+#### How Storage Supports Traversal
+
+A useful mental model separates **finding the starting node** from **following its connections**:
+
+1. An index can locate Alice by `User.userId = 1`; the planner chooses the actual access path.
+2. Relationship references or adjacency structures identify her connections.
+3. The query expands relevant relationships, reaches neighbors, and applies its conditions.
+
+```mermaid
+flowchart LR
+    I["Starting-node lookup<br/>User.userId = 1"]
+    A["Alice"]
+    R["Outgoing FOLLOWS<br/>References / adjacency"]
+    B["Bob"]
+    C["Carol"]
+
+    I --> A
+    A --> R
+    R --> B
+    R --> C
+```
+
+This is a **conceptual access diagram**, not Neo4j's physical file layout. References connect stored records; they do not mean every node is a separate server or every relationship is a network call. Disk pages and caches influence the actual I/O.
+
+Adding `2 → 4` changes the relevant adjacency information as follows; the other existing connections remain:
+
+| User | Outgoing before | Outgoing after | Incoming before | Incoming after |
+| --- | --- | --- | --- | --- |
+| 2: Bob | 3 | 3, 4 | 1 | 1 |
+| 4: Dan | Not present | None | Not present | 2 |
+
+An implementation must make the new node, relationship, and affected adjacency information consistent within the chosen transaction. It does not need to recreate every unrelated connection.
+
+Actual Neo4j storage varies by version, edition, and store format. Documented formats include record-oriented layouts and **block** formats that colocate related information. A doubly linked list can illustrate references, but is not a universal graph-storage rule. Use [Neo4j's store-format documentation](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/) for implementation-specific details rather than assuming one fixed byte layout.
+
+#### Transactions, History, Scaling, and Operations
+
+**Neo4j supports ACID transactions.** A statement that creates several nodes and relationships commits as a unit or rolls back; applications can also use explicit multi-statement transactions. Isolation, constraints, lock conflicts, retry behavior, and business rules still need deliberate design. ACID does not make separately committed statements one transaction. Cross-link [the ACID explanation](#transactions-and-acid) and [Neo4j transaction management](https://neo4j.com/docs/operations-manual/current/database-internals/transaction-management/).
+
+| Concern | What to remember |
+| --- | --- |
+| **History** | A `since` date or other temporal property does not automatically retain old node values or deleted relationships. Model historical facts/versions and retention explicitly |
+| **Clustering** | Qualify by version, edition, and topology. In the documented replicated-database model, one elected writer coordinates writes with other primary allocations |
+| **Read scaling** | Secondary database copies can serve reads and may lag. Supported causal-consistency mechanisms/bookmarks can preserve required ordering between related requests |
+| **Sharding / distribution** | Splitting a graph is different from replicating a database. Evaluate supported features and cross-partition traversal costs; adding replicas does not automatically shard one graph |
+| **Performance** | Test query depth, high-degree nodes, indexes, execution plans, cache behavior, concurrency, and failure capacity |
+| **Security** | Apply appropriate permissions and application authorization. Pass application values as parameters rather than constructing queries from untrusted text |
+| **Recovery** | Arrange monitoring, backups, retention, and tested restoration. Replication alone is not a backup |
+
+Clustering can improve availability and read throughput, but does not guarantee faster writes or every traversal. See [Neo4j clustering](https://neo4j.com/docs/operations-manual/current/clustering/introduction/), [distributed consistency](Distributed-System-Attributes.md#consistency), and [replication and recovery distinctions](#replication-models-and-replica-placement).
+
+#### When to Choose Neo4j
+
+| Requirement | What to evaluate |
+| --- | --- |
+| **Repeated multi-hop operational relationship queries** | A graph model and Cypher patterns can directly express the required paths |
+| **Simple relationships and ordinary joins already handled by SQL** | An existing relational database may be sufficient; another engine adds synchronization and operational work |
+| **Direct retrieval by one identifier** | Evaluate a suitable key-value or relational lookup rather than assuming a graph is needed |
+| **Large historical scans and reporting aggregates** | Evaluate an analytical SQL engine or warehouse |
+| **Keyword relevance / full-text search** | Evaluate the required search capability; following graph edges alone does not supply text relevance |
+
+The existing [banking](#worked-example-banking-platform-with-an-ai-assistant) and [delivery-platform](#worked-example-global-autonomous-delivery-platform) examples use graphs to explore customer–device–account or order connections. A shared device is a reason to investigate, not proof of fraud. If the graph is a derived view, define its source, update lag, deletion handling, access controls, and recovery.
+
+Use [the database-selection checklist](#database-selection-checklist) and [data-pipeline notes](Data-Engineering-for-Solution-Architecture.md) to decide whether the relationship-query benefit justifies another store.
+
+> **Use a graph when relationships and paths are central to the queries. Find the starting entities, follow the relevant connections, and control how far the query expands.**
 
 ## Object Storage and Amazon S3
 
@@ -3371,7 +3746,7 @@ Databases organize application information; DBMSs supply operations and configur
 
 Transactions, constraints, indexes, partitioning, and recovery mechanisms must be selected for the actual workload. Relational systems can scale beyond one node and store semi-structured data; NoSQL systems can provide strong consistency and transactions within documented boundaries. Neither category removes the need for modeling, compatibility planning, access control, and tested recovery.
 
-The [column-family section](#column-family-databases) connects R17's CQL queries to Cassandra's partition keys, storage, replication, and consistency. The [HBase section](#apache-hbase) follows the same readings through ordered row keys, retained cell versions, region discovery, and storage/recovery paths. The remaining placeholders reserve space for graph databases and Neo4j.
+The [column-family section](#column-family-databases) connects R17's CQL queries to Cassandra's partition keys, storage, replication, and consistency. The [HBase section](#apache-hbase) follows the same readings through ordered row keys, retained cell versions, region discovery, and storage/recovery paths. The [graph section](#graph-databases) compares relationship modeling with SQL, then uses [Neo4j](#neo4j) to follow connections, generate candidates, and explain transactions and storage trade-offs.
 
 The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
 
@@ -3482,6 +3857,17 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [ClickHouse: Access Control and RBAC](https://clickhouse.com/docs/concepts/features/security/access-rights)
 - [ClickHouse: Backup and Restore](https://clickhouse.com/docs/concepts/features/backup-restore/overview)
 - [Neo4j: Graph Database Concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/)
+- [W3C: RDF Concepts and Abstract Syntax](https://www.w3.org/TR/rdf11-concepts/)
+- [Neo4j 5 Cypher: MATCH](https://neo4j.com/docs/cypher-manual/5/clauses/match/)
+- [Neo4j 5 Cypher: EXISTS Subqueries](https://neo4j.com/docs/cypher-manual/5/subqueries/existential/)
+- [Neo4j 5 Cypher: CREATE](https://neo4j.com/docs/cypher-manual/5/clauses/create/)
+- [Neo4j 5 Cypher: MERGE](https://neo4j.com/docs/cypher-manual/5/clauses/merge/)
+- [Neo4j 5 Cypher: SET](https://neo4j.com/docs/cypher-manual/5/clauses/set/)
+- [Neo4j 5 Cypher: DELETE](https://neo4j.com/docs/cypher-manual/5/clauses/delete/)
+- [Neo4j: Creating Uniqueness, Existence, and Other Constraints](https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/)
+- [Neo4j: Store Formats and Storage Layouts](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/)
+- [Neo4j: Database Transaction Management](https://neo4j.com/docs/operations-manual/current/database-internals/transaction-management/)
+- [Neo4j: Clustering, Replication, and Causal Consistency](https://neo4j.com/docs/operations-manual/current/clustering/introduction/)
 - [Spanner: Schemas and Data Distribution](https://docs.cloud.google.com/spanner/docs/schema-and-data-model)
 - [Greenplum Project Repository — Archived Historical Material](https://github.com/greenplum-db/gpdb-archive)
 - [Greenplum Architecture — Archived Historical Documentation](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md)
