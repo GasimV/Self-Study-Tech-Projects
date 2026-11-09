@@ -136,6 +136,16 @@
     - [How Storage Supports Traversal](#how-storage-supports-traversal)
     - [Transactions, History, Scaling, and Operations](#transactions-history-scaling-and-operations)
     - [When to Choose Neo4j](#when-to-choose-neo4j)
+- [ClickHouse](#clickhouse)
+  - [Overview: What ClickHouse Is For](#overview-what-clickhouse-is-for)
+  - [Column-Oriented Storage and Analytical Execution](#column-oriented-storage-and-analytical-execution)
+  - [MergeTree: Parts, Sorting, Indexes, and Partitions](#mergetree-parts-sorting-indexes-and-partitions)
+  - [Worked SQL Example: Robot Telemetry](#worked-sql-example-robot-telemetry)
+    - [Create and Insert the Starting Readings](#create-and-insert-the-starting-readings)
+    - [Query a History and Calculate Aggregates](#query-a-history-and-calculate-aggregates)
+    - [Add a Reading and Inspect Index Use](#add-a-reading-and-inspect-index-use)
+  - [Ingestion, Materialized Views, and Data Correctness](#ingestion-materialized-views-and-data-correctness)
+  - [Scaling, Changes, Reliability, and Selection](#scaling-changes-reliability-and-selection)
 - [Object Storage and Amazon S3](#object-storage-and-amazon-s3)
   - [What Is Object Storage?](#what-is-object-storage)
   - [What Is Typically Stored There?](#what-is-typically-stored-there)
@@ -404,7 +414,7 @@ Financial reporting and model preparation are different workloads from processin
 
 ##### Greenplum vs. ClickHouse
 
-**ClickHouse is a column-oriented SQL analytical DBMS** used for OLAP queries; see its [official overview](https://clickhouse.com/docs/get-started/about/intro). Its workloads overlap with Greenplum's. The following comparison identifies evaluation questions rather than declaring a universal winner.
+**[ClickHouse](#clickhouse) is a column-oriented SQL analytical DBMS** used for OLAP queries; see its [official overview](https://clickhouse.com/docs/get-started/about/intro). Its workloads overlap with Greenplum's. The following comparison identifies evaluation questions rather than declaring a universal winner.
 
 Greenplum references here include the **archived historical documentation** cited above. ClickHouse references describe evolving documented capabilities. Validate the exact release, table engine, settings, and deployment when applying the comparison.
 
@@ -442,7 +452,7 @@ Both are evaluation scenarios, not guaranteed product winners. Check representat
 | --- | --- | --- |
 | **PostgreSQL** | An application database with frequent record changes and multi-step transactions | Process orders, update inventory, and transfer account balances |
 | **Greenplum** | A large analytical warehouse combining related datasets through complex SQL and joins | Analyze yearly profit using orders, customers, products, and refunds |
-| **ClickHouse** | Frequently refreshed analytical queries over large event datasets | Show website clicks, application errors, or sensor metrics (IoT, robotics, etc.) on dashboards |
+| **[ClickHouse](#clickhouse)** | Frequently refreshed analytical queries over large event datasets | Show website clicks, application errors, or sensor metrics (IoT, robotics, etc.) on dashboards |
 
 **Start with PostgreSQL when it meets your operational and reporting requirements.** Evaluate specialized analytical systems when the workload justifies them.
 
@@ -891,7 +901,7 @@ Compare the existing [horizontal-scaling explanation](#relational-and-nosql-trad
 | **Time-series** | Timestamped ingestion, time-window queries, and retention rules | Calculate hourly temperature and CPU-usage trends from a robot fleet | InfluxDB, TimescaleDB, OpenTSDB |
 | **Search** | Keyword matching, filters, and relevance ranking | Search product descriptions or application logs for matching terms | Elasticsearch, OpenSearch, Apache Solr |
 | **Vector** | Similarity retrieval over embeddings, with appropriate metadata filters | Retrieve approved documents related to an AI assistant's question | Qdrant, Milvus, Weaviate, Pinecone, PostgreSQL + pgvector |
-| **Analytical SQL / OLAP, often columnar** | Larger scans and aggregations over historical data | Calculate revenue by country across a billion historical sales records | ClickHouse, DuckDB, BigQuery, Snowflake |
+| **Analytical SQL / OLAP, often columnar** | Larger scans and aggregations over historical data | Calculate revenue by country across a billion historical sales records | [ClickHouse](#clickhouse), DuckDB, BigQuery, Snowflake |
 | **Geospatial** | Spatial indexes and geographic predicates such as distance or containment | Find available drivers within five kilometres of a customer | PostgreSQL + PostGIS, MongoDB geospatial capabilities |
 | **Event store** | Retain ordered business events and replay them using application rules | Reconstruct an order from its created, paid, and dispatched events | KurrentDB (formerly EventStoreDB) |
 | **Tamper-evident history / ledger** | Verify recorded history against cryptographic evidence and retained trusted state | Check whether an audit-history record has been altered | immudb |
@@ -918,7 +928,7 @@ For existing worked comparisons, see [MongoDB document modeling](#mongodb-docume
 | **Optional keyword search** | Elasticsearch | Search approved documents or permitted operational records by terms and filters |
 | **Optional semantic retrieval** | Qdrant **or** PostgreSQL + pgvector | Find relevant approved knowledge for an AI answer |
 | **Optional relationship analysis** | [Neo4j](#neo4j) | Explore connections during fraud review; connections alone do not prove fraud |
-| **Optional analytical reporting** | ClickHouse | Run historical aggregations without placing every report on the operational database |
+| **Optional analytical reporting** | [ClickHouse](#clickhouse) | Run historical aggregations without placing every report on the operational database |
 
 ```mermaid
 flowchart TB
@@ -986,7 +996,7 @@ Imagine a service where customers order goods, warehouses prepare parcels, robot
 | **Time-series** | Monitor battery and temperature trends across the fleet | **InfluxDB or TimescaleDB:** time-window queries and retention suited to monitoring |
 | **Search** | Search free-text incident reports using terms, filters, and relevance | **Elasticsearch:** evaluate richer text retrieval; an exact lookup of D4821 alone does not justify another search engine |
 | **Vector** | Retrieve maintenance-manual passages related to an operator's question about R17 | **Qdrant or PostgreSQL + pgvector:** similarity retrieval over approved, access-controlled knowledge |
-| **Analytical SQL / OLAP** | Aggregate delivery cost, delays, and revenue across historical orders | **ClickHouse:** evaluate larger analytical scans without placing every report on the live order database |
+| **Analytical SQL / OLAP** | Aggregate delivery cost, delays, and revenue across historical orders | **[ClickHouse](#clickhouse):** evaluate larger analytical scans without placing every report on the live order database |
 | **Geospatial** | Find nearby available robots and test whether an address lies inside a delivery zone | **PostgreSQL + PostGIS:** spatial predicates and indexes; robot assignment still needs a valid reservation |
 | **Event store** | Reconstruct D4821's lifecycle from created, reserved, dispatched, and delivered events | **KurrentDB:** an option when adopting event sourcing; ordinary SQL state/history may be enough instead |
 | **Tamper-evident history / ledger** | Verify recorded delivery confirmations and selected audit history against retained trusted evidence | **immudb:** detect inconsistent history under its verification assumptions; it cannot prove a parcel physically arrived |
@@ -1075,7 +1085,7 @@ Write down five things:
 | Justification | Atomic account transfer | Historical analytical reporting |
 | --- | --- | --- |
 | **Requirement** | Debit and credit commit together; concurrent transfers preserve defined account rules | Aggregate historical transactions by country/month without unacceptable impact on live requests |
-| **Candidate** | PostgreSQL, with isolation, constraints, read routing, and recovery chosen for the workload | ClickHouse, compared against the existing PostgreSQL solution and the reporting requirements |
+| **Candidate** | PostgreSQL, with isolation, constraints, read routing, and recovery chosen for the workload | [ClickHouse](#clickhouse), compared against the existing PostgreSQL solution and the reporting requirements |
 | **Why it fits** | Multi-statement transactions, relational constraints, and SQL support the modeled operations | Column-oriented analytical execution can suit larger scans and aggregations |
 | **Trade-off** | Write capacity, replication/failover, transaction contention, and operational work still need design | A separate analytical copy adds ingestion lag, synchronization, storage, and maintenance |
 | **Evidence needed** | Realistic transfers under concurrency; latency targets; rollback/retry behavior; failover; tested restore | Representative queries and concurrent ingestion; latency/freshness targets; reconciliation; failed-pipeline recovery |
@@ -3898,6 +3908,253 @@ Use [the database-selection checklist](#database-selection-checklist) and [data-
 
 > **Use a graph when relationships and paths are central to the queries. Find the starting entities, follow the relevant connections, and control how far the query expands.**
 
+## ClickHouse
+
+### Overview: What ClickHouse Is For
+
+**ClickHouse is a column-oriented SQL database management system for online analytical processing (OLAP).** It is useful when a query must summarize many readings, events, or business records. It can run on one server; distributing data across servers is a separate design choice. See the [official introduction](https://clickhouse.com/docs/get-started/about/intro).
+
+Consider the same robot telemetry used in the [Cassandra](#worked-cql-example-robot-telemetry) and [HBase](#worked-hbase-shell-example-robot-telemetry) examples:
+
+| Requirement | Question |
+| --- | --- |
+| **Operational lookup** | What was R17's particular reading, or its bounded recent history? |
+| **Analytical query** | Across robots and a time window, how many readings arrived, what was the average temperature, and what was the minimum battery? |
+
+These workloads overlap: an analytical database can retrieve individual records, and an operational database can calculate aggregates. Choose around the important queries, concurrency, freshness, and guarantees. The [PostgreSQL / Greenplum / ClickHouse selection table](#quick-selection-postgresql-greenplum-or-clickhouse) gives the broader context.
+
+### Column-Oriented Storage and Analytical Execution
+
+Start with three readings, shown as complete rows:
+
+| Robot | Observed at, UTC | Sample | Battery | Temperature |
+| --- | --- | --- | --- | --- |
+| R17 | 2026-11-06 10:00 | 1 | 80 | 22.5 |
+| R17 | 2026-11-06 10:01 | 2 | 79 | 23.0 |
+| R18 | 2026-11-06 10:00 | 1 | 90 | 21.0 |
+
+A simplified storage comparison shows the same values grouped differently:
+
+| Row-oriented view: values grouped by record | Column-oriented view: values grouped by field |
+| --- | --- |
+| R17, 10:00, 1, 80, 22.5<br/>R17, 10:01, 2, 79, 23.0<br/>R18, 10:00, 1, 90, 21.0 | Robot: R17, R17, R18<br/>Time: 10:00, 10:01, 10:00<br/>Sample: 1, 2, 1<br/>Battery: 80, 79, 90<br/>Temperature: 22.5, 23.0, 21.0 |
+
+Times are abbreviated in this comparison; the date is unchanged.
+
+To calculate an average temperature, a column-oriented engine can read temperature values without reconstructing every complete record. Filtering by time and grouping by robot also require the time and robot columns. Similar values often compress well, while batch/vectorized execution processes groups of values with less per-value overhead. Parallel work can use multiple CPU cores.
+
+Sorting, indexes, pruning, and caches can reduce unnecessary work further. A narrow projection does not guarantee the smallest possible total I/O: filters, storage blocks, data distribution, and the execution plan still matter. This is a storage/execution mental model, not an exact file layout. See [ClickHouse's execution explanation](https://clickhouse.com/docs/get-started/about/why-clickhouse-is-so-fast).
+
+**Column-oriented storage is different from the column-family model.** Compare the existing [wide-column versus analytical columnar explanation](#wide-column-vs-analytical-columnar-storage); Cassandra/HBase terminology does not describe this analytical column-scanning layout.
+
+### MergeTree: Parts, Sorting, Indexes, and Partitions
+
+**MergeTree** is the table-engine family used in this example. It stores incoming data in parts and performs background merges.
+
+| Concept | Meaning |
+| --- | --- |
+| **Table engine** | Controls how a table stores and manages data |
+| **Sorting key: table `ORDER BY`** | Organizes rows within each stored part |
+| **Primary index** | Sparse metadata that helps identify granules that may match a query |
+| **Granule** | A group of rows considered during indexed reads; the index does not have one entry per row |
+| **Partition key: `PARTITION BY`** | Groups data for management and partition-level pruning |
+| **Data part** | An immutable stored portion created during ingestion; one part can contain multiple files |
+| **Background merge** | Combines eligible parts within the same partition into a replacement part |
+
+In this example, the sorting key also defines the primary index because no separate `PRIMARY KEY` is declared. **A MergeTree primary key does not enforce unique rows** like a PostgreSQL primary-key constraint; see [ClickHouse's primary-key comparison](https://clickhouse.com/blog/postgres-to-clickhouse-data-modeling-tips).
+
+Partitioning, sorting, indexing, sharding, and replication solve different problems. Also, a table's sorting key is not a general result-order guarantee: use a query-level `ORDER BY` for ordered output. See the [MergeTree engine](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/mergetree) and [sparse primary-index explanation](https://clickhouse.com/docs/concepts/core-concepts/primary-indexes).
+
+The following diagram shows parts in one illustrative partition:
+
+```mermaid
+flowchart LR
+    B["Batched inserts"] --> P["Sorted parts<br/>P1, P2, P3"]
+    P --> M["Background merge<br/>P1 and P2"]
+    M --> N["Replacement part<br/>P12"]
+    P -.->|Before merge| A["Active parts<br/>for a query snapshot"]
+    N -.->|After publication| A
+    Q["SELECT query"] -->|Read| A
+```
+
+1. Batches create queryable parts under the synchronous-insert assumptions below; queries do not wait for a background merge.
+2. A merge can replace P1 and P2 with P12 while P3 remains separate.
+3. A query reads the appropriate active set, not both an old part and its replacement as duplicate rows.
+
+The diagram shows successive states, not all parts being active together. Merges do not promise that every partition eventually becomes one part or one file. Many tiny inserts can create too many parts and excessive merge work. See [data parts](https://clickhouse.com/docs/concepts/core-concepts/parts) and [part merges](https://clickhouse.com/docs/concepts/core-concepts/merges).
+
+### Worked SQL Example: Robot Telemetry
+
+This independent example uses an initially absent table, `robot_readings_clickhouse`, in an existing database. Assume one node, sufficient permissions, successful sequential **synchronous inserts**, and no concurrent writers. The SQL uses established MergeTree syntax checked against the linked documentation; it does not describe every ClickHouse Cloud storage architecture.
+
+#### Create and Insert the Starting Readings
+
+```sql
+CREATE TABLE robot_readings_clickhouse
+(
+    robot_id String,
+    observed_at DateTime64(3, 'UTC'),
+    sample_no UInt32,
+    battery_percent UInt8,
+    temperature_c Float64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(observed_at)
+ORDER BY (robot_id, observed_at, sample_no);
+
+INSERT INTO robot_readings_clickhouse
+    (robot_id, observed_at, sample_no, battery_percent, temperature_c)
+VALUES
+    ('R17', '2026-11-06 10:00:00.000', 1, 80, 22.5),
+    ('R17', '2026-11-06 10:01:00.000', 2, 79, 23.0),
+    ('R18', '2026-11-06 10:00:00.000', 1, 90, 21.0);
+```
+
+`String` stores the robot identifier. `DateTime64(3, 'UTC')` gives millisecond precision and UTC interpretation/display. `UInt32` and `UInt8` are unsigned integer types; the battery type alone does not enforce a business range of 0–100. `Float64` is an approximate floating-point type suitable for this temperature illustration. See [DateTime64](https://clickhouse.com/docs/reference/data-types/datetime64).
+
+Monthly partitions group these readings into November 2026. This is a management choice, not a required partition size. The robot-first sorting key suits queries for one robot and a time interval; fleet-wide time queries have a different access pattern. A separate partition for every robot is not implied or required.
+
+#### Query a History and Calculate Aggregates
+
+Retrieve R17's readings within the start-inclusive, end-exclusive interval **[10:00, 11:00) UTC**:
+
+```sql
+SELECT robot_id, observed_at, sample_no, battery_percent, temperature_c
+FROM robot_readings_clickhouse
+WHERE robot_id = 'R17'
+  AND observed_at >= toDateTime64('2026-11-06 10:00:00', 3, 'UTC')
+  AND observed_at <  toDateTime64('2026-11-06 11:00:00', 3, 'UTC')
+ORDER BY observed_at, sample_no;
+```
+
+The logical result contains R17's sample 1 at 10:00, then sample 2 at 10:01, with the original values shown above.
+
+Now summarize all robots in the same hour:
+
+```sql
+SELECT
+    robot_id,
+    count() AS reading_count,
+    round(avg(temperature_c), 2) AS avg_temperature_c,
+    min(battery_percent) AS min_battery_percent
+FROM robot_readings_clickhouse
+WHERE observed_at >= toDateTime64('2026-11-06 10:00:00', 3, 'UTC')
+  AND observed_at <  toDateTime64('2026-11-06 11:00:00', 3, 'UTC')
+GROUP BY robot_id
+ORDER BY robot_id;
+```
+
+| Robot | Reading count | Average temperature, rounded | Minimum battery |
+| --- | --- | --- | --- |
+| R17 | 2 | 22.75 | 79 |
+| R18 | 1 | 21.00 | 90 |
+
+#### Add a Reading and Inspect Index Use
+
+Append R17's next reading:
+
+```sql
+INSERT INTO robot_readings_clickhouse
+    (robot_id, observed_at, sample_no, battery_percent, temperature_c)
+VALUES
+    ('R17', '2026-11-06 10:02:00.000', 3, 78, 24.5);
+```
+
+Repeat the aggregate query:
+
+```sql
+SELECT
+    robot_id,
+    count() AS reading_count,
+    round(avg(temperature_c), 2) AS avg_temperature_c,
+    min(battery_percent) AS min_battery_percent
+FROM robot_readings_clickhouse
+WHERE observed_at >= toDateTime64('2026-11-06 10:00:00', 3, 'UTC')
+  AND observed_at <  toDateTime64('2026-11-06 11:00:00', 3, 'UTC')
+GROUP BY robot_id
+ORDER BY robot_id;
+```
+
+| Robot | Reading count | Average temperature, rounded | Minimum battery |
+| --- | --- | --- | --- |
+| R17 | 3 | 23.33 | 78 |
+| R18 | 1 | 21.00 | 90 |
+
+R17's average is `(22.5 + 23.0 + 24.5) / 3`, rounded to 23.33. Display formatting can differ: a client may show 21 rather than 21.00.
+
+**Event identity still needs a policy.** Plain MergeTree does not enforce uniqueness of `(robot_id, observed_at, sample_no)`. Repeating an event insert can create another counted row; background merges do not automatically remove it. Design retries and deduplication deliberately, checking any engine-specific or configured insert-deduplication guarantees.
+
+Inspect how the bounded query can use indexes:
+
+```sql
+EXPLAIN indexes = 1
+SELECT robot_id, observed_at, sample_no, battery_percent, temperature_c
+FROM robot_readings_clickhouse
+WHERE robot_id = 'R17'
+  AND observed_at >= toDateTime64('2026-11-06 10:00:00', 3, 'UTC')
+  AND observed_at <  toDateTime64('2026-11-06 11:00:00', 3, 'UTC')
+ORDER BY observed_at, sample_no;
+```
+
+[EXPLAIN's index details](https://clickhouse.com/docs/reference/statements/explain) report filtering of parts and granules. A sparse index narrows candidate ranges; it does not promise one direct lookup per event. This tiny dataset demonstrates syntax, not a particular plan, pruning ratio, or speed.
+
+### Ingestion, Materialized Views, and Data Correctness
+
+Batching reduces per-insert overhead and part creation, but waiting for a batch can delay visibility. Choose an acceptable freshness/overhead balance.
+
+**Synchronous inserts** wait for their insert processing to complete. **Asynchronous inserts** buffer data before flushing it into queryable storage. With `wait_for_async_insert = 1`, acknowledgment waits for a successful flush; with `0`, acknowledgment can precede the flush, so subsequent failure may not be reported to that client. These settings change what an acknowledgment means; buffering is not immediate query visibility. See [asynchronous inserts](https://clickhouse.com/docs/concepts/features/operations/insert/asyncinserts).
+
+Precomputed results also need an explicit update model:
+
+| Approach | When work happens | What to remember |
+| --- | --- | --- |
+| **ClickHouse incremental materialized view** | Processes newly inserted source blocks into a target | Design the target to combine partial results correctly |
+| **ClickHouse refreshable materialized view** | Periodically reruns a query over its input | Normally replaces the result; an optional append mode has different semantics |
+| **Earlier PostgreSQL example** | Stores a query result and refreshes it explicitly | Source changes remain absent until the chosen refresh occurs |
+
+An [incremental view](https://clickhouse.com/docs/concepts/features/materialized-views/incremental-materialized-view) is not a continually recomputed copy of the entire source. Later source updates or deletions do not automatically retract previous contributions. Existing historical rows need deliberate backfilling; historical events newly inserted through the source can trigger the view, so avoid counting them twice. For averages, combine suitable sums/counts or aggregate states rather than unweighted averages of batch averages.
+
+Compare [refreshable views](https://clickhouse.com/docs/concepts/features/materialized-views/refreshable-materialized-view) with the existing [PostgreSQL materialized-view example](#cached-results-vs-materialized-views). Define validation, freshness, backfill, and correction behavior before relying on a dashboard total.
+
+### Scaling, Changes, Reliability, and Selection
+
+Keep the operational source and its analytical view distinct:
+
+```mermaid
+flowchart LR
+    ROB["Robot telemetry"] --> ING["Telemetry ingestion"]
+    ING -->|Batches| CH["ClickHouse<br/>Analytical table"]
+    APP["Application"] -->|Business writes| DB["Authoritative database<br/>Orders and assignments"]
+    DB -.->|Changes| PIPE["CDC / ETL"]
+    PIPE -.->|Derived data| CH
+    DASH["Dashboard"] -->|SQL query| CH
+    CH -->|Aggregates| DASH
+```
+
+Telemetry supplies the readings; optional background CDC/ETL supplies operational context. The dashboard queries ClickHouse, while the application keeps authoritative orders and robot assignments in its operational database. CDC means **change data capture**; ETL means **extract, transform, load**, as explained in the [data-engineering notes](Data-Engineering-for-Solution-Architecture.md). These feeds can lag; the diagram does not create one transaction across databases or a real-time robot-control system.
+
+| Design concern | Simple rule |
+| --- | --- |
+| **Distribution** | Shards divide data; replicas retain copies. [Distributed query routing](https://clickhouse.com/docs/reference/engines/table-engines/special/distributed) is separate from this local MergeTree table |
+| **Replication and coordination** | Replicated engines use coordination such as ClickHouse Keeper; Keeper is not the telemetry store. Responsibilities differ in managed-cloud architectures |
+| **Joins and changes** | ClickHouse supports joins, updates, and deletes; their mechanisms, costs, and visibility differ. Use the existing [Greenplum/ClickHouse comparison](#greenplum-vs-clickhouse) for details |
+| **Transactions** | Check documented insert scope and restricted experimental transaction features; do not assume general cross-table/cross-shard transactions |
+| **Recovery and security** | Replication does not replace backups and tested restoration. Apply permissions, TLS, and appropriate access isolation |
+| **Operations** | Monitor ingestion lag, query latency, active parts/merge pressure, memory, storage, and failures |
+
+See the [replication documentation](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/replication), [transaction boundaries](https://clickhouse.com/docs/concepts/features/operations/insert/transactions), and existing [ACID explanation](#transactions-and-acid). Validate features against the actual release, engine, settings, and deployment.
+
+| Requirement | What to evaluate |
+| --- | --- |
+| **Telemetry/event dashboards** | ClickHouse when repeated filters and aggregations dominate; test freshness and query concurrency |
+| **Analytical reporting** | ClickHouse alongside [Greenplum/PostgreSQL alternatives](#quick-selection-postgresql-greenplum-or-clickhouse), using representative joins and scans |
+| **Frequent transactional record changes** | An operational relational database when business invariants require its transaction model; analytical copies can serve reporting |
+| **Specific readings or bounded keyed histories** | PostgreSQL, [Cassandra](#cassandra-keys-partitions-and-clustering), or [HBase](#apache-hbase), according to required access and guarantees; ClickHouse may also fit if the analytical workload dominates |
+
+Use the [database-selection checklist](#database-selection-checklist); no row guarantees a latency or capacity figure.
+
+> **ClickHouse organizes data for analytical scans and aggregations. Choose columns, sorting keys, partitions, and ingestion patterns around the queries—not merely the dataset size.**
+
 ## Object Storage and Amazon S3
 
 ### What Is Object Storage?
@@ -4239,6 +4496,8 @@ The [performance and access section](#query-performance-and-database-access) wor
 
 The [column-family section](#column-family-databases) connects R17's CQL queries to Cassandra's partition keys, storage, replication, and consistency. The [HBase section](#apache-hbase) follows the same readings through ordered row keys, retained cell versions, region discovery, and storage/recovery paths. The [graph section](#graph-databases) compares relationship modeling with SQL, then uses [Neo4j](#neo4j) to follow connections, generate candidates, and explain transactions and storage trade-offs.
 
+The [ClickHouse walkthrough](#clickhouse) reuses R17/R18 telemetry to explain column-oriented execution, MergeTree parts and indexes, bounded reads, and analytical aggregates. It separates ingestion visibility and materialized-view maintenance from operational database responsibilities.
+
 The [object-storage section](#object-storage-and-amazon-s3) explains named content, metadata, and S3 operations. Its product-image example separates file bytes from database records and shows why permissions, lifecycle, and cross-system recovery still need deliberate design.
 
 The [DynamoDB example](#amazon-dynamodb) connects keys, APIs, indexes, sized capacity units, and read guarantees. Its historical architecture discussion is separate from current documented service behavior.
@@ -4354,6 +4613,18 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Apache HBase 2.6: Write Durability Policies](https://hbase.apache.org/2.6/devapidocs/org/apache/hadoop/hbase/client/Durability.html)
 - [Apache HBase: Atomicity, Visibility, and Scan Guarantees](https://hbase.apache.org/acid-semantics/)
 - [ClickHouse: Column-Oriented Database Overview](https://clickhouse.com/docs/get-started/about/intro)
+- [ClickHouse: MergeTree Engine](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/mergetree)
+- [ClickHouse: Sparse Primary Indexes](https://clickhouse.com/docs/concepts/core-concepts/primary-indexes)
+- [ClickHouse: Table Parts](https://clickhouse.com/docs/concepts/core-concepts/parts)
+- [ClickHouse: Background Part Merges](https://clickhouse.com/docs/concepts/core-concepts/merges)
+- [ClickHouse: Columnar and Vectorized Execution](https://clickhouse.com/docs/get-started/about/why-clickhouse-is-so-fast)
+- [ClickHouse: DateTime64](https://clickhouse.com/docs/reference/data-types/datetime64)
+- [ClickHouse: EXPLAIN and Index Details](https://clickhouse.com/docs/reference/statements/explain)
+- [ClickHouse: Asynchronous Inserts and Acknowledgments](https://clickhouse.com/docs/concepts/features/operations/insert/asyncinserts)
+- [ClickHouse: Incremental Materialized Views](https://clickhouse.com/docs/concepts/features/materialized-views/incremental-materialized-view)
+- [ClickHouse: Refreshable Materialized Views](https://clickhouse.com/docs/concepts/features/materialized-views/refreshable-materialized-view)
+- [ClickHouse: Distributed Query Routing](https://clickhouse.com/docs/reference/engines/table-engines/special/distributed)
+- [ClickHouse: Replicated Table Engines](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/replication)
 - [Greenplum Transaction Snapshots — Historical Vendor Explanation](https://blogs.vmware.com/tanzu/improving-backup-performance-and-reliability-with-distributed-snapshots/)
 - [ClickHouse: SQL JOIN Support](https://clickhouse.com/docs/reference/statements/select/join)
 - [ClickHouse: Transactional Insert Guarantees and Experimental Transactions](https://clickhouse.com/docs/concepts/features/operations/insert/transactions)
