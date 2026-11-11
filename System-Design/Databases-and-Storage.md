@@ -133,6 +133,8 @@
   - [Traversal, Use Cases, and Trade-Offs](#traversal-use-cases-and-trade-offs)
   - [Neo4j](#neo4j)
     - [Worked Cypher Example: Following and Recommendations](#worked-cypher-example-following-and-recommendations)
+    - [E-commerce Recommendations: Collaborative Filtering](#e-commerce-recommendations-collaborative-filtering)
+    - [Investment Recommendations: Similar Portfolios](#investment-recommendations-similar-portfolios)
     - [How Storage Supports Traversal](#how-storage-supports-traversal)
     - [Transactions, History, Scaling, and Operations](#transactions-history-scaling-and-operations)
     - [When to Choose Neo4j](#when-to-choose-neo4j)
@@ -3660,7 +3662,7 @@ Separate two tasks:
 
 | Use case | Relationship question | Interpretation |
 | --- | --- | --- |
-| **Recommendations** | Who is connected through people I follow? | Generate candidates; ranking and eligibility are separate decisions |
+| **Recommendations** | Who is connected through people I follow, [shared purchases](#e-commerce-recommendations-collaborative-filtering), or [overlapping portfolios](#investment-recommendations-similar-portfolios)? | Generate candidates; ranking and eligibility are separate decisions |
 | **Fraud investigation** | Which customers share devices, accounts, or transaction connections? | Find investigation signals, not proof of fraud |
 | **Service dependencies** | Which applications depend on a failed service? | Follow modeled dependencies; missing or outdated links affect the answer |
 | **Knowledge graphs** | Which entities and claims connect this topic to another? | A stored connection does not prove a claim is true; provenance and verification matter |
@@ -3849,6 +3851,127 @@ The graph is back to **three users and three follows**; the uniqueness constrain
 **CREATE vs. MERGE:** `CREATE` adds the specified entities; repeating the initial statement here would violate the user-ID constraint rather than safely re-import the graph. `MERGE` matches or creates its specified pattern. Model identity and use suitable constraints; merging an entire pattern is not the same as independently matching every part, and concurrent writes still need the documented guarantees.
 
 See [MATCH](https://neo4j.com/docs/cypher-manual/5/clauses/match/), [EXISTS subqueries](https://neo4j.com/docs/cypher-manual/5/subqueries/existential/), [CREATE](https://neo4j.com/docs/cypher-manual/5/clauses/create/), [MERGE](https://neo4j.com/docs/cypher-manual/5/clauses/merge/), [SET](https://neo4j.com/docs/cypher-manual/5/clauses/set/), and [DELETE](https://neo4j.com/docs/cypher-manual/5/clauses/delete/).
+
+#### E-commerce Recommendations: Collaborative Filtering
+
+**Collaborative filtering uses overlapping behavior to discover candidates.** Here, Alice and Bob bought some of the same products:
+
+| Shopper | Application ID | Purchased products |
+| --- | --- | --- |
+| Alice | `SHOP-A` | Laptop, Headphones |
+| Bob | `SHOP-B` | Laptop, Headphones, Monitor |
+
+Assume the illustrated graph contains one `Shopper` per `shopperId` and one `Product` per `productId`, each with a `name` property. These identifiers and labels are independent of the earlier `User`/`FOLLOWS` example. The following query reads this illustrative dataset; it does not create it.
+
+```mermaid
+flowchart TB
+    A(("Alice<br/>SHOP-A"))
+    B(("Bob<br/>SHOP-B"))
+    L["Laptop<br/>P-LAPTOP"]
+    H["Headphones<br/>P-HEADPHONES"]
+    M["Monitor<br/>P-MONITOR"]
+
+    A -->|PURCHASED| L
+    A -->|PURCHASED| H
+    B -->|PURCHASED| L
+    B -->|PURCHASED| H
+    B -->|PURCHASED| M
+
+    classDef person fill:#dbeafe,stroke:#3b82f6,color:#111
+    classDef product fill:#f1f5f9,stroke:#94a3b8,color:#111
+    classDef candidate fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#111
+    class A,B person
+    class L,H product
+    class M candidate
+```
+
+**Green marks Monitor as the candidate for Alice.** All arrows record a shopper purchasing a product.
+
+1. Find products Alice purchased: Laptop and Headphones.
+2. Find other shoppers who purchased those products: Bob.
+3. Find additional products those shoppers purchased: Monitor.
+4. Exclude Alice's existing purchases and remove duplicate candidates.
+
+One matching path is **Alice → Laptop ← Bob → Monitor**. Following the incoming purchase relationship from Laptop reaches Bob; no duplicate reverse relationship is needed. Cypher supports these [directed relationship patterns](https://neo4j.com/docs/cypher-manual/5/clauses/match/).
+
+**Read-only Cypher query, using Neo4j 5-compatible syntax:**
+
+```cypher
+MATCH (alice:Shopper {shopperId: 'SHOP-A'})-[:PURCHASED]->(shared:Product)
+      <-[:PURCHASED]-(peer:Shopper)-[:PURCHASED]->(candidate:Product)
+WHERE peer <> alice
+  AND NOT EXISTS {
+      MATCH (alice)-[:PURCHASED]->(candidate)
+  }
+RETURN DISTINCT candidate.productId AS productId, candidate.name AS product
+ORDER BY productId;
+```
+
+| productId | product |
+| --- | --- |
+| P-MONITOR | Monitor |
+
+Both shared purchases lead through Bob to Monitor, producing two matching paths. `RETURN DISTINCT` returns Monitor **once**; two paths do not mean two different shoppers supported it. `NOT EXISTS` excludes products Alice already purchased.
+
+This generates a candidate, not a guarantee that Alice wants it. Ranking, availability, and eligibility remain separate decisions. The earlier [SQL comparison](#relational-modeling-vs-graph-modeling) also applies: relational queries can express these connections, and graph databases are not automatically faster.
+
+#### Investment Recommendations: Similar Portfolios
+
+The same pattern can generate **stocks to research** from overlapping portfolios. All companies and stock identifiers below are fictional.
+
+| Investor | Application ID | Current holdings |
+| --- | --- | --- |
+| Alice | `INV-A` | STOCK-A (Company A), STOCK-B (Company B) |
+| Bob | `INV-B` | STOCK-A (Company A), STOCK-B (Company B), STOCK-C (Company C) |
+
+Assume one `Investor` per `investorId` and one `Stock` per `stockId`, each with a `name` property. Here, `HOLDS` represents a current portfolio snapshot, not a historical purchase. These entities are separate from both the social-network and shopping examples.
+
+```mermaid
+flowchart TB
+    A(("Alice<br/>INV-A"))
+    B(("Bob<br/>INV-B"))
+    S1["STOCK-A<br/>Company A"]
+    S2["STOCK-B<br/>Company B"]
+    S3["STOCK-C<br/>Company C"]
+
+    A -->|HOLDS| S1
+    A -->|HOLDS| S2
+    B -->|HOLDS| S1
+    B -->|HOLDS| S2
+    B -->|HOLDS| S3
+
+    classDef person fill:#dbeafe,stroke:#3b82f6,color:#111
+    classDef stock fill:#f1f5f9,stroke:#94a3b8,color:#111
+    classDef candidate fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#111
+    class A,B person
+    class S1,S2 stock
+    class S3 candidate
+```
+
+Find Alice's holdings, reach another investor through shared stocks, follow that investor's other holdings, then exclude Alice's existing stocks and duplicate candidates. **Alice → STOCK-A ← Bob → STOCK-C** reaches Company C. Here, “similar portfolios” means overlapping holdings; the example does not compare portfolio weights or calculate a similarity score.
+
+**Read-only Cypher query:**
+
+```cypher
+MATCH (alice:Investor {investorId: 'INV-A'})-[:HOLDS]->(shared:Stock)
+      <-[:HOLDS]-(peer:Investor)-[:HOLDS]->(candidate:Stock)
+WHERE peer <> alice
+  AND NOT EXISTS {
+      MATCH (alice)-[:HOLDS]->(candidate)
+  }
+RETURN DISTINCT candidate.stockId AS stockId, candidate.name AS company
+ORDER BY stockId;
+```
+
+| stockId | company |
+| --- | --- |
+| STOCK-C | Company C |
+
+STOCK-C appears **once**, despite the two shared-holding paths. It is a research candidate, not a decision to buy.
+
+Shared holdings do not establish expected returns, diversification, or suitability. A fuller investment system must separately evaluate objectives, time horizon, risk tolerance, concentration, eligibility, and current information. See [Investor.gov's explanation of asset allocation and diversification](https://www.investor.gov/introduction-investing/getting-started/asset-allocation). Use only authorized portfolio data and keep the holdings snapshot sufficiently current.
+
+> **A graph finds connected candidates. Separate rules decide whether they are relevant, eligible, and suitable to recommend.**
 
 #### How Storage Supports Traversal
 
@@ -4653,6 +4776,7 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Neo4j: Store Formats and Storage Layouts](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/)
 - [Neo4j: Database Transaction Management](https://neo4j.com/docs/operations-manual/current/database-internals/transaction-management/)
 - [Neo4j: Clustering, Replication, and Causal Consistency](https://neo4j.com/docs/operations-manual/current/clustering/introduction/)
+- [Investor.gov: Asset Allocation, Risk Tolerance, and Diversification](https://www.investor.gov/introduction-investing/getting-started/asset-allocation)
 - [Spanner: Schemas and Data Distribution](https://docs.cloud.google.com/spanner/docs/schema-and-data-model)
 - [Greenplum Project Repository — Archived Historical Material](https://github.com/greenplum-db/gpdb-archive)
 - [Greenplum Architecture — Archived Historical Documentation](https://github.com/greenplum-db/gpdb-archive/blob/main/gpdb-doc/markdown/admin_guide/intro/arch_overview.html.md)
