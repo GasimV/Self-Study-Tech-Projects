@@ -130,6 +130,8 @@
   - [Graph Concepts and Terminology](#graph-concepts-and-terminology)
   - [Social-Network Example](#social-network-example)
   - [Relational Modeling vs. Graph Modeling](#relational-modeling-vs-graph-modeling)
+    - [One Edge Row and Two Indexes](#one-edge-row-and-two-indexes)
+    - [Optional Reverse Rows](#optional-reverse-rows)
   - [Traversal, Use Cases, and Trade-Offs](#traversal-use-cases-and-trade-offs)
   - [Neo4j](#neo4j)
     - [Worked Cypher Example: Following and Recommendations](#worked-cypher-example-following-and-recommendations)
@@ -138,6 +140,8 @@
     - [Fraud Investigation: Shared Device and Recipient](#fraud-investigation-shared-device-and-recipient)
     - [Network and Infrastructure: Failure Impact Analysis](#network-and-infrastructure-failure-impact-analysis)
     - [How Storage Supports Traversal](#how-storage-supports-traversal)
+      - [Illustrative Relationship Chains](#illustrative-relationship-chains)
+      - [Adding Node 4 and Relationship D](#adding-node-4-and-relationship-d)
     - [Transactions, History, Scaling, and Operations](#transactions-history-scaling-and-operations)
     - [When to Choose Neo4j](#when-to-choose-neo4j)
 - [ClickHouse](#clickhouse)
@@ -3620,6 +3624,8 @@ A relational database can represent exactly the same information.
 | 2 | Bob |
 | 3 | Carol |
 
+#### One Edge Row and Two Indexes
+
 **Follows**
 
 | src | dst |
@@ -3631,6 +3637,19 @@ A relational database can represent exactly the same information.
 Here, `Users.id` is a primary key. `Follows.src` and `Follows.dst` reference users, and a composite key `(src, dst)` can prevent duplicate follows.
 
 An index beginning with `src` supports finding whom Alice follows. An index beginning with `dst` supports finding who follows Carol. Both lookups use the same relationship rows; no inverse `followed_by` row is required.
+
+```mermaid
+flowchart LR
+    OUT["Whom does Alice follow?"] -->|"src = 1"| SI["Index beginning with src"]
+    IN["Who follows Carol?"] -->|"dst = 3"| DI["Index beginning with dst"]
+    SI --> ROWS["Same Follows rows<br/>(1,2), (1,3), (2,3)"]
+    DI --> ROWS
+```
+
+- **Outgoing from Alice:** match `src = 1`; the destinations are **2 Bob and 3 Carol**.
+- **Incoming to Carol:** match `dst = 3`; the sources are **1 Alice and 2 Bob**.
+
+Illustrative B-tree key orders are `(src, dst)` and `(dst, src)`. The composite primary key may already provide the first index. Indexes retain additional keys/references and require storage and write maintenance; they do not require duplicate application relationship rows. The diagram shows possible access paths, not a promised execution plan. See [PostgreSQL's multicolumn-index explanation](https://www.postgresql.org/docs/current/indexes-multicolumn.html).
 
 **SQL can express a two-hop recommendation using a self-join:**
 
@@ -3651,7 +3670,24 @@ ORDER BY user_id;
 
 Initially, this returns **no rows**: `1 → 2 → 3` reaches Carol, but Alice already follows her. After adding user 4 and `2 → 4`, the equivalent query can recommend user 4.
 
+#### Optional Reverse Rows
+
 Storing reverse relationships separately is an optional **denormalization** strategy, with extra writes and synchronization rules. It is not a requirement of relational modeling.
+
+The same three facts can instead be represented by six application rows:
+
+| src | dst | relationship |
+| --- | --- | --- |
+| 1 | 2 | follows |
+| 1 | 3 | follows |
+| 2 | 1 | followed_by |
+| 2 | 3 | follows |
+| 3 | 1 | followed_by |
+| 3 | 2 | followed_by |
+
+For example, `(1, 2, follows)` means **Alice follows Bob**; `(2, 1, followed_by)` means **Bob is followed by Alice**. These are two views of one fact, not two independent follows. Filter the relationship term when interpreting a row.
+
+The forward and reverse rows must stay consistent when a follow is added, changed, or removed. A transaction can keep the paired changes together. These are illustrative design choices, not the only possible relational schemas. Compare this logical representation with the [reference-chain storage illustration](#illustrative-relationship-chains).
 
 Graph modeling expresses the relationship pattern directly; relational modeling expresses it through tables and joins. Either can work. Query depth, indexes, data distribution, concurrency, and execution plans determine performance—not the label “graph” or “SQL” alone. Compare [normalization and indexes](#normalization-and-indexes).
 
@@ -4126,6 +4162,107 @@ flowchart LR
 
 This is a **conceptual access diagram**, not Neo4j's physical file layout. References connect stored records; they do not mean every node is a separate server or every relationship is a network call. Disk pages and caches influence the actual I/O.
 
+##### Illustrative Relationship Chains
+
+**Modeling describes the information; storage describes how an engine arranges records to access it.** The following is an **illustrative implementation, not Neo4j's exact current file format**.
+
+Return to the original social graph:
+
+| Relationship ID | Source | Destination | Meaning |
+| --- | --- | --- | --- |
+| A | 1 | 2 | Alice follows Bob |
+| B | 1 | 3 | Alice follows Carol |
+| C | 2 | 3 | Bob follows Carol |
+
+Here, `nid` is a symbolic node-record ID and `rid` is a symbolic relationship-record ID. The numbers match the application user IDs only to make the example easy to follow; they are not actual Neo4j internal IDs or physical addresses.
+
+Each node points to its first **incident relationship**—a relationship touching that node. For this teaching layout, the incident relationships form **NULL-terminated doubly linked chains**:
+
+```text
+Node 1 (Alice): A <-> B
+Node 2 (Bob):   A <-> C
+Node 3 (Carol): B <-> C
+```
+
+The first entry's previous reference and the last entry's next reference are `NULL`. There is no wraparound.
+
+**Node references**
+
+| nid | first_rid |
+| --- | --- |
+| 1 | A |
+| 2 | A |
+| 3 | B |
+
+**Relationship references**
+
+| rid | src | dst | src_prev_rid | src_next_rid | dst_prev_rid | dst_next_rid |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 1 | 2 | NULL | B | NULL | C |
+| B | 1 | 3 | A | NULL | NULL | C |
+| C | 2 | 3 | A | NULL | B | NULL |
+
+The four previous/next columns hold **relationship IDs**, not neighboring user IDs. When walking a node's chain, use the `src_*` references if that node is the relationship's source; use `dst_*` if it is the destination.
+
+A is stored **once**, but participates in the chains for both nodes 1 and 2. Its source-side references serve node 1; its destination-side references serve node 2. The tables are a readable description of internal references, not SQL tables the application must create.
+
+**Find whom Alice follows:**
+
+1. Locate node 1; its `first_rid` is A.
+2. Read A: its source is 1, so return destination 2.
+3. Follow A's `src_next_rid` to B; return destination 3.
+4. B's `src_next_rid` is `NULL`, so stop.
+
+For Bob, A is incoming: `dst = 2`. Skip it when asking whom Bob follows, but use A's `dst_next_rid` to reach C. C is outgoing from Bob and leads to Carol. Incident chains can therefore contain both incoming and outgoing relationships.
+
+##### Adding Node 4 and Relationship D
+
+Now add **4 Dan** and **D = 2 → 4**. In this illustration, append D to Bob's chain:
+
+```text
+Node 2 (Bob): A <-> C <-> D
+Node 4 (Dan): D
+```
+
+The required changes are:
+
+- Add node 4 with `first_rid = D`.
+- Change C's `src_next_rid` from `NULL` to D.
+- Add D with source 2, destination 4, and `src_prev_rid = C`. Its other previous/next references are `NULL`.
+- Keep node 1's and node 3's chains unchanged. Nodes 1–3 retain their first references; relationship records A and B do not change.
+
+**New/changed relationship records after addition**—these rows replace C and add D to the table above:
+
+| rid | src | dst | src_prev_rid | src_next_rid | dst_prev_rid | dst_next_rid |
+| --- | --- | --- | --- | --- | --- | --- |
+| C | 2 | 3 | A | D | B | NULL |
+| D | 2 | 4 | C | NULL | NULL | NULL |
+
+```mermaid
+flowchart TB
+    subgraph BEFORE["Before: Bob's incident chain"]
+        direction LR
+        NB["Node 2: Bob<br/>first_rid A"] -->|"First reference"| BA["A<br/>prev NULL"]
+        BA <--> BC["C<br/>next NULL"]
+    end
+    subgraph AFTER["After: add Dan and relationship D"]
+        direction LR
+        NA["Node 2: Bob<br/>first_rid A"] -->|"First reference"| AA["A<br/>prev NULL"]
+        AA <--> AC["C"]
+        AC <--> AD["D<br/>next NULL"]
+        N4["Node 4: Dan<br/>first_rid D"] -->|"First reference"| D4["D<br/>prev/next NULL"]
+    end
+
+    classDef changed fill:#fff3d6,stroke:#b69b58,stroke-width:3px,color:#111
+    classDef added fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#111
+    class AC changed
+    class AD,N4,D4 added
+```
+
+Double arrows show previous/next references within a node's chain, not `FOLLOWS` directions. **The two D boxes refer to the same stored relationship record**, shown once in each endpoint's chain. Green marks additions; amber marks C's changed source-side next reference. Nodes 1 and 3 are omitted from the diagram because their chains do not change.
+
+Bob's outgoing destinations change from **[3]** to **[3, 4]**. The following existing adjacency comparison expresses the same change at the application level.
+
 Adding `2 → 4` changes the relevant adjacency information as follows; the other existing connections remain:
 
 | User | Outgoing before | Outgoing after | Incoming before | Incoming after |
@@ -4134,6 +4271,8 @@ Adding `2 → 4` changes the relevant adjacency information as follows; the othe
 | 4: Dan | Not present | None | Not present | 2 |
 
 An implementation must make the new node, relationship, and affected adjacency information consistent within the chosen transaction. It does not need to recreate every unrelated connection.
+
+Stored references can reduce repeated lookups during traversal; relational indexes can also locate relationships efficiently. Neither guarantees faster complete queries. Use [When to Choose Neo4j](#when-to-choose-neo4j) to connect these mechanics to workload and operating requirements.
 
 Actual Neo4j storage varies by version, edition, and store format. Documented formats include record-oriented layouts and **block** formats that colocate related information. A doubly linked list can illustrate references, but is not a universal graph-storage rule. Use [Neo4j's store-format documentation](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/) for implementation-specific details rather than assuming one fixed byte layout.
 
