@@ -4229,9 +4229,9 @@ Imagine asking: **“If this switch fails, which servers, services, and applicat
 
 Both can return the answer.
 
-**Keep PostgreSQL** when its queries are clear and meet your requirements.
+> **Keep PostgreSQL** when its queries are clear and meet your requirements.
 
-**Consider Neo4j** when exploring many connected entities is a frequent, central task, and simpler queries or measured performance justify using it.
+> **Consider Neo4j** when exploring many connected entities is a frequent, central task, and simpler queries or measured performance justify using it.
 
 **Neo4j is not automatically faster.**
 
