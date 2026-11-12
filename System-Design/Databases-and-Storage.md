@@ -135,6 +135,8 @@
     - [Worked Cypher Example: Following and Recommendations](#worked-cypher-example-following-and-recommendations)
     - [E-commerce Recommendations: Collaborative Filtering](#e-commerce-recommendations-collaborative-filtering)
     - [Investment Recommendations: Similar Portfolios](#investment-recommendations-similar-portfolios)
+    - [Fraud Investigation: Shared Device and Recipient](#fraud-investigation-shared-device-and-recipient)
+    - [Network and Infrastructure: Failure Impact Analysis](#network-and-infrastructure-failure-impact-analysis)
     - [How Storage Supports Traversal](#how-storage-supports-traversal)
     - [Transactions, History, Scaling, and Operations](#transactions-history-scaling-and-operations)
     - [When to Choose Neo4j](#when-to-choose-neo4j)
@@ -3663,8 +3665,8 @@ Separate two tasks:
 | Use case | Relationship question | Interpretation |
 | --- | --- | --- |
 | **Recommendations** | Who is connected through people I follow, [shared purchases](#e-commerce-recommendations-collaborative-filtering), or [overlapping portfolios](#investment-recommendations-similar-portfolios)? | Generate candidates; ranking and eligibility are separate decisions |
-| **Fraud investigation** | Which customers share devices, accounts, or transaction connections? | Find investigation signals, not proof of fraud |
-| **Service dependencies** | Which applications depend on a failed service? | Follow modeled dependencies; missing or outdated links affect the answer |
+| **[Fraud investigation](#fraud-investigation-shared-device-and-recipient)** | Which customers share devices, accounts, or transaction connections? | Find investigation signals, not proof of fraud |
+| **[Service dependencies](#network-and-infrastructure-failure-impact-analysis)** | Which applications depend on a failed service? | Follow modeled dependencies; missing or outdated links affect the answer |
 | **Knowledge graphs** | Which entities and claims connect this topic to another? | A stored connection does not prove a claim is true; provenance and verification matter |
 
 A **high-degree node** has many connections. Expanding several hops from such nodes can produce many candidate paths, including several paths to the same result. Bound traversal depth, choose types and directions deliberately, filter appropriately, and control returned results.
@@ -3972,6 +3974,133 @@ STOCK-C appears **once**, despite the two shared-holding paths. It is a research
 Shared holdings do not establish expected returns, diversification, or suitability. A fuller investment system must separately evaluate objectives, time horizon, risk tolerance, concentration, eligibility, and current information. See [Investor.gov's explanation of asset allocation and diversification](https://www.investor.gov/introduction-investing/getting-started/asset-allocation). Use only authorized portfolio data and keep the holdings snapshot sufficiently current.
 
 > **A graph finds connected candidates. Separate rules decide whether they are relevant, eligible, and suitable to recommend.**
+
+#### Fraud Investigation: Shared Device and Recipient
+
+**A graph can connect activity that looks separate when examined one account at a time.** Consider this fictional dataset on **6 November 2026**, with all times in UTC:
+
+| Account | Login device | Login time | Transfer recipient | Transfer time |
+| --- | --- | --- | --- | --- |
+| A1 | D1 | 10:00 | B1 | 10:03 |
+| A2 | D1 | 10:01 | B1 | 10:05 |
+| A3 | D1 | 10:02 | B1 | 10:07 |
+
+Assume one `Account` per `accountId` and one `Device` per `deviceId`. B1 is also an `Account`. Each `USED_DEVICE` relationship represents a recorded login, and each `TRANSFERRED_TO` relationship represents a transfer; both have an `at` property stored as a Neo4j zoned datetime, not a text string. These illustrative entities are independent of the earlier examples.
+
+```mermaid
+flowchart LR
+    A1["Account A1"]
+    A2["Account A2"]
+    A3["Account A3"]
+    D["Device D1"]
+    B["Recipient account B1"]
+
+    A1 -->|USED_DEVICE| D
+    A2 -->|USED_DEVICE| D
+    A3 -->|USED_DEVICE| D
+    A1 -->|TRANSFERRED_TO| B
+    A2 -->|TRANSFERRED_TO| B
+    A3 -->|TRANSFERRED_TO| B
+
+    classDef account fill:#dbeafe,stroke:#3b82f6,color:#111
+    classDef shared fill:#fff3d6,stroke:#b69b58,stroke-width:3px,color:#111
+    class A1,A2,A3 account
+    class D,B shared
+```
+
+**Question:** Which groups of at least three distinct accounts used the same device and transferred to the same recipient during **[10:00, 10:10) UTC**?
+
+1. Find recorded device use within the window.
+2. Match those accounts' transfers within the same window.
+3. Group by shared device and recipient.
+4. Count distinct accounts, then return groups meeting the illustrative threshold.
+
+**Read-only Cypher query, using Neo4j 5-compatible syntax:**
+
+```cypher
+WITH datetime('2026-11-06T10:00:00Z') AS windowStart,
+     datetime('2026-11-06T10:10:00Z') AS windowEnd
+MATCH (account:Account)-[login:USED_DEVICE]->(device:Device),
+      (account)-[transfer:TRANSFERRED_TO]->(recipient:Account)
+WHERE login.at >= windowStart AND login.at < windowEnd
+  AND transfer.at >= windowStart AND transfer.at < windowEnd
+WITH DISTINCT device.deviceId AS deviceId,
+              recipient.accountId AS recipientId,
+              account.accountId AS accountId
+ORDER BY accountId
+WITH deviceId, recipientId, collect(accountId) AS accountIds
+WHERE size(accountIds) >= 3
+RETURN deviceId, recipientId, accountIds
+ORDER BY deviceId, recipientId;
+```
+
+| deviceId | recipientId | accountIds |
+| --- | --- | --- |
+| D1 | B1 | [A1, A2, A3] |
+
+The start is included and 10:10 is excluded. `DISTINCT` prevents repeated logins or transfers from counting one account several times. Sorting before `collect` makes the displayed account list deterministic. See [WITH and aggregation](https://neo4j.com/docs/cypher-manual/5/clauses/with/), [ordered collection](https://neo4j.com/docs/cypher-manual/5/clauses/order-by/), and [datetime values](https://neo4j.com/docs/cypher-manual/5/functions/temporal/).
+
+**This group is a review signal, not proof of fraud.** Shared devices and recipients can have legitimate explanations, such as family members paying a common merchant. Three accounts and ten minutes are teaching choices, not universal fraud thresholds. Check event quality, timing, context, and authorized access before drawing conclusions. This illustrates [graph-based fraud investigation](https://neo4j.com/use-cases/fraud-detection/), not an automatic account-blocking rule.
+
+#### Network and Infrastructure: Failure Impact Analysis
+
+**A dependency graph helps answer “what could be affected?”** Consider one application path with no alternate host or connection modeled:
+
+| Entity | Label and application identifier | Relationship |
+| --- | --- | --- |
+| Checkout | `Application`, `appId: 'CHECKOUT'` | Depends on Payments API |
+| Payments API | `Service`, `serviceId: 'PAYMENTS'` | Runs on Server S1 |
+| Server S1 | `Host`, `hostId: 'S1'` | Connected to Switch SW1 |
+| Switch SW1 | `Switch`, `switchId: 'SW1'` | Component being investigated |
+
+Assume each identifier uniquely identifies its illustrated entity. This is a separate example graph.
+
+```mermaid
+flowchart LR
+    APP["Checkout<br/>CHECKOUT"]
+    API["Payments API<br/>PAYMENTS"]
+    HOST["Server S1"]
+    SW["Switch SW1"]
+
+    APP -->|DEPENDS_ON| API
+    API -->|RUNS_ON| HOST
+    HOST -->|CONNECTED_TO| SW
+
+    classDef component fill:#dbeafe,stroke:#3b82f6,color:#111
+    classDef investigated fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#111
+    class APP,API,HOST component
+    class SW investigated
+```
+
+**Question:** If SW1 fails or needs maintenance, which application path might be affected?
+
+1. Identify SW1, highlighted in red.
+2. Follow incoming `CONNECTED_TO` relationships to find Server S1.
+3. Follow incoming `RUNS_ON` relationships to find Payments API.
+4. Follow incoming `DEPENDS_ON` relationships to find Checkout.
+
+The arrows record dependencies toward infrastructure. Following them backward finds potential dependents; it does not require storing duplicate reverse edges.
+
+**Read-only Cypher query:**
+
+```cypher
+MATCH (app:Application)-[:DEPENDS_ON]->(service:Service)
+      -[:RUNS_ON]->(host:Host)-[:CONNECTED_TO]->(switch:Switch {switchId: 'SW1'})
+RETURN DISTINCT host.hostId AS hostId,
+                service.serviceId AS serviceId,
+                app.appId AS appId
+ORDER BY hostId, serviceId, appId;
+```
+
+| hostId | serviceId | appId |
+| --- | --- | --- |
+| S1 | PAYMENTS | CHECKOUT |
+
+The result connects **Server S1 → Payments API → Checkout** as a potentially affected path. It does not establish that Checkout is down or that SW1 caused an observed error. Alternate connections, service replicas, failover, and current health can change the outcome. This fixed-length query covers the displayed chain, not every possible dependency depth.
+
+Monitoring, discovery, and inventory pipelines must keep topology and health information current; Neo4j does not automatically observe the infrastructure. The same graph can support maintenance planning or guide investigation alongside logs, metrics, and traces. See [Neo4j's network and IT operations examples](https://neo4j.com/use-cases/network-and-it-operations/).
+
+> **Fraud graphs connect evidence. Infrastructure graphs connect dependencies. Neither connection alone proves the final conclusion.**
 
 #### How Storage Supports Traversal
 
@@ -4768,6 +4897,11 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [W3C: RDF Concepts and Abstract Syntax](https://www.w3.org/TR/rdf11-concepts/)
 - [Neo4j 5 Cypher: MATCH](https://neo4j.com/docs/cypher-manual/5/clauses/match/)
 - [Neo4j 5 Cypher: EXISTS Subqueries](https://neo4j.com/docs/cypher-manual/5/subqueries/existential/)
+- [Neo4j 5 Cypher: WITH and Aggregation](https://neo4j.com/docs/cypher-manual/5/clauses/with/)
+- [Neo4j 5 Cypher: ORDER BY and Ordered Collection](https://neo4j.com/docs/cypher-manual/5/clauses/order-by/)
+- [Neo4j 5 Cypher: Temporal Values](https://neo4j.com/docs/cypher-manual/5/functions/temporal/)
+- [Neo4j: Fraud Detection and Investigation Use Cases](https://neo4j.com/use-cases/fraud-detection/)
+- [Neo4j: Network and IT Operations Use Cases](https://neo4j.com/use-cases/network-and-it-operations/)
 - [Neo4j 5 Cypher: CREATE](https://neo4j.com/docs/cypher-manual/5/clauses/create/)
 - [Neo4j 5 Cypher: MERGE](https://neo4j.com/docs/cypher-manual/5/clauses/merge/)
 - [Neo4j 5 Cypher: SET](https://neo4j.com/docs/cypher-manual/5/clauses/set/)
