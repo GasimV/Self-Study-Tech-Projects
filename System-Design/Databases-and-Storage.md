@@ -3638,13 +3638,7 @@ Here, `Users.id` is a primary key. `Follows.src` and `Follows.dst` reference use
 
 An index beginning with `src` supports finding whom Alice follows. An index beginning with `dst` supports finding who follows Carol. Both lookups use the same relationship rows; no inverse `followed_by` row is required.
 
-```mermaid
-flowchart LR
-    OUT["Whom does Alice follow?"] -->|"src = 1"| SI["Index beginning with src"]
-    IN["Who follows Carol?"] -->|"dst = 3"| DI["Index beginning with dst"]
-    SI --> ROWS["Same Follows rows<br/>(1,2), (1,3), (2,3)"]
-    DI --> ROWS
-```
+![Two indexed lookups reach the same Follows rows: src 1 returns Bob and Carol; dst 3 returns Alice and Bob.](assets/relational-relationship-indexes.svg)
 
 - **Outgoing from Alice:** match `src = 1`; the destinations are **2 Bob and 3 Carol**.
 - **Incoming to Carol:** match `dst = 3`; the sources are **1 Alice and 2 Bob**.
@@ -4238,28 +4232,9 @@ The required changes are:
 | C | 2 | 3 | A | D | B | NULL |
 | D | 2 | 4 | C | NULL | NULL | NULL |
 
-```mermaid
-flowchart TB
-    subgraph BEFORE["Before: Bob's incident chain"]
-        direction LR
-        NB["Node 2: Bob<br/>first_rid A"] -->|"First reference"| BA["A<br/>prev NULL"]
-        BA <--> BC["C<br/>next NULL"]
-    end
-    subgraph AFTER["After: add Dan and relationship D"]
-        direction LR
-        NA["Node 2: Bob<br/>first_rid A"] -->|"First reference"| AA["A<br/>prev NULL"]
-        AA <--> AC["C"]
-        AC <--> AD["D<br/>next NULL"]
-        N4["Node 4: Dan<br/>first_rid D"] -->|"First reference"| D4["D<br/>prev/next NULL"]
-    end
+![Before and after adding Dan: C points to D, and Bob and Dan reach one shared D relationship record through their endpoint references.](assets/graph-relationship-chains-before-after.svg)
 
-    classDef changed fill:#fff3d6,stroke:#b69b58,stroke-width:3px,color:#111
-    classDef added fill:#d1fae5,stroke:#059669,stroke-width:3px,color:#111
-    class AC changed
-    class AD,N4,D4 added
-```
-
-Double arrows show previous/next references within a node's chain, not `FOLLOWS` directions. **The two D boxes refer to the same stored relationship record**, shown once in each endpoint's chain. Green marks additions; amber marks C's changed source-side next reference. Nodes 1 and 3 are omitted from the diagram because their chains do not change.
+Arrows show first, previous, and next references, not `FOLLOWS` directions. **D is shown once, with separate reference fields for nodes 2 and 4.** Dan's first reference leads to that same record. Green marks additions; amber marks C's changed source-side next reference. Nodes 1 and 3 are omitted from the diagram because their chains do not change.
 
 Bob's outgoing destinations change from **[3]** to **[3, 4]**. The following existing adjacency comparison expresses the same change at the application level.
 

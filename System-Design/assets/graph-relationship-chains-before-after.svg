@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="900" viewBox="0 0 1100 900" role="img" aria-labelledby="title description">
+<title id="title">Relationship references before and after adding Dan</title>
+<desc id="description">Before, node 2 Bob has the incident chain A then C. After adding node 4 Dan and relationship D from node 2 to node 4, C's source-side next reference changes from NULL to D. The after panel shows D exactly once. Bob reaches D through C and Dan's first relationship reference reaches the same D record, using its destination-side fields. Nodes 1 and 3 have unchanged chains. This is a teaching layout, not Neo4j's exact file format.</desc>
+<rect width="1100" height="900" fill="#ffffff"/>
+<defs><marker id="chain-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#475569"/></marker><marker id="chain-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#b45309"/></marker><marker id="chain-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#059669"/></marker></defs>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="550" y="34" font-size="25" font-weight="700" text-anchor="middle" fill="#172033">Relationship references: before and after adding Dan</text>
+<text x="550" y="63" font-size="17" font-weight="400" text-anchor="middle" fill="#475569">One D record, two endpoint chains. Arrows show references, not FOLLOWS directions.</text>
+<rect x="24" y="85" width="1052" height="270" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+<text x="44" y="116" font-size="20" font-weight="700" text-anchor="start" fill="#172033">BEFORE: Bob's incident chain is A ↔ C</text>
+<rect x="48" y="170" width="190" height="80" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+<text x="143" y="202" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">Node 2: Bob</text>
+<text x="143" y="231" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">first_rid: A</text>
+<rect x="290" y="140" width="180" height="170" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+<text x="380" y="169" font-size="21" font-weight="700" text-anchor="middle" fill="#172033">A: 1 → 2</text>
+<text x="380" y="201" font-size="16" font-weight="400" text-anchor="middle" fill="#475569">node 2: dst side</text>
+<text x="380" y="236" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: NULL</text>
+<text x="380" y="268" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: C</text>
+<rect x="550" y="140" width="180" height="170" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+<text x="640" y="169" font-size="21" font-weight="700" text-anchor="middle" fill="#172033">C: 2 → 3</text>
+<text x="640" y="201" font-size="16" font-weight="400" text-anchor="middle" fill="#475569">node 2: src side</text>
+<text x="640" y="236" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: A</text>
+<text x="640" y="268" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: NULL</text>
+<path d="M 238 210 H 288" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="264" y="198" font-size="14" font-weight="400" text-anchor="middle" fill="#475569">first</text>
+<path d="M 470 190 H 548" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="510" y="180" font-size="15" font-weight="400" text-anchor="middle" fill="#475569">next</text>
+<path d="M 550 230 H 472" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="510" y="250" font-size="15" font-weight="400" text-anchor="middle" fill="#475569">prev</text>
+<text x="925" y="209" font-size="20" font-weight="700" text-anchor="middle" fill="#64748b">Node 4 and D</text>
+<text x="925" y="237" font-size="18" font-weight="400" text-anchor="middle" fill="#64748b">not added yet</text>
+<text x="550" y="334" font-size="17" font-weight="400" text-anchor="middle" fill="#475569">Node 1 (Alice) and node 3 (Carol) keep their existing chains.</text>
+<rect x="24" y="380" width="1052" height="420" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+<text x="44" y="412" font-size="20" font-weight="700" text-anchor="start" fill="#172033">AFTER: add node 4 Dan and D = 2 → 4</text>
+<rect x="48" y="490" width="190" height="80" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+<text x="143" y="522" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">Node 2: Bob</text>
+<text x="143" y="551" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">first_rid: A</text>
+<rect x="290" y="450" width="180" height="170" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+<text x="380" y="479" font-size="21" font-weight="700" text-anchor="middle" fill="#172033">A: 1 → 2</text>
+<text x="380" y="511" font-size="16" font-weight="400" text-anchor="middle" fill="#475569">node 2: dst side</text>
+<text x="380" y="546" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: NULL</text>
+<text x="380" y="578" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: C</text>
+<rect id="changed-C-after" x="550" y="450" width="180" height="170" rx="10" fill="#fffbeb" stroke="#d97706"/>
+<text x="640" y="479" font-size="21" font-weight="700" text-anchor="middle" fill="#172033">C: 2 → 3</text>
+<text x="640" y="511" font-size="16" font-weight="400" text-anchor="middle" fill="#475569">node 2: src side</text>
+<text x="640" y="546" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: A</text>
+<text x="640" y="578" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: D</text>
+<rect id="relationship-D-after" x="810" y="450" width="230" height="250" rx="10" fill="#ecfdf5" stroke="#059669"/>
+<text x="925" y="479" font-size="22" font-weight="700" text-anchor="middle" fill="#065f46">D: 2 → 4</text>
+<text x="925" y="511" font-size="17" font-weight="700" text-anchor="middle" fill="#065f46">For node 2: src side</text>
+<text x="925" y="540" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: C</text>
+<text x="925" y="566" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: NULL</text>
+<line x1="825" y1="580" x2="1025" y2="580" stroke="#a7f3d0" stroke-width="1"/>
+<text x="925" y="607" font-size="17" font-weight="700" text-anchor="middle" fill="#065f46">For node 4: dst side</text>
+<text x="925" y="636" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">prev: NULL</text>
+<text x="925" y="663" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">next: NULL</text>
+<path d="M 238 530 H 288" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="264" y="518" font-size="14" font-weight="400" text-anchor="middle" fill="#475569">first</text>
+<path d="M 470 500 H 548" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="510" y="490" font-size="15" font-weight="400" text-anchor="middle" fill="#475569">next</text>
+<path d="M 550 540 H 472" fill="none" stroke="#475569" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-gray)"/>
+<text x="510" y="560" font-size="15" font-weight="400" text-anchor="middle" fill="#475569">prev</text>
+<path id="C-next-to-D" d="M 730 500 H 808" fill="none" stroke="#b45309" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-amber)"/>
+<text x="770" y="490" font-size="15" font-weight="700" text-anchor="middle" fill="#92400e">next</text>
+<path id="D-prev-to-C" d="M 810 540 H 732" fill="none" stroke="#059669" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-green)"/>
+<text x="770" y="560" font-size="15" font-weight="400" text-anchor="middle" fill="#065f46">prev</text>
+<rect id="node-4-after" x="550" y="680" width="180" height="75" rx="10" fill="#ecfdf5" stroke="#059669"/>
+<text x="640" y="709" font-size="20" font-weight="700" text-anchor="middle" fill="#065f46">Node 4: Dan</text>
+<text x="640" y="737" font-size="18" font-weight="400" text-anchor="middle" fill="#065f46">first_rid: D</text>
+<path id="node4-first-to-D" d="M 730 718 H 770 V 625 H 808" fill="none" stroke="#059669" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#chain-green)"/>
+<text x="300" y="784" font-size="17" font-weight="700" text-anchor="start" fill="#92400e">Changed: C.src_next_rid   NULL → D</text>
+<rect x="48" y="821" width="20" height="15" rx="2" fill="#ffffff" stroke="#94a3b8"/>
+<text x="78" y="835" font-size="17" font-weight="400" text-anchor="start" fill="#172033">Unchanged</text>
+<rect x="280" y="821" width="20" height="15" rx="2" fill="#fffbeb" stroke="#d97706"/>
+<text x="310" y="835" font-size="17" font-weight="400" text-anchor="start" fill="#172033">Changed reference</text>
+<rect x="550" y="821" width="20" height="15" rx="2" fill="#ecfdf5" stroke="#059669"/>
+<text x="580" y="835" font-size="17" font-weight="400" text-anchor="start" fill="#172033">New node / record</text>
+<text x="550" y="870" font-size="17" font-weight="400" text-anchor="middle" fill="#475569">Teaching layout: records are stored once; each endpoint uses its own previous/next references.</text>
+</g>
+</svg>

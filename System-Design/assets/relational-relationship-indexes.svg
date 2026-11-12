@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="630" viewBox="0 0 1100 630" role="img" aria-labelledby="title description">
+<title id="title">Two indexes, one relationship table</title>
+<desc id="description">An index beginning with src selects rows R1 and R2 for Alice's outgoing follows, returning Bob and Carol. An index beginning with dst selects rows R2 and R3 for Carol's incoming follows, returning Alice and Bob. Both index lookups reach the same three application rows.</desc>
+<rect width="1100" height="630" fill="#ffffff"/>
+<defs><marker id="idx-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb"/></marker><marker id="idx-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#b45309"/></marker></defs>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="550" y="36" font-size="26" font-weight="700" text-anchor="middle" fill="#172033">Two indexes, one relationship table</text>
+<text x="550" y="65" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">Different lookup directions. The same three stored relationships.</text>
+<rect x="30" y="95" width="260" height="80" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+<text x="160" y="126" font-size="19" font-weight="700" text-anchor="middle" fill="#1e40af">Whom does Alice follow?</text>
+<text x="160" y="154" font-size="18" font-weight="400" text-anchor="middle" fill="#1e40af">Look up src = 1</text>
+<rect x="810" y="95" width="260" height="80" rx="10" fill="#fffbeb" stroke="#fcd34d"/>
+<text x="940" y="126" font-size="19" font-weight="700" text-anchor="middle" fill="#92400e">Who follows Carol?</text>
+<text x="940" y="154" font-size="18" font-weight="400" text-anchor="middle" fill="#92400e">Look up dst = 3</text>
+<path d="M 160 175 V 210" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-blue)"/>
+<path d="M 940 175 V 210" fill="none" stroke="#b45309" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-amber)"/>
+<rect x="30" y="210" width="260" height="225" rx="10" fill="#fff" stroke="#94a3b8"/>
+<rect x="380" y="210" width="340" height="225" rx="10" fill="#fff" stroke="#94a3b8"/>
+<rect x="810" y="210" width="260" height="225" rx="10" fill="#fff" stroke="#94a3b8"/>
+<text x="160" y="240" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">Index (src, dst)</text>
+<text x="550" y="240" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">Follows: stored rows</text>
+<text x="940" y="240" font-size="20" font-weight="700" text-anchor="middle" fill="#172033">Index (dst, src)</text>
+<text x="70" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">src</text>
+<text x="145" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">dst</text>
+<text x="224" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">row</text>
+<text x="420" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">Row</text>
+<text x="550" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">src</text>
+<text x="640" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">dst</text>
+<text x="847" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">dst</text>
+<text x="922" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">src</text>
+<text x="1001" y="275" font-size="17" font-weight="700" text-anchor="start" fill="#172033">row</text>
+<line x1="30" y1="285" x2="290" y2="285" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="380" y1="285" x2="720" y2="285" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="810" y1="285" x2="1070" y2="285" stroke="#cbd5e1" stroke-width="1"/>
+<rect id="src-entry-R1" x="40" y="288" width="240" height="34" rx="3" fill="#dbeafe" stroke="none"/>
+<g id="stored-R1">
+<rect x="383" y="288" width="6" height="34" rx="0" fill="#2563eb" stroke="none"/>
+<text x="420" y="310" font-size="19" font-weight="700" text-anchor="start" fill="#172033">R1</text>
+<text x="550" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="640" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+</g>
+<text x="70" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="145" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+<text x="224" y="310" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R1</text>
+<text x="847" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+<text x="922" y="310" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="1001" y="310" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R1</text>
+<rect id="src-entry-R2" x="40" y="328" width="240" height="34" rx="3" fill="#dbeafe" stroke="none"/>
+<rect id="dst-entry-R2" x="820" y="328" width="240" height="34" rx="3" fill="#fef3c7" stroke="none"/>
+<g id="stored-R2">
+<rect x="383" y="328" width="6" height="34" rx="0" fill="#2563eb" stroke="none"/>
+<rect x="711" y="328" width="6" height="34" rx="0" fill="#b45309" stroke="none"/>
+<text x="420" y="350" font-size="19" font-weight="700" text-anchor="start" fill="#172033">R2</text>
+<text x="550" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="640" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+</g>
+<text x="70" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="145" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+<text x="224" y="350" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R2</text>
+<text x="847" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+<text x="922" y="350" font-size="19" font-weight="400" text-anchor="start" fill="#172033">1</text>
+<text x="1001" y="350" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R2</text>
+<rect id="dst-entry-R3" x="820" y="368" width="240" height="34" rx="3" fill="#fef3c7" stroke="none"/>
+<g id="stored-R3">
+<rect x="711" y="368" width="6" height="34" rx="0" fill="#b45309" stroke="none"/>
+<text x="420" y="390" font-size="19" font-weight="700" text-anchor="start" fill="#172033">R3</text>
+<text x="550" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+<text x="640" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+</g>
+<text x="70" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+<text x="145" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+<text x="224" y="390" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R3</text>
+<text x="847" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">3</text>
+<text x="922" y="390" font-size="19" font-weight="400" text-anchor="start" fill="#172033">2</text>
+<text x="1001" y="390" font-size="19" font-weight="500" text-anchor="start" fill="#172033">R3</text>
+<path id="src-lookup-R1" d="M 290 310 H 378" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-blue)"/>
+<path id="src-lookup-R2" d="M 290 350 H 378" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-blue)"/>
+<path id="dst-lookup-R2" d="M 810 350 H 722" fill="none" stroke="#b45309" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-amber)"/>
+<path id="dst-lookup-R3" d="M 810 390 H 722" fill="none" stroke="#b45309" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-amber)"/>
+<path d="M 160 435 V 463" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-blue)"/>
+<path d="M 940 435 V 463" fill="none" stroke="#b45309" stroke-width="2.4" stroke-linejoin="round" marker-end="url(#idx-amber)"/>
+<rect x="30" y="465" width="260" height="80" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+<text x="160" y="495" font-size="17" font-weight="700" text-anchor="middle" fill="#1e40af">Outgoing destinations</text>
+<text x="160" y="525" font-size="21" font-weight="700" text-anchor="middle" fill="#1e40af">2 Bob, 3 Carol</text>
+<rect x="810" y="465" width="260" height="80" rx="10" fill="#fffbeb" stroke="#fcd34d"/>
+<text x="940" y="495" font-size="17" font-weight="700" text-anchor="middle" fill="#92400e">Incoming sources</text>
+<text x="940" y="525" font-size="21" font-weight="700" text-anchor="middle" fill="#92400e">1 Alice, 2 Bob</text>
+<text x="550" y="490" font-size="18" font-weight="700" text-anchor="middle" fill="#172033">R2 is reached by both lookups.</text>
+<text x="550" y="520" font-size="18" font-weight="400" text-anchor="middle" fill="#475569">It is still one stored row.</text>
+<text x="550" y="578" font-size="18" font-weight="400" text-anchor="middle" fill="#172033">Indexes use extra storage; reverse application rows are not required.</text>
+<text x="550" y="606" font-size="16" font-weight="400" text-anchor="middle" fill="#475569">R1–R3 are diagram row labels. Access paths are conceptual, not a promised query plan.</text>
+</g>
+</svg>
