@@ -4218,6 +4218,30 @@ Use [the database-selection checklist](#database-selection-checklist) and [data-
 
 > **Use a graph when relationships and paths are central to the queries. Find the starting entities, follow the relevant connections, and control how far the query expands.**
 
+**Simple conclusion**
+
+**SQL can solve the same problems. Neo4j can make complex relationship queries easier to express.**
+
+Imagine asking: **“If this switch fails, which servers, services, and applications could be affected?”**
+
+- **PostgreSQL:** Store the connections in tables and follow them using joins or recursive SQL.
+- **Neo4j:** Store the connections as a graph and describe the path you want to follow.
+
+Both can return the answer.
+
+**Keep PostgreSQL** when its queries are clear and meet your requirements.
+
+**Consider Neo4j** when exploring many connected entities is a frequent, central task, and simpler queries or measured performance justify using it.
+
+**Neo4j is not automatically faster.**
+
+**Choose the database around the questions your application asks most often.**
+
+- **Relational databases:** A strong fit for application records, transactions, ordinary joins, and reporting.
+- **Neo4j:** Worth evaluating when exploring connections—friends of friends, shared-account patterns, or service dependencies—is a frequent, central task.
+
+**The distinction is workload fit, not exclusive capability.** SQL can explore connected data, and Neo4j supports transactions. Performance comparisons need representative benchmarks; no speed multiplier applies universally.
+
 ## ClickHouse
 
 ### Overview: What ClickHouse Is For
