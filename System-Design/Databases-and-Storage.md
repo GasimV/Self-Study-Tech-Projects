@@ -4155,6 +4155,53 @@ Clustering can improve availability and read throughput, but does not guarantee 
 
 #### When to Choose Neo4j
 
+**Relational databases can solve the graph examples above too.** Neo4j's value is a model and query language centered on connections, plus traversal-oriented execution that may suit the workload. A clearer query is not proof of faster execution.
+
+**PostgreSQL vs. Neo4j**
+
+| Aspect | PostgreSQL | Neo4j |
+| --- | --- | --- |
+| **Relationships** | Stores connections through foreign keys and relationship tables | Stores nodes and typed relationships |
+| **Relationship queries** | Uses joins and recursive common table expressions (CTEs) | Uses graph patterns and path traversal |
+| **Simple relationships** | Ordinary indexed joins may already meet the requirement | Can express the same relationships; another engine may add little value |
+| **Complex, multi-hop paths** | Recursive SQL can explore paths; queries may become harder to maintain | Path syntax can express the question more directly; exploration can still be expensive |
+| **Changing relationship types** | May require schema/query changes; generic edge tables are also possible | New types/properties can be easier to represent, but rules, constraints, and queries still need maintenance |
+| **Transactions** | Supports ACID transactions | Also supports ACID transactions; check [isolation and transaction boundaries](#transactions-history-scaling-and-operations) |
+
+A SQL JOIN matches relationships already stored in records; it does not invent connections. For the [shared-device fraud example](#fraud-investigation-shared-device-and-recipient), SQL can join login and transfer records, group by device and recipient, and count distinct accounts. That query alone is not a reason to add Neo4j.
+
+**Why traversal may be efficient**
+
+Neo4j's **index-free adjacency** means it can follow stored links between neighboring graph elements after finding a starting point. It can still use indexes to locate that starting point. See [Neo4j's native graph-processing explanation](https://neo4j.com/blog/cypher-and-gql/native-vs-non-native-graph-technology/) and the existing [storage/traversal walkthrough](#how-storage-supports-traversal).
+
+This does not remove disk access or make an entire query O(1). Indexed SQL joins can also be efficient. Degree, depth, selectivity, caches, data layout, concurrency, and execution plans affect both approaches; Neo4j's [physical storage formats](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/) also vary.
+
+**Example: accounts connected within five transfer hops**
+
+Using the accounts and transfers from the earlier fraud example, this read-only, Neo4j 5-compatible query finds other accounts connected to A1:
+
+```cypher
+MATCH (s:Account {accountId: 'A1'})
+      -[:TRANSFERRED_TO*1..5]-(a:Account)
+WHERE a <> s
+RETURN DISTINCT a.accountId AS accountId
+ORDER BY accountId;
+```
+
+| accountId |
+| --- |
+| A2 |
+| A3 |
+| B1 |
+
+B1 is one hop away; A2 and A3 are two hops away through B1. The limit is **1–5 transfer relationships**, not five intermediate accounts: a five-hop path has at most four intermediate accounts. Five intermediate accounts would allow six hops.
+
+The missing arrowhead allows either direction. To follow outgoing transfers only, use `-[:TRANSFERRED_TO*1..5]->`. This query has no time filter, unlike the earlier ten-minute example. `a <> s` excludes the starting account if a cycle reaches it; `DISTINCT` removes repeated account results, not the work of exploring multiple paths. A connection is an investigation lead, not evidence of wrongdoing.
+
+SQL can answer this question with [a recursive CTE](https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-RECURSIVE); Cypher offers [variable-length path syntax](https://neo4j.com/docs/cypher-manual/5/patterns/variable-length-paths/). Neither guarantees cheap traversal through a densely connected graph.
+
+**Selection by requirement**
+
 | Requirement | What to evaluate |
 | --- | --- |
 | **Repeated multi-hop operational relationship queries** | A graph model and Cypher patterns can directly express the required paths |
@@ -4164,6 +4211,8 @@ Clustering can improve availability and read throughput, but does not guarantee 
 | **Keyword relevance / full-text search** | Evaluate the required search capability; following graph edges alone does not supply text relevance |
 
 The existing [banking](#worked-example-banking-platform-with-an-ai-assistant) and [delivery-platform](#worked-example-global-autonomous-delivery-platform) examples use graphs to explore customer–device–account or order connections. A shared device is a reason to investigate, not proof of fraud. If the graph is a derived view, define its source, update lag, deletion handling, access controls, and recovery.
+
+**Practical default:** Keep the existing relational database when its queries are clear and meet requirements. Evaluate Neo4j when frequent relationship exploration, simpler modeling/querying, or measured performance justifies its operational cost. Both PostgreSQL and Neo4j can be primary stores; a second database is not mandatory.
 
 Use [the database-selection checklist](#database-selection-checklist) and [data-pipeline notes](Data-Engineering-for-Solution-Architecture.md) to decide whether the relationship-query benefit justifies another store.
 
@@ -4908,6 +4957,9 @@ The [selection guide](#database-selection-by-requirements) maps requirements to 
 - [Neo4j 5 Cypher: DELETE](https://neo4j.com/docs/cypher-manual/5/clauses/delete/)
 - [Neo4j: Creating Uniqueness, Existence, and Other Constraints](https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/)
 - [Neo4j: Store Formats and Storage Layouts](https://neo4j.com/docs/operations-manual/current/database-internals/store-formats/)
+- [PostgreSQL: Recursive CTEs and Graph Traversal](https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-RECURSIVE)
+- [Neo4j 5 Cypher: Variable-Length Paths](https://neo4j.com/docs/cypher-manual/5/patterns/variable-length-paths/)
+- [Neo4j: Native Graph Processing and Index-Free Adjacency](https://neo4j.com/blog/cypher-and-gql/native-vs-non-native-graph-technology/)
 - [Neo4j: Database Transaction Management](https://neo4j.com/docs/operations-manual/current/database-internals/transaction-management/)
 - [Neo4j: Clustering, Replication, and Causal Consistency](https://neo4j.com/docs/operations-manual/current/clustering/introduction/)
 - [Investor.gov: Asset Allocation, Risk Tolerance, and Diversification](https://www.investor.gov/introduction-investing/getting-started/asset-allocation)
