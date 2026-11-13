@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1110" viewBox="0 0 1200 1110" role="img" aria-labelledby="title desc">
+<title id="title">Local LRU cache: lookup, move, and eviction</title>
+<desc id="desc">Three states of a capacity-four local cache. The hash map stores symbolic references E1 through E4 to doubly linked entries. Initially the MRU-to-LRU order is key4, key1, key2, key3. Reading key2 moves E2 to the front. Adding key5 evicts key3 and E3; the final order is key5, key2, key4, key1. These are local entries, not network servers.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#51677e"/></marker></defs>
+<rect x="0" y="0" width="1200" height="1110" rx="0" fill="#ffffff" stroke="#ffffff"/>
+<text x="600" y="35" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#18324d" text-anchor="middle">Local LRU cache: lookup, move, and eviction</text>
+<text x="600" y="63" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="normal" fill="#425870" text-anchor="middle">Capacity 4 • Hash map finds an entry; the linked list tracks recency.</text>
+<rect x="16" y="85" width="1168" height="305" rx="8" fill="#f7f9fc" stroke="#c4d2df"/>
+<text x="36" y="116" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#18324d" text-anchor="start">1. Initial state</text>
+<text x="40" y="146" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Hash map: key → entry reference</text>
+<rect x="40" y="158" width="245" height="160" rx="8" fill="#ffffff" stroke="#c4d2df"/>
+<text x="60" y="181" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Key</text>
+<text x="170" y="181" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Reference</text>
+<line x1="40" y1="190" x2="285" y2="190" stroke="#c4d2df" stroke-width="2"/>
+<text x="60" y="210" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key1</text>
+<text x="185" y="210" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E1</text>
+<text x="60" y="241" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key2</text>
+<text x="185" y="241" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E2</text>
+<text x="60" y="272" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key3</text>
+<text x="185" y="272" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E3</text>
+<text x="60" y="303" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key4</text>
+<text x="185" y="303" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E4</text>
+<text x="360" y="146" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Doubly linked list: MRU → LRU</text>
+<text x="430" y="180" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#215e9c" text-anchor="middle">HEAD / MRU</text>
+<text x="1060" y="180" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#8b4d12" text-anchor="middle">TAIL / LRU</text>
+<rect x="355" y="197" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="430" y="223" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E4</text>
+<text x="430" y="251" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key4 | value4</text>
+<text x="430" y="277" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="506" y1="240" x2="563" y2="240" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="564" y1="263" x2="507" y2="263" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="565" y="197" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="640" y="223" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E1</text>
+<text x="640" y="251" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key1 | value1</text>
+<text x="640" y="277" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="716" y1="240" x2="773" y2="240" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="774" y1="263" x2="717" y2="263" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="775" y="197" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="850" y="223" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E2</text>
+<text x="850" y="251" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key2 | value2</text>
+<text x="850" y="277" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="926" y1="240" x2="983" y2="240" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="984" y1="263" x2="927" y2="263" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="985" y="197" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="1060" y="223" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E3</text>
+<text x="1060" y="251" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key3 | value3</text>
+<text x="1060" y="277" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<text x="355" y="325" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="start">head.prev = NULL</text>
+<text x="1135" y="325" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="end">tail.next = NULL</text>
+<text x="40" y="355" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">Map references point to entries. For example, key2 → E2.</text>
+<text x="40" y="377" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="normal" fill="#425870" text-anchor="start">Head = most recently used (MRU). Tail = least recently used (LRU).</text>
+<rect x="16" y="405" width="1168" height="305" rx="8" fill="#f7f9fc" stroke="#c4d2df"/>
+<text x="36" y="436" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#18324d" text-anchor="start">2. Read key2: move E2 to the head</text>
+<text x="40" y="466" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Hash map: key → entry reference</text>
+<rect x="40" y="478" width="245" height="160" rx="8" fill="#ffffff" stroke="#c4d2df"/>
+<text x="60" y="501" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Key</text>
+<text x="170" y="501" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Reference</text>
+<line x1="40" y1="510" x2="285" y2="510" stroke="#c4d2df" stroke-width="2"/>
+<text x="60" y="530" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key1</text>
+<text x="185" y="530" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E1</text>
+<rect x="43" y="541" width="239" height="27" rx="3" fill="#fff1bc" stroke="none"/>
+<text x="60" y="561" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key2</text>
+<text x="185" y="561" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E2</text>
+<text x="60" y="592" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key3</text>
+<text x="185" y="592" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E3</text>
+<text x="60" y="623" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key4</text>
+<text x="185" y="623" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E4</text>
+<text x="360" y="466" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Doubly linked list: MRU → LRU</text>
+<text x="430" y="500" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#215e9c" text-anchor="middle">HEAD / MRU</text>
+<text x="1060" y="500" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#8b4d12" text-anchor="middle">TAIL / LRU</text>
+<rect x="355" y="517" width="150" height="106" rx="8" fill="#fff1bc" stroke="#bc8c22"/>
+<text x="430" y="543" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E2</text>
+<text x="430" y="571" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key2 | value2</text>
+<text x="430" y="597" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="506" y1="560" x2="563" y2="560" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="564" y1="583" x2="507" y2="583" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="565" y="517" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="640" y="543" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E4</text>
+<text x="640" y="571" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key4 | value4</text>
+<text x="640" y="597" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="716" y1="560" x2="773" y2="560" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="774" y1="583" x2="717" y2="583" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="775" y="517" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="850" y="543" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E1</text>
+<text x="850" y="571" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key1 | value1</text>
+<text x="850" y="597" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="926" y1="560" x2="983" y2="560" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="984" y1="583" x2="927" y2="583" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="985" y="517" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="1060" y="543" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E3</text>
+<text x="1060" y="571" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key3 | value3</text>
+<text x="1060" y="597" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<text x="355" y="645" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="start">head.prev = NULL</text>
+<text x="1135" y="645" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="end">tail.next = NULL</text>
+<text x="40" y="675" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E2 moves in the list; key2 → E2 stays the same in the map.</text>
+<text x="40" y="697" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="normal" fill="#425870" text-anchor="start">No entry is created or evicted. The other entries keep their relative order.</text>
+<rect x="16" y="725" width="1168" height="305" rx="8" fill="#f7f9fc" stroke="#c4d2df"/>
+<text x="36" y="756" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#18324d" text-anchor="start">3. Add key5: evict key3, then insert E5</text>
+<text x="40" y="786" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Hash map: key → entry reference</text>
+<rect x="40" y="798" width="245" height="160" rx="8" fill="#ffffff" stroke="#c4d2df"/>
+<text x="60" y="821" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Key</text>
+<text x="170" y="821" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#18324d" text-anchor="start">Reference</text>
+<line x1="40" y1="830" x2="285" y2="830" stroke="#c4d2df" stroke-width="2"/>
+<text x="60" y="850" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key1</text>
+<text x="185" y="850" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E1</text>
+<text x="60" y="881" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key2</text>
+<text x="185" y="881" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E2</text>
+<text x="60" y="912" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key4</text>
+<text x="185" y="912" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E4</text>
+<rect x="43" y="923" width="239" height="27" rx="3" fill="#dcf7e8" stroke="none"/>
+<text x="60" y="943" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="start">key5</text>
+<text x="185" y="943" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">E5</text>
+<text x="360" y="786" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#425870" text-anchor="start">Doubly linked list: MRU → LRU</text>
+<text x="430" y="820" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#215e9c" text-anchor="middle">HEAD / MRU</text>
+<text x="1060" y="820" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#8b4d12" text-anchor="middle">TAIL / LRU</text>
+<rect x="355" y="837" width="150" height="106" rx="8" fill="#dcf7e8" stroke="#bc8c22"/>
+<text x="430" y="863" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E5</text>
+<text x="430" y="891" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key5 | value5</text>
+<text x="430" y="917" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="506" y1="880" x2="563" y2="880" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="564" y1="903" x2="507" y2="903" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="565" y="837" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="640" y="863" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E2</text>
+<text x="640" y="891" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key2 | value2</text>
+<text x="640" y="917" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="716" y1="880" x2="773" y2="880" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="774" y1="903" x2="717" y2="903" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="775" y="837" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="850" y="863" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E4</text>
+<text x="850" y="891" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key4 | value4</text>
+<text x="850" y="917" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<line x1="926" y1="880" x2="983" y2="880" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="984" y1="903" x2="927" y2="903" stroke="#51677e" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="985" y="837" width="150" height="106" rx="8" fill="#e7f0ff" stroke="#7c9fc7"/>
+<text x="1060" y="863" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#18324d" text-anchor="middle">E1</text>
+<text x="1060" y="891" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#18324d" text-anchor="middle">key1 | value1</text>
+<text x="1060" y="917" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="middle">prev       next</text>
+<text x="355" y="965" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="start">head.prev = NULL</text>
+<text x="1135" y="965" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#425870" text-anchor="end">tail.next = NULL</text>
+<text x="40" y="995" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#18324d" text-anchor="start">Remove key3 → E3 from the map and unlink E3. Add key5 → E5.</text>
+<text x="40" y="1017" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="normal" fill="#425870" text-anchor="start">Final order: key5, key2, key4, key1. Both structures contain the same four entries.</text>
+<rect x="20" y="1046" width="1160" height="46" rx="8" fill="#eef7ff" stroke="#a8c6e6"/>
+<text x="600" y="1075" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="normal" fill="#18324d" text-anchor="middle">E1–E5 are symbolic local entry references, not cache-server names or network pointers.</text>
+</svg>

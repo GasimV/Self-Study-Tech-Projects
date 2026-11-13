@@ -6,6 +6,7 @@
 !assets/database-horizontal-vertical-partitioning.svg
 !assets/relational-relationship-indexes.svg
 !assets/graph-relationship-chains-before-after.svg
+!assets/distributed-cache-lru.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
 /examples/merkle_tree/merkle_tree_dsa

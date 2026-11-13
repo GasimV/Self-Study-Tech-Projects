@@ -1291,6 +1291,8 @@ PgBouncer's **session pooling** assigns a backend for the client session; **tran
 
 Cache keys and reuse rules must respect tenant, user, permissions, and query parameters where relevant. A **TTL—time to live—bounds intended retention, not transactional freshness**. Prevent many simultaneous misses from overwhelming the database, for example through request coalescing and controlled refreshes. A cache hit must not bypass required authorization or authoritative checks.
 
+See [Distributed Cache](Distributed-Cache.md) for loading patterns, LRU, placement, and failure handling.
+
 Using the original five-row dataset, precompute paid totals:
 
 ```sql
