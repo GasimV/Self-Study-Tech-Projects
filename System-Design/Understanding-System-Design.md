@@ -9,6 +9,14 @@
   - [Single-Server Application Design Checklist](#single-server-application-design-checklist)
   - [What a Small Single-Server App Usually Does Not Need](#what-a-small-single-server-app-usually-does-not-need)
   - [What the Broader System Design Study Adds](#what-the-broader-system-design-study-adds)
+- [System Design in Cloud and On-Premises Environments](#system-design-in-cloud-and-on-premises-environments)
+  - [Does the Cloud Solve Distributed-System Design?](#does-the-cloud-solve-distributed-system-design)
+  - [Who Manages What?](#who-manages-what)
+  - [Are Rented Servers Already Connected?](#are-rented-servers-already-connected)
+  - [Who Chooses Capacity and Server Counts?](#who-chooses-capacity-and-server-counts)
+  - [Worked Example: An Online Store on AWS](#worked-example-an-online-store-on-aws)
+  - [Comparable Building Blocks Across Providers](#comparable-building-blocks-across-providers)
+  - [Can the Whole Architecture Be Deployed Together?](#can-the-whole-architecture-be-deployed-together)
 - [Core Terminology](#core-terminology)
 - [Functional and Non-Functional Requirements](#functional-and-non-functional-requirements)
 - [Design Process](#design-process)
@@ -41,6 +49,7 @@
   - [Required Depth of Knowledge](#required-depth-of-knowledge)
   - [Recommended Learning Order](#recommended-learning-order)
   - [AI Architect's Defining Capability](#ai-architects-defining-capability)
+- [References](#references)
 
 ## Overview
 
@@ -129,6 +138,143 @@ The existing checklist provides the foundations. Broader study teaches additiona
 > **A course teaches a toolbox—not a deployment checklist.** Learn the techniques so you can choose appropriately, not so every application uses all of them.
 >
 > **Monolith describes application structure; single-server describes deployment.** A monolith can run across multiple servers and require distributed-system techniques.
+
+## System Design in Cloud and On-Premises Environments
+
+### Does the Cloud Solve Distributed-System Design?
+
+> **Cloud services can implement and operate mechanisms for you. You, as the system architect, design the system and decide which mechanisms you need and how your application uses them.**
+
+AWS, Azure, and Google Cloud offer building blocks, service tiers, and deployment templates. You can combine them into one application, but there is no universal package that automatically satisfies every workload, security rule, and failure requirement.
+
+| Approach | Provider or platform responsibility | Your team's responsibility |
+| --- | --- | --- |
+| **On-premises** | Depends on purchased hardware, software, and support | Usually more infrastructure operation, plus architecture and application correctness |
+| **IaaS—Infrastructure as a Service** | Physical infrastructure, virtualization, and cloud networking capabilities | Virtual machines (VMs), guest operating systems, applications, and selected networking/data components |
+| **PaaS—Platform as a Service / managed services** | More of the selected runtime, database, cache, or other service | Service choices, supported configuration, integration, data, permissions, and application behavior |
+
+**Serverless** is a managed approach that hides more server provisioning and often automates scaling. Servers still exist, and limits, configuration, failures, and cost still matter. These labels overlap; one application can mix VMs, managed databases, and serverless components.
+
+On-premises teams can also buy supported platforms or managed operations. They need not write a database, load balancer, or consensus algorithm from scratch. The important distinction is **which responsibilities the selected service actually takes on**. [AWS shared responsibility](https://aws.amazon.com/compliance/shared-responsibility-model/), [Azure shared responsibility](https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility)
+
+### Who Manages What?
+
+For selected **managed services**, the boundary commonly looks like this:
+
+| Concern | What a provider may operate | What your team still decides |
+| --- | --- | --- |
+| **Load balancing / reverse proxying** | The managed request-distribution service | Listeners, targets, routing rules, health checks, and application timeouts |
+| **Autoscaling** | Instance creation/removal or service-capacity adjustment | Signals, minimum/maximum capacity, startup readiness, and safe scale-in |
+| **Replication and failover** | Supported copy, detection, and promotion mechanisms | Availability configuration, reconnects, retries, and acceptable loss/downtime |
+| **Sharding** | Physical distribution in services that provide it | Access patterns, partition keys, hot-key behavior, and service limits |
+| **Consensus** | Agreement protocols inside some managed services | Choose suitable guarantees; handle operations spanning separate services |
+| **Consistency** | The selected service's documented read/write behavior | Required freshness and correctness across the whole application |
+| **Caching** | Cache infrastructure and supported replication/scaling | Keys, TTL, invalidation, acceptable staleness, and safe fallback |
+| **Monitoring** | Metric collection and monitoring infrastructure | Useful signals, alerts, investigation, and incident response |
+| **Security** | Protection of provider-operated layers | Identities, access rules, data handling, and application authorization |
+| **Recovery** | Supported backup/restore capabilities | Retention, recovery objectives, restoration tests, and application recovery |
+
+**Managed does not mean every feature is enabled or supported in every tier.** Replication does not replace backups. Infrastructure availability does not prove correct application results. For example, a managed queue can deliver a message again; a consumer may need idempotent processing so a retry does not create a second order.
+
+### Are Rented Servers Already Connected?
+
+The provider supplies the physical network and virtual-network capabilities. Your team defines the permitted communication paths, directly or through a platform/template:
+
+1. Select a virtual network and appropriate subnets.
+2. Place resources and configure routes and endpoints.
+3. Allow required traffic through security/firewall rules.
+4. Configure service addresses, listeners, credentials, and application connections.
+
+**VPC = Virtual Private Cloud**; Azure uses **VNet—Virtual Network**. A VPC is not a VPN—Virtual Private Network. Being in one virtual network does not automatically permit every connection or configure applications to use each other. [Amazon VPC overview](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html)
+
+You normally do not connect cables or configure physical switches. Some platforms create default networking, but those defaults still need review. Reachability also does not establish TLS, authentication, or permission to read a customer's order.
+
+Continue with [networking fundamentals](Networking-Fundamentals-for-System-Design.md#overview-and-networking-mental-model), [firewalls](Networking-Fundamentals-for-System-Design.md#firewalls), and [application authorization](Identity-and-Access-Management.md#authorization-in-practice).
+
+### Who Chooses Capacity and Server Counts?
+
+**For VMs, you can choose a fixed instance count or configure an autoscaling group.** For example:
+
+| Setting | Illustrative value | Meaning |
+| --- | --- | --- |
+| **Minimum** | 3 | Lower bound for normal scaling-policy decisions |
+| **Desired** | 3 initially | Target instance count the group attempts to maintain |
+| **Maximum** | 10 | Upper bound for normal scaling-policy decisions |
+
+A configured policy can change desired capacity within these bounds. Launching instances, starting the application, and passing health checks take time. Quotas or unavailable capacity can prevent the target from being reached. Three to ten is an example, not a sizing recommendation. [EC2 Auto Scaling limits](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-capacity-limits.html)
+
+For managed databases/caches, you may choose node sizes, replicas, throughput, memory, or a service tier. Serverless options may hide node counts. **Application instances, database/cache nodes, and the provider's physical servers are different counts.**
+
+Adding application instances does not automatically scale the database, remove a hot key, or make local session state shared. Size each dependency and keep enough capacity for the failures you intend to tolerate.
+
+### Worked Example: An Online Store on AWS
+
+This logical snapshot shows three application instances. It is not a complete network configuration or a count of every underlying server.
+
+```mermaid
+flowchart TB
+    U["Internet users"]
+    subgraph VPC["AWS VPC - Virtual Private Cloud"]
+        subgraph PUBLIC["Public subnets across two Availability Zones"]
+            LB["Application Load Balancer<br/>AWS operates the service"]
+        end
+        subgraph ASG["Private app subnets - Auto Scaling group<br/>Minimum 3, initially desired 3, maximum 10"]
+            A1["EC2 app 1"]
+            A2["EC2 app 2"]
+            A3["EC2 app 3"]
+        end
+        subgraph DATA["Private data resources"]
+            CACHE["ElastiCache<br/>Selected managed cache"]
+            DB["RDS for PostgreSQL<br/>Selected Multi-AZ deployment"]
+        end
+        LB --> A1
+        LB --> A2
+        LB --> A3
+        ASG -->|Cache reads and fills| CACHE
+        ASG -->|Source reads and writes| DB
+    end
+    U -->|HTTPS| LB
+```
+
+The application instances are placed across at least two **Availability Zones (AZs)**. An AZ is a provider-defined failure-isolation location, not necessarily exactly one data centre. Subnet, gateway, security, and replication details are summarized rather than drawn individually.
+
+Follow one request:
+
+1. The load balancer selects an eligible application instance; it does not broadcast the request to all three.
+2. The application checks the cache for reusable catalog data.
+3. On a miss, **the application reads PostgreSQL**, then fills the cache. ElastiCache does not automatically fetch the database record.
+4. Business writes use the database and the required invalidation/correctness rules.
+
+AWS operates the selected managed services. Your team configures their integration and handles timeouts, retries, access checks, and partial failures. The application VMs still require guest-OS and application management.
+
+**RDS Multi-AZ behavior depends on deployment type.** A Multi-AZ DB instance's single standby supports failover but does not serve reads; Multi-AZ DB clusters have different read-serving capabilities. Application reconnect/retry behavior remains necessary. [RDS Multi-AZ documentation](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html)
+
+The three application VMs are not the total system server count: managed services have their own infrastructure. Adding app instances does not resize those services automatically.
+
+See [load balancing and autoscaling](Distributed-Systems-Building-Blocks.md#autoscaling-with-load-balancing), [cache-aside](Distributed-Cache.md#cache-aside-read-flow), and [managed cloud caches](Distributed-Cache.md#managed-cloud-caches).
+
+### Comparable Building Blocks Across Providers
+
+These are examples of **similar roles**, not identical features or interchangeable configurations.
+
+| Role | AWS | Microsoft Azure | Google Cloud |
+| --- | --- | --- | --- |
+| **Virtual machines** | Amazon EC2 | Azure Virtual Machines | Compute Engine |
+| **Virtual networking** | Amazon VPC | [Azure Virtual Network](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-overview) | [VPC](https://docs.cloud.google.com/vpc/docs/vpc) |
+| **Autoscaling VM groups** | EC2 Auto Scaling | Virtual Machine Scale Sets | Managed Instance Groups with autoscaling |
+| **Load balancing** | Elastic Load Balancing, including Application Load Balancer | [Load Balancer](https://learn.microsoft.com/en-us/azure/load-balancer/load-balancer-overview) (L4); [Application Gateway](https://learn.microsoft.com/en-us/azure/application-gateway/overview) (L7) | [Cloud Load Balancing](https://docs.cloud.google.com/load-balancing/docs/load-balancing-overview) |
+| **Managed PostgreSQL** | Amazon RDS for PostgreSQL | Azure Database for PostgreSQL | Cloud SQL for PostgreSQL |
+| **Managed caching** | Amazon ElastiCache | Azure Managed Redis | Memorystore |
+
+Layer 4 (L4) and Layer 7 (L7) capabilities differ; see the [existing comparison](Distributed-Systems-Building-Blocks.md#layer-4-vs-layer-7). Scaling, availability, networking, and engine support depend on the selected product and configuration. Cloud product names are a map to investigate, not a substitute for requirements.
+
+### Can the Whole Architecture Be Deployed Together?
+
+**Infrastructure as Code (IaC)** describes resources and their configuration in versioned files. Tools such as [Terraform](https://developer.hashicorp.com/terraform/intro), [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html), and [Azure Bicep](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview) can provision related resources from one coordinated definition.
+
+Your team can use its own definitions or a reviewed template. Automation creates the declared resources and handles supported dependencies; it does not decide the right architecture or prove the application's correctness. Separately configured services continue handling scaling, routing, and other ongoing mechanisms.
+
+> **The provider operates the services you select. Your team designs their configuration, integration, and application behavior.**
 
 ## Core Terminology
 
@@ -628,3 +774,12 @@ For someone who already has an AI or data-science background:
 The knowledge areas above form a comprehensive technical foundation. The additional competencies that must remain explicit are **security**, **AI governance**, **business requirements**, **architectural decision-making**, and **stakeholder communication**.
 
 > **Bottom line:** An AI Architect is defined not by knowing every technology in depth, but by the ability to translate business requirements into secure, reliable, scalable, and cost-effective AI solutions—and to justify the architectural decisions behind them.
+
+## References
+
+- Responsibility boundaries: [AWS shared responsibility](https://aws.amazon.com/compliance/shared-responsibility-model/), [Azure shared responsibility](https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility).
+- AWS networking and request routing: [Amazon VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html), [Application Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html).
+- VM groups and scaling: [EC2 Auto Scaling capacity limits](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-capacity-limits.html), [Azure Virtual Machine Scale Sets](https://learn.microsoft.com/en-us/azure/virtual-machine-scale-sets/overview), [Google Cloud instance groups](https://docs.cloud.google.com/compute/docs/instance-groups).
+- Managed PostgreSQL: [RDS Multi-AZ deployments](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html), [Azure Database for PostgreSQL](https://learn.microsoft.com/en-us/azure/postgresql/overview), [Cloud SQL for PostgreSQL](https://docs.cloud.google.com/sql/docs/postgres/introduction).
+- Managed caches: [Amazon ElastiCache](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html), [Azure Managed Redis](https://learn.microsoft.com/en-us/azure/redis/overview), [Memorystore for Redis](https://docs.cloud.google.com/memorystore/docs/redis/memorystore-for-redis-overview).
+- Infrastructure automation: [Terraform](https://developer.hashicorp.com/terraform/intro), [CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html), [Bicep](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview).

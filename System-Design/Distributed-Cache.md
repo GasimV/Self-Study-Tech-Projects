@@ -20,6 +20,7 @@
 - [Deployment Choices](#deployment-choices)
   - [In-Process, Co-Located, and Shared Caches](#in-process-co-located-and-shared-caches)
   - [Optional L1 and L2](#optional-l1-and-l2)
+  - [Managed Cloud Caches](#managed-cloud-caches)
 - [Routing, Sharding, and Replication](#routing-sharding-and-replication)
   - [Routing a Key](#routing-a-key)
   - [Shards vs. Replicas](#shards-vs-replicas)
@@ -350,6 +351,34 @@ Shared L2 miss -> authoritative source
 
 The L1 copy needs its own expiration/invalidation rules. Updating L2 does not automatically update every process's L1. Choose this arrangement only when the saved remote work justifies the additional copies and coordination.
 
+### Managed Cloud Caches
+
+**You can use a managed cache instead of operating cache servers yourself.** This changes infrastructure responsibilities, not the application's freshness rules.
+
+| Provider | Example | What to recognize |
+| --- | --- | --- |
+| **AWS** | [Amazon ElastiCache](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html) | Serverless and node-based options; engine and deployment choices affect behavior |
+| **Microsoft Azure** | [Azure Managed Redis](https://learn.microsoft.com/en-us/azure/redis/overview) | A Microsoft-operated service based on Redis Enterprise |
+| **Google Cloud** | [Memorystore](https://docs.cloud.google.com/memorystore/docs/redis/memorystore-for-redis-overview) | Managed in-memory offerings; select the appropriate engine/product and availability configuration |
+
+Depending on that choice, the provider operates provisioning, maintenance, and supported sharding, replication, failover, or scaling. **These capabilities are not identical or automatic in every engine and tier.** For example, ElastiCache exposes node-based and serverless choices; managed does not always mean hidden node counts.
+
+Your team still chooses:
+
+- **Content and keys:** What is worth reusing, and how tenant/user scope is isolated.
+- **TTL and eviction:** How long an entry may remain and what happens under memory pressure.
+- **Freshness and invalidation:** What source changes require, and how much staleness is acceptable.
+- **Access and connectivity:** Who can reach the cache and read/write which data.
+- **Failure behavior:** Timeouts, client reconnects, safe retries, bounded fallback, and recovery.
+
+**P100 example:** Replace the self-managed cache with a selected managed service. The application still checks `catalog-title:P100`, loads PostgreSQL on a miss, and caches `Laptop` for the illustrative 60 seconds. After changing the source to `Laptop Pro`, it still needs invalidation. A managed failover does not prevent the [stale-refill race](#a-stale-refill-race) or make a cache update atomic with a database commit.
+
+Use the existing [cache-aside flow](#cache-aside-read-flow); the application performs the source read. Review the service's supported client, capacity, network, and availability settings rather than assuming a drop-in change requires no application work.
+
+For the broader responsibility boundary and an AWS architecture example, see [system design in cloud and on-premises environments](Understanding-System-Design.md#system-design-in-cloud-and-on-premises-environments).
+
+> **The provider runs the cache service. Your application decides what a cached value means, when it is fresh enough, and what to do when it disappears.**
+
 ## Routing, Sharding, and Replication
 
 ### Routing a Key
@@ -548,6 +577,7 @@ A cache reuses results; a local LRU structure manages a bounded working set; net
 ## Related Notes
 
 - [System design at different scales](Understanding-System-Design.md#system-design-at-different-scales)
+- [Cloud and on-premises responsibilities](Understanding-System-Design.md#system-design-in-cloud-and-on-premises-environments)
 - [Database caches versus materialized views](Databases-and-Storage.md#cached-results-vs-materialized-views)
 - [Key-value lookup complexity and hardware](Databases-and-Storage.md#why-key-value-lookups-can-be-fast-complexity-ram-and-disk)
 - [Consistent hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing)
@@ -573,3 +603,6 @@ A cache reuses results; a local LRU structure manages a bounded working set; net
 - [Memcached: Basic Text Protocol](https://docs.memcached.org/protocols/basic/)
 - [Memcached: FAQ and Server Responsibilities](https://docs.memcached.org/userguide/faq/)
 - [Memcached: Warm Restart and Its Limits](https://docs.memcached.org/features/restart/)
+- [AWS: Amazon ElastiCache Overview](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html)
+- [Microsoft: Azure Managed Redis Overview](https://learn.microsoft.com/en-us/azure/redis/overview)
+- [Google Cloud: Memorystore for Redis Overview](https://docs.cloud.google.com/memorystore/docs/redis/memorystore-for-redis-overview)
