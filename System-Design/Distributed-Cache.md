@@ -6,6 +6,9 @@
 - [Worked Example: Product P100](#worked-example-product-p100)
   - [Cache-Aside Read Flow](#cache-aside-read-flow)
   - [Updating the Source and Invalidating the Cache](#updating-the-source-and-invalidating-the-cache)
+- [Cache Layers: Browser, CDN, and Application](#cache-layers-browser-cdn-and-application)
+  - [HTTP Freshness and Validation](#http-freshness-and-validation)
+  - [Invalidating CDN Content](#invalidating-cdn-content)
 - [Requirements, Benefits, and Trade-Offs](#requirements-benefits-and-trade-offs)
   - [A Conceptual Cache API](#a-conceptual-cache-api)
   - [When Caching Helps](#when-caching-helps)
@@ -13,6 +16,8 @@
   - [TTL, Eviction, and Invalidation](#ttl-eviction-and-invalidation)
   - [Loading and Write Patterns](#loading-and-write-patterns)
   - [A Stale-Refill Race](#a-stale-refill-race)
+  - [Stale-While-Revalidate: Serve, Then Refresh](#stale-while-revalidate-serve-then-refresh)
+  - [Event-Driven Invalidation and Versioned Keys](#event-driven-invalidation-and-versioned-keys)
 - [Eviction Policies and a Local LRU Cache](#eviction-policies-and-a-local-lru-cache)
   - [How the Hash Map and List Work](#how-the-hash-map-and-list-work)
   - [Worked LRU Trace](#worked-lru-trace)
@@ -116,6 +121,74 @@ Deleting the cache entry before the source commit can allow a reader to refill i
 
 Use [Microsoft's cache-aside guidance](https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside) for the basic responsibilities and limitations.
 
+## Cache Layers: Browser, CDN, and Application
+
+**A response can pass through several caches. Each copy has its own key, lifetime, and reuse rules.** A CDN is a content delivery network; the origin is the application or server from which it obtains content.
+
+| Layer | What it can reuse | P100 example |
+| --- | --- | --- |
+| **Browser HTTP cache** | Eligible HTTP responses on one user's device | A previously downloaded catalog page or image |
+| **CDN / shared HTTP cache** | Eligible responses shared across requests/users | The public P100 catalog response near a user |
+| **Local application cache** | Data retained by one application process | A parsed catalog title in one app instance |
+| **Distributed application cache** | Data shared through cache servers | `catalog-title:P100` containing `Laptop` |
+
+An HTTP cache stores a response and its metadata; the application cache here stores a title value. Mobile applications can also keep local data under their own rules. These are complementary layers, not interchangeable products. [MDN: HTTP caching](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching)
+
+```mermaid
+flowchart LR
+    B["Browser<br/>HTTP cache"]
+    E["CDN edge<br/>Shared HTTP cache"]
+    A["Application / origin"]
+    K["Distributed cache<br/>P100 title"]
+    D["PostgreSQL<br/>Authoritative record"]
+    B -->|Needs network response| E
+    E -->|Cannot reuse response| A
+    A -->|Check or populate| K
+    A -->|Source read on data miss| D
+```
+
+A usable browser hit can avoid a network request. A CDN hit can avoid calling the application. If both need the origin, the application may still find its data in the distributed cache. Response paths are omitted for clarity. The cache-aside source read is **application → PostgreSQL**, not **cache → PostgreSQL**.
+
+A public catalog representation can be shared when its content and rules permit it. A shopping cart depends on its owner; do not reuse one customer's response for another. Cache keys, permissions, and request variations must agree. See [CDNs and origin traffic](Distributed-Systems-Building-Blocks.md#cdns-and-origin-traffic).
+
+### HTTP Freshness and Validation
+
+The response's **Cache-Control** field tells compliant HTTP caches how it may be reused:
+
+| Response directive | Simple meaning |
+| --- | --- |
+| `max-age=60` | Freshness lifetime of 60 seconds, using the response's calculated age |
+| `s-maxage=120` | Shared-cache freshness lifetime; overrides `max-age` there |
+| `public` | Explicitly permits caching, subject to applicable rules |
+| `private` | A shared cache must not store the response; a private cache may |
+| `no-cache` | May store, but must successfully validate before reuse |
+| `no-store` | Must not store the response |
+
+These are introductory meanings for unqualified directives, not security substitutes. `no-store` is not a command to erase every previously retained copy. See [RFC 9111: HTTP caching](https://datatracker.ietf.org/doc/html/rfc9111).
+
+For an illustrative public P100 response:
+
+```http
+Cache-Control: public, max-age=60, s-maxage=120
+ETag: "p100-catalog-v7"
+Vary: Accept-Encoding
+```
+
+Browsers and shared caches have different freshness lifetimes here; age is not simply reset at every hop. `Vary` identifies request-header variations that affect reuse. CDN cache-key configuration must also account for relevant query parameters and other variations.
+
+An **ETag** is a validator for a selected representation. On validation, a client can send `If-None-Match: "p100-catalog-v7"`. For a conditional GET, if the applicable current representation matches, the responding server can return **304 Not Modified** without sending its body again. Otherwise it returns the current representation. The cache updates relevant metadata after successful validation. [RFC 9110: If-None-Match](https://datatracker.ietf.org/doc/html/rfc9110#section-13.1.2)
+
+Validating an HTTP response does not automatically refresh Redis or prove the response matches the latest database commit. Application-data freshness and HTTP-response freshness must be designed together. This header example is separate from the [stale-while-revalidate policy](#stale-while-revalidate-serve-then-refresh) below.
+
+### Invalidating CDN Content
+
+Two ways to change a retained P100 asset are:
+
+- **Invalidate its existing URL:** Ask the CDN to stop reusing that edge copy; a later request can fetch the replacement.
+- **Publish a versioned URL:** Change, for example, `/products/P100/front.v7.jpg` to `/products/P100/front.v8.jpg` and update the page/reference that selects it.
+
+A CDN purge does not necessarily remove an existing browser copy. Versioned URLs let old and new assets coexist, but readers still need the updated reference and old assets need a retention/cleanup policy. This is URL versioning, not a database transaction or automatic object-store version selection. [CloudFront: invalidation and versioned names](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Invalidation.html)
+
 ## Requirements, Benefits, and Trade-Offs
 
 ### A Conceptual Cache API
@@ -156,6 +229,8 @@ CDN means **content delivery network**; HTTP means **Hypertext Transfer Protocol
 
 A disposable product-title copy can be rebuilt from PostgreSQL. If a session or another record exists **only** in an in-memory store, losing it has different consequences. Define whether loss means safe reauthentication, loss of application state, or an unacceptable failure.
 
+For browser and edge response reuse, see [cache layers and HTTP controls](#cache-layers-browser-cdn-and-application). Before caching an expensive database result, also review [query performance](Databases-and-Storage.md#query-performance-and-database-access), [normalization/denormalization](Databases-and-Storage.md#normalization-and-indexes), and [partitioning versus sharding](Databases-and-Storage.md#partitioning-and-sharding). These solve different parts of the workload; a cache does not remove the need to optimize source access.
+
 Caching intermediate processing results is also different from operating a durable message queue. Redis can serve roles beyond caching, but a cached value does not automatically provide message retention, consumer acknowledgment, or replay guarantees.
 
 Caching can reduce backend load and improve response time. It does not guarantee fixed latency, unlimited scaling, lower total cost, or protection from denial-of-service attacks. Access controls, rate limits, and other protections remain separate responsibilities.
@@ -184,8 +259,11 @@ Keys should identify what was cached: application/environment, tenant or user sc
 | **Read-through** | A cache-facing component/loader obtains missing values | Simplifies callers; requires a configured loading mechanism |
 | **Write-through** | A write path updates the source and cache before reporting success under its contract | Extra work/latency; partial failures still need handling |
 | **Write-behind** | A write is accepted before an asynchronous source update completes | Durability, ordering, and recovery become critical |
+| **Write-around** | Write the source without populating the cache; later reads may load it | Avoids caching rarely read writes; existing copies still need invalidation |
 
 These are responsibility patterns. Redis or Memcached does not automatically know how to load an arbitrary application database. A library, application, or additional component may implement the behavior.
+
+**Write-around is a write-path choice that can accompany cache-aside reads.** Commit P100's new title to PostgreSQL, invalidate an existing `catalog-title:P100` copy when required, and wait for a later read to populate it. The write does not fill the cache. This can avoid unnecessary population, but it retains the commit/invalidation failure gap and stale-refill race; it is not a consistency guarantee.
 
 Write-behind is a different correctness contract from the P100 cache-aside example. An acknowledgment from a volatile cache is not proof that the source update is durable. A cache and a database do not automatically share [one transaction](Databases-and-Storage.md#distributed-transactions).
 
@@ -215,6 +293,71 @@ The reader loaded the old value before the writer committed, then populated the 
 Depending on the requirement, evaluate version-aware cache updates, coordinated refreshes, reliable invalidation/reconciliation, or bypassing the cache for authoritative checks. These mechanisms need their own failure rules; a version field alone does not prevent an unconditional stale write. Bounded TTLs can limit retention of one bad fill, but do not establish transactional freshness.
 
 > **Cache-aside is a loading pattern, not a consistency protocol. Decide which stale results are acceptable and which operations must consult authority.**
+
+### Stale-While-Revalidate: Serve, Then Refresh
+
+**Stale-while-revalidate (SWR)** means a permitted stale value can be returned immediately while a background task refreshes it. Use it for content whose delay is acceptable, such as a catalog display; authoritative stock, charging, and payment decisions need their required business checks.
+
+This is a **separate P100 teaching policy**, not a change to the earlier hard 60-second TTL example:
+
+| Age since this value was loaded | Application policy |
+| --- | --- |
+| **Under 60 seconds** | Serve as fresh under this policy |
+| **60 to under 90 seconds** | May serve the retained value and start a background refresh |
+| **90 seconds or older** | Do not serve that stale value under this policy; obtain an acceptable result or return an error |
+
+Suppose the retained title is `Laptop`, its age is 70 seconds, and PostgreSQL now contains `Laptop Pro`:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Application
+    participant K as Cache
+    participant D as PostgreSQL
+    C->>A: Read P100 title
+    A->>K: Get retained value and load time
+    K-->>A: Laptop, age 70 seconds
+    A-->>C: Laptop, permitted stale display
+    Note over A,D: Background refresh after responding
+    A->>D: Read P100 title
+    D-->>A: Laptop Pro
+    A->>K: Store new value and freshness metadata
+    K-->>A: Stored
+```
+
+The application needs a **freshness deadline** at 60 seconds and a **retention/stale-serving deadline** at 90 seconds. It could retain the value and metadata until the latter while checking both deadlines on reads. A Redis key already expired with `EX 60` cannot simply be read during seconds 60–89.
+
+Coalesce concurrent refreshes so many stale reads do not all reload PostgreSQL. If refresh fails, do not extend the old value's deadline just because an attempt occurred. At age 90, this policy stops stale serving. A successful new load starts a new window, but does not prove the source read itself was current. Concurrent updates and stale completions still need the earlier [race-handling rules](#a-stale-refill-race).
+
+HTTP has a related response directive, for example `Cache-Control: max-age=60, stale-while-revalidate=30`: supporting caches may reuse a stale response during the additional window while attempting revalidation. It does not configure an application loader or Redis automatically. [RFC 5861: stale-while-revalidate](https://datatracker.ietf.org/doc/html/rfc5861#section-3)
+
+### Event-Driven Invalidation and Versioned Keys
+
+**A source change can trigger cache invalidation instead of waiting only for TTL.** For example:
+
+1. Commit P100's title change to `Laptop Pro` in PostgreSQL.
+2. Deliver a change notification identifying P100 and, where needed, its data version.
+3. Invalidate the affected title entry and any dependent response/local copies.
+4. Let later reads reload the source, using the required freshness rules.
+
+There is a failure gap between a database commit and a separate notification publish. A reliable design needs a recoverable change path, such as change data capture (CDC) or a transactional outbox, plus delivery monitoring and reconciliation. A transactional outbox records the pending event with the source change; a separate worker delivers it. See [snapshots, CDC, and replay](Data-Engineering-for-Solution-Architecture.md#snapshots-cdc-and-replay) and the [transactional outbox pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html).
+
+Consumers must handle duplicate delivery, delayed/out-of-order events, and downtime. Repeated invalidation can be idempotent; applying event payloads as cache updates additionally needs ordering/version rules so an older event cannot overwrite newer data. Missed invalidations and in-flight stale refills still need recovery.
+
+**Redis Pub/Sub is at-most-once:** a disconnected subscriber can miss an invalidation permanently. Publishing a message is not proof that every cache copy was invalidated. Durable delivery/replay, bounded TTL, and reconciliation address different parts of the problem. [Redis Pub/Sub delivery semantics](https://redis.io/docs/latest/develop/pubsub/#delivery-semantics)
+
+A different technique is to include a **data version** in the key:
+
+| Key | Illustrative content |
+| --- | --- |
+| `catalog-title:P100:v7` | `Laptop` |
+| `catalog-title:P100:v8` | `Laptop Pro` |
+
+Readers selecting v8 do not overwrite v7's entry. However, they need a reliable way to select the required version, such as an updated authoritative reference. An outdated “current version” pointer can still direct them to v7; adding a suffix alone does not solve freshness. Old entries need expiration or cleanup.
+
+A **data version** identifies a source revision. A **schema/representation version** identifies an encoding or response shape; changing the format does not necessarily mean the underlying product changed. Neither kind of version automatically makes cache/source updates atomic.
+
+> **Invalidation removes a copy. Versioning distinguishes copies. Correct reads still depend on delivery, version selection, and failure handling.**
 
 ## Eviction Policies and a Local LRU Cache
 
@@ -559,7 +702,7 @@ Start with the smallest arrangement that meets measured needs. Before adding ser
 
 Study in this order:
 
-**Hit/miss and authority → cache-aside → TTL/invalidation → local LRU → deployment → routing/replicas → failures and operations.**
+**Hit/miss and authority → browser/CDN/application layers → cache-aside → TTL/invalidation and refresh → local LRU → deployment → routing/replicas → failures and operations.**
 
 Be ready to explain:
 
@@ -569,8 +712,13 @@ Be ready to explain:
 4. What changes when a cache is shared, sharded, or replicated?
 5. How does the source survive a cold cache or cache outage?
 6. Which values may be stale, and which actions require authoritative checks?
+7. How do `no-cache`, `no-store`, and validation differ, and which layer do they control?
+8. Under the separate SWR policy, what happens at ages 59, 70, and 90 seconds?
+9. Why can an invalidation notification or a versioned key still leave a reader with old data?
 
 A cache reuses results; a local LRU structure manages a bounded working set; networked caches add placement and failure concerns. None removes the need for correct source data, access rules, freshness policies, and recovery.
+
+Browser/CDN response caches and application-data caches have separate policies. Write-around avoids populating on writes; SWR permits bounded stale serving during refresh. Event-driven invalidation and versioned keys help manage change, with delivery and version-selection responsibilities of their own.
 
 > **Cache what is worth reusing. Decide how it becomes fresh, where it lives, and what happens when it disappears.**
 
@@ -579,13 +727,18 @@ A cache reuses results; a local LRU structure manages a bounded working set; net
 - [System design at different scales](Understanding-System-Design.md#system-design-at-different-scales)
 - [Cloud and on-premises responsibilities](Understanding-System-Design.md#system-design-in-cloud-and-on-premises-environments)
 - [Database caches versus materialized views](Databases-and-Storage.md#cached-results-vs-materialized-views)
+- [Query performance and database access](Databases-and-Storage.md#query-performance-and-database-access)
+- [Normalization, denormalization, and indexes](Databases-and-Storage.md#normalization-and-indexes)
+- [Partitioning and sharding](Databases-and-Storage.md#partitioning-and-sharding)
 - [Key-value lookup complexity and hardware](Databases-and-Storage.md#why-key-value-lookups-can-be-fast-complexity-ram-and-disk)
 - [Consistent hashing](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing)
 - [Replication models and replica placement](Databases-and-Storage.md#replication-models-and-replica-placement)
 - [Distributed consistency](Distributed-System-Attributes.md#consistency)
 - [Authorization enforcement](Identity-and-Access-Management.md#authorization-in-practice)
 - [HTTP-facing reverse-proxy functions](Distributed-Systems-Building-Blocks.md#common-reverse-proxy-functions)
+- [CDNs and origin traffic](Distributed-Systems-Building-Blocks.md#cdns-and-origin-traffic)
 - [Derived data and serving choices](Data-Engineering-for-Solution-Architecture.md#storage-and-serving-choices)
+- [Source changes, CDC, and replay](Data-Engineering-for-Solution-Architecture.md#snapshots-cdc-and-replay)
 
 ## Further Reading
 
@@ -606,3 +759,10 @@ A cache reuses results; a local LRU structure manages a bounded working set; net
 - [AWS: Amazon ElastiCache Overview](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html)
 - [Microsoft: Azure Managed Redis Overview](https://learn.microsoft.com/en-us/azure/redis/overview)
 - [Google Cloud: Memorystore for Redis Overview](https://docs.cloud.google.com/memorystore/docs/redis/memorystore-for-redis-overview)
+- [RFC 9111: HTTP Caching](https://datatracker.ietf.org/doc/html/rfc9111)
+- [RFC 9110: Conditional Requests and If-None-Match](https://datatracker.ietf.org/doc/html/rfc9110#section-13.1.2)
+- [RFC 5861: Stale-While-Revalidate](https://datatracker.ietf.org/doc/html/rfc5861#section-3)
+- [MDN: HTTP Caching](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching)
+- [AWS CloudFront: Invalidation and Versioned File Names](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Invalidation.html)
+- [Redis: Pub/Sub Delivery Semantics](https://redis.io/docs/latest/develop/pubsub/#delivery-semantics)
+- [AWS: Transactional Outbox Pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html)
