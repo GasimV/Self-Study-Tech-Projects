@@ -12,6 +12,7 @@
 - [Requirements, Benefits, and Trade-Offs](#requirements-benefits-and-trade-offs)
   - [A Conceptual Cache API](#a-conceptual-cache-api)
   - [When Caching Helps](#when-caching-helps)
+  - [Challenges and Trade-Offs at a Glance](#challenges-and-trade-offs-at-a-glance)
 - [Freshness, Expiration, and Write Patterns](#freshness-expiration-and-write-patterns)
   - [TTL, Eviction, and Invalidation](#ttl-eviction-and-invalidation)
   - [Loading and Write Patterns](#loading-and-write-patterns)
@@ -234,6 +235,21 @@ For browser and edge response reuse, see [cache layers and HTTP controls](#cache
 Caching intermediate processing results is also different from operating a durable message queue. Redis can serve roles beyond caching, but a cached value does not automatically provide message retention, consumer acknowledgment, or replay guarantees.
 
 Caching can reduce backend load and improve response time. It does not guarantee fixed latency, unlimited scaling, lower total cost, or protection from denial-of-service attacks. Access controls, rate limits, and other protections remain separate responsibilities.
+
+### Challenges and Trade-Offs at a Glance
+
+These are the main costs and failure risks to consider together. Follow each challenge's link for the detailed explanation.
+
+| Challenge | Simple example | What helps |
+| --- | --- | --- |
+| **[Stale data](#a-stale-refill-race)** | P100's cached title differs from PostgreSQL | Explicit freshness rules, invalidation, and authoritative checks where required |
+| **[Invalidation complexity](#event-driven-invalidation-and-versioned-keys)** | One application's local copy misses an update | Reliable notifications, expiration, and reconciliation |
+| **[Network overhead](#in-process-co-located-and-shared-caches)** | A remote cache lookup costs more than the work it saves | Measure round trips, payload sizes, and bandwidth; consider suitable local caching |
+| **[Uneven load](#routing-a-key)** | One popular key overloads its cache server while others are idle | Request coalescing, suitable read replicas/local copies, and access-pattern design |
+| **[Memory and cost](#what-to-measure)** | Payloads, metadata, and replicas consume more resources than expected | Memory limits, eviction policies, headroom, and measured sizing |
+| **[Operational complexity](#shards-vs-replicas)** | A node fails or keys move during scaling | Compatible routing, supported failover, controlled warming, and recovery procedures |
+| **[Low reuse or frequent updates](#when-caching-helps)** | An entry changes or expires before anyone reuses it | Cache selectively, compare reuse with update/invalidation cost, or bypass caching |
+| **[Cache outage](#failure-scenarios-and-recovery)** | Fallback traffic overwhelms PostgreSQL | Bounded fallback, timeouts, circuit breaking, and load shedding |
 
 ## Freshness, Expiration, and Write Patterns
 
