@@ -13,6 +13,11 @@
   - [A Conceptual Cache API](#a-conceptual-cache-api)
   - [When Caching Helps](#when-caching-helps)
   - [Challenges and Trade-Offs at a Glance](#challenges-and-trade-offs-at-a-glance)
+- [Designing a Distributed Cache: Step by Step](#designing-a-distributed-cache-step-by-step)
+  - [Functional Requirements](#functional-requirements)
+  - [Non-Functional Requirements](#non-functional-requirements)
+  - [Design Journey](#design-journey)
+  - [Requirements Check](#requirements-check)
 - [Freshness, Expiration, and Write Patterns](#freshness-expiration-and-write-patterns)
   - [TTL, Eviction, and Invalidation](#ttl-eviction-and-invalidation)
   - [Loading and Write Patterns](#loading-and-write-patterns)
@@ -250,6 +255,71 @@ These are the main costs and failure risks to consider together. Follow each cha
 | **[Operational complexity](#shards-vs-replicas)** | A node fails or keys move during scaling | Compatible routing, supported failover, controlled warming, and recovery procedures |
 | **[Low reuse or frequent updates](#when-caching-helps)** | An entry changes or expires before anyone reuses it | Cache selectively, compare reuse with update/invalidation cost, or bypass caching |
 | **[Cache outage](#failure-scenarios-and-recovery)** | Fallback traffic overwhelms PostgreSQL | Bounded fallback, timeouts, circuit breaking, and load shedding |
+
+## Designing a Distributed Cache: Step by Step
+
+**Start with the required behavior, build the smallest useful cache, then address the limits you actually encounter.** This walkthrough connects the existing explanations using P100's catalog title. It is a design exercise, not a requirement to deploy every stage.
+
+### Functional Requirements
+
+**Functional requirements (FRs) describe what the cache must do.**
+
+| Requirement | P100 behavior | Detail |
+| --- | --- | --- |
+| **Read by key** | `get(catalog-title:P100)` returns a usable title, a miss, or an error | [Conceptual cache API](#a-conceptual-cache-api) |
+| **Store or replace** | `put(key, value, ttl)` stores `Laptop` with the illustrative 60-second lifetime | [API and expiry](#ttl-eviction-and-invalidation) |
+| **Invalidate** | `delete(key)` removes an entry; an absent key is a normal outcome | [Source updates](#updating-the-source-and-invalidating-the-cache) |
+| **Handle expiry and capacity** | Expired entries are not valid hits; the selected policy handles a full cache | [Expiry](#ttl-eviction-and-invalidation) and [eviction](#eviction-policies-and-a-local-lru-cache) |
+
+The **application**, not the cache's `get` operation itself, loads PostgreSQL on a miss in this cache-aside design. A successful source read and successful cache population are separate outcomes.
+
+### Non-Functional Requirements
+
+**Non-functional requirements (NFRs) describe the quality and operating limits the design must meet.** Set measurable targets for the actual workload; the following questions identify what to specify.
+
+| Requirement | What to decide |
+| --- | --- |
+| **Performance** | Required throughput and end-to-end latency, including misses and network calls |
+| **Capacity and scalability** | Payload/metadata sizes, memory headroom, expected growth, and how capacity can increase |
+| **Availability** | Which failures to tolerate and how quickly service must recover |
+| **Freshness and correctness** | Which stale displays are acceptable and which actions must use authoritative checks |
+| **Security** | Who may access each entry, including tenant/user isolation |
+| **Operations and cost** | Monitoring, safe fallback, recovery effort, and an acceptable resource budget |
+
+A 60-second entry lifetime does not guarantee that the value matches the latest database commit. Likewise, expected O(1) local operations do not establish an end-to-end latency target.
+
+### Design Journey
+
+1. **Define the source and read/write flows.** PostgreSQL owns P100's record; the cache retains a reusable copy. Use [cache-aside](#cache-aside-read-flow) and the existing source-update/invalidation path. Keep authoritative checkout decisions separate.
+
+2. **Build a bounded local cache.** A hash map finds an entry; a doubly linked list supports an exact LRU teaching policy. On a hit, move the entry to the front. On a miss, the application loads the source; population evicts the tail if full. Keep expiry checks separate from recency. See the [LRU trace and pseudocode](#worked-lru-trace).
+
+3. **Choose where it lives.** An in-process or co-located cache can avoid a remote-server hop, but each instance has its own copies and shares application resources/failures. A [shared standalone cache](#in-process-co-located-and-shared-caches) enables reuse across app instances and independent capacity management, while adding network calls and a shared dependency.
+
+4. **Shard when one cache server is insufficient.** Divide keys using a supported [key-aware routing scheme](#routing-a-key). The existing two-shard example illustrates placement. Check hot keys, routing changes, movement, and cold-cache refill; adding nodes does not guarantee linear scaling.
+
+5. **Add supported replication/failover when required.** The existing [shards-versus-replicas example](#shards-vs-replicas) has two copies per shard on separate hosts. Copies can provide another serving option, but promotion, client reconnects, surviving capacity, and possible replication lag still matter. Replication alone does not establish freshness or uninterrupted availability.
+
+6. **Design freshness across every copy.** Specify TTL, invalidation, and stale-result rules. Account for the [stale-refill race](#a-stale-refill-race); choose additional versioning, notifications, or bounded stale serving only where justified. A managed cache does not make cache/database writes atomic.
+
+7. **Protect the source and review the design.** Bound retries and fallback, control concurrent loads, and plan for cold starts and outages. [Measure](#what-to-measure) latency, source load, errors, memory, and cost under both normal and failure conditions.
+
+### Requirements Check
+
+**A mechanism is a candidate solution; verification shows whether it meets the requirement.**
+
+| Requirement | Design choice | What to verify |
+| --- | --- | --- |
+| **Functional behavior** | Key API, expiry, and bounded eviction | Hit/miss/error distinction, replacement, absent deletion, expiry, and full-cache behavior |
+| **Performance** | Suitable local structures and placement | Measured hit/miss latency and throughput under representative concurrency |
+| **Scalability** | Appropriate sharding and routing | Growth, hot keys, migration, and refill load |
+| **Availability** | Supported replicas/failover and bounded fallback | Node failure, client reconnection, recovery, and source capacity |
+| **Freshness** | Explicit invalidation and stale-result policy | Updates, missed notifications, stale refills, and delayed replicas |
+| **Security and cost** | Access isolation and resource limits | No cross-user leakage; payload, replica, and operational costs remain acceptable |
+
+Use [Choosing a Cache Architecture](#choosing-a-cache-architecture) to decide which stages are necessary. A local cache, shared cache, or managed service can each be appropriate; the requirement determines the choice.
+
+> **Requirements → bounded cache → deployment → routing → replication → freshness and failure handling → verification.**
 
 ## Freshness, Expiration, and Write Patterns
 
@@ -719,6 +789,8 @@ Start with the smallest arrangement that meets measured needs. Before adding ser
 Study in this order:
 
 **Hit/miss and authority → browser/CDN/application layers → cache-aside → TTL/invalidation and refresh → local LRU → deployment → routing/replicas → failures and operations.**
+
+For a connected design exercise, follow [Designing a Distributed Cache: Step by Step](#designing-a-distributed-cache-step-by-step), then check each decision against its requirements.
 
 Be ready to explain:
 
