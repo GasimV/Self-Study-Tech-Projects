@@ -35,6 +35,7 @@
   - [Managed Cloud Caches](#managed-cloud-caches)
 - [Routing, Sharding, and Replication](#routing-sharding-and-replication)
   - [Routing a Key](#routing-a-key)
+    - [Worked Example: Adding or Removing a Cache Node](#worked-example-adding-or-removing-a-cache-node)
   - [Shards vs. Replicas](#shards-vs-replicas)
 - [Failures, Security, and Operations](#failures-security-and-operations)
   - [Failure Scenarios and Recovery](#failure-scenarios-and-recovery)
@@ -650,6 +651,24 @@ Redis Cluster uses **16,384 hash slots**, with a documented key-to-slot mapping 
 An ordinary round-robin load balancer cannot replace key-aware placement unless the receiving service can route the request appropriately. Nor must every application query every cache server. A single very hot key can overload its owner even when the total key count is balanced.
 
 See the existing [consistent-hashing notes](Distributed-Systems-Theorems-and-Data-Structures.md#consistent-hashing), [worked hashing example](examples/consistent_hashing/README.md), and [partitioning discussion](Databases-and-Storage.md#scalability-partitioning-and-consistent-hashing).
+
+#### Worked Example: Adding or Removing a Cache Node
+
+A request for P100 reaches App A or App B through the load balancer. The app forms the cache key `catalog-title:P100`. Suppose the hash function maps that key to **423**. Both apps compute the same hash when they use the same key and hash function. They also need the same view of which nodes own the keys. See [Two Requests, Two App Servers](#two-requests-two-app-servers).
+
+**Start with modulo routing.** Assign C1, C2, and C3 the indexes 0, 1, and 2. With three nodes, `423 % 3 = 0`, so P100 goes to **C1**. Append C4 at index 3 and the calculation becomes `423 % 4 = 3`, so the app checks **C4**. The cached title may still be on C1. The change to the divisor can redirect many existing keys and cause a wave of misses.
+
+**Try the same change with a consistent hash ring.** Use the illustrative hash space **0–999** and put C1 at **100**, C2 at **300**, and C3 at **500**. These positions are called **tokens**. The ring is a routing map that wraps from 999 to 0. From the key's position, move clockwise to the first token at or after it. That token identifies the server to check.
+
+| Cluster change | P100 lookup from hash 423 | What changes |
+| --- | --- | --- |
+| **Start with C1, C2, C3** | First token is 500, owned by **C3** | C3 owns the range `(300, 500]`. |
+| **Add C4 at token 450** | First token is now 450, owned by **C4** | C4 takes `(300, 450]` from C3. A key at 470 still goes to C3. |
+| **Remove C4 again** | First token is 500, owned by **C3** | C3 takes back `(300, 450]`. Other ranges keep their owners. |
+
+In this ring, `(300, 450]` means hashes **greater than 300, up to and including 450**. P100 stays at 423 throughout. The change in ownership affects where the app looks. If the new owner has no usable entry, the app reads PostgreSQL and fills that cache. Coordinate routing updates and limit concurrent refills to protect the database. See the [before-and-after ring diagrams](Databases-and-Storage.md#scalability-partitioning-and-consistent-hashing).
+
+**Virtual nodes help spread ownership.** Give a physical server several tokens by hashing stable identifiers such as `C3#1`, `C3#2`, and `C3#3`. If the next token clockwise belongs to C3, the request goes to C3. With several tokens, C3 can own smaller ranges in different parts of the ring. This can spread keys more evenly. Requests for one hot key can still concentrate on its owner. See [Virtual Nodes: Multiple Tokens per Server](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server).
 
 ### Shards vs. Replicas
 
