@@ -290,19 +290,25 @@ A 60-second entry lifetime does not guarantee that the value matches the latest 
 
 ### Design Journey
 
-1. **Define the source and read/write flows.** PostgreSQL owns P100's record; the cache retains a reusable copy. Use [cache-aside](#cache-aside-read-flow) and the existing source-update/invalidation path. Keep authoritative checkout decisions separate.
+1. **Avoid reading the same title from PostgreSQL each time.** Start with one application server. The first request for P100 misses in its local cache, so the application reads `Laptop` from PostgreSQL and stores it as `catalog-title:P100` with a 60-second TTL. Later requests can reuse the title while the entry is valid. Hits save database work, but the application now has a second copy to keep fresh.
 
-2. **Build a bounded local cache.** A hash map finds an entry; a doubly linked list supports an exact LRU teaching policy. On a hit, move the entry to the front. On a miss, the application loads the source; population evicts the tail if full. Keep expiry checks separate from recency. See the [LRU trace and pseudocode](#worked-lru-trace).
+2. **Limit memory as more products are cached.** Use a hash map to find entries by key and a doubly linked list to track recency. In this local LRU example, the cache holds two titles and starts with P100. Assume the entries stay valid throughout the trace.
 
-3. **Choose where it lives.** An in-process or co-located cache can avoid a remote-server hop, but each instance has its own copies and shares application resources/failures. A [shared standalone cache](#in-process-co-located-and-shared-caches) enables reuse across app instances and independent capacity management, while adding network calls and a shared dependency.
+   | Request | What happens | Most to least recently used |
+   | --- | --- | --- |
+   | **P200 misses with space** | Read from PostgreSQL and add P200 at the front | P200 → P100 |
+   | **P100 hits** | Return the cached title and move P100 to the front | P100 → P200 |
+   | **P300 misses when full** | Read from PostgreSQL, evict P200 from the list and map, then add P300 | P300 → P100 |
 
-4. **Shard when one cache server is insufficient.** Divide keys using a supported [key-aware routing scheme](#routing-a-key). The existing two-shard example illustrates placement. Check hot keys, routing changes, movement, and cold-cache refill; adding nodes does not guarantee linear scaling.
+   The limit bounds the number of entries. Evicted titles may need another database read, and even a recently used title can expire.
 
-5. **Add supported replication/failover when required.** The existing [shards-versus-replicas example](#shards-vs-replicas) has two copies per shard on separate hosts. Copies can provide another serving option, but promotion, client reconnects, surviving capacity, and possible replication lag still matter. Replication alone does not establish freshness or uninterrupted availability.
+3. **Share cached titles across application servers.** App A has P100 in its local cache. When traffic grows and App B joins, its local cache starts empty, so it reads P100 from PostgreSQL again. Move to a shared cache service and both apps can use the same entry once either app fills it. The cache can now be sized separately from the apps, and each lookup adds a network round trip.
 
-6. **Design freshness across every copy.** Specify TTL, invalidation, and stale-result rules. Account for the [stale-refill race](#a-stale-refill-race); choose additional versioning, notifications, or bounded stale serving only where justified. A managed cache does not make cache/database writes atomic.
+4. **Split the keys when the shared cache server reaches its limit.** Route P100 to shard A and P200 to shard B on separate servers. Each application uses the same routing rules, so both reach shard A for P100. The shards divide storage and traffic. A surge of P100 requests can still overload shard A, and moving keys during scaling can cause misses and refill traffic.
 
-7. **Protect the source and review the design.** Bound retries and fallback, control concurrent loads, and plan for cold starts and outages. [Measure](#what-to-measure) latency, source load, errors, memory, and cost under both normal and failure conditions.
+5. **Keep serving when P100's cache server fails.** Give shard A a replica on another host so an eligible copy can take over. During failover, the application times out cache calls quickly and caps concurrent fallback reads to PostgreSQL. Requests beyond that limit can receive a temporary error. Asynchronous replication can leave the promoted copy behind. Test reconnection and whether the surviving cache and PostgreSQL can handle the traffic. Apply the same checks to shard B.
+
+6. **Update the title through the same design.** Commit `Laptop Pro` to PostgreSQL, then invalidate `catalog-title:P100` on shard A. In the normal path, the next request misses, reloads the new title, and caches it. If deletion fails or a reader that fetched `Laptop` before the commit fills the cache after deletion, a later request can still see the old title. The TTL limits how long that fill can be reused. If the display needs tighter freshness, test a stronger update or invalidation policy. Checkout still checks price and stock against their authoritative sources.
 
 ### Requirements Check
 
@@ -310,12 +316,14 @@ A 60-second entry lifetime does not guarantee that the value matches the latest 
 
 | Requirement | Design choice | What to verify |
 | --- | --- | --- |
-| **Functional behavior** | Key API, expiry, and bounded eviction | Hit/miss/error distinction, replacement, absent deletion, expiry, and full-cache behavior |
-| **Performance** | Suitable local structures and placement | Measured hit/miss latency and throughput under representative concurrency |
-| **Scalability** | Appropriate sharding and routing | Growth, hot keys, migration, and refill load |
-| **Availability** | Supported replicas/failover and bounded fallback | Node failure, client reconnection, recovery, and source capacity |
-| **Freshness** | Explicit invalidation and stale-result policy | Updates, missed notifications, stale refills, and delayed replicas |
-| **Security and cost** | Access isolation and resource limits | No cross-user leakage; payload, replica, and operational costs remain acceptable |
+| **Functional behavior** | Key API, expiry, and bounded eviction | Reproduce the P100/P200/P300 trace. Check replacement, expiry, deletion of an absent key, and error handling. |
+| **Performance** | Local LRU and a shared cache | Measure latency and throughput for hits and misses. Check whether sharing reduces PostgreSQL reads enough to justify the network hop. |
+| **Scalability** | Key-aware routing across two shards | Increase traffic and the number of keys. Check what happens when P100 dominates demand and when keys move. |
+| **Availability** | Replicas and bounded fallback | Stop shard A's primary in a test. Check recovery time, client reconnection, and the maximum load PostgreSQL sees during failover. |
+| **Freshness and correctness** | Invalidation, TTL, and authoritative checks | Change P100's title during a slow read or failover. Check how long an old title can be served and whether checkout still uses authoritative data. |
+| **Security and cost** | Access isolation and resource limits | Verify access controls. Measure memory use, replication traffic, and operating cost against the workload targets. |
+
+See the [cache-aside sequence](#cache-aside-read-flow), [LRU illustration](#worked-lru-trace), [LRU pseudocode](#lru-pseudocode-and-complexity), [deployment comparison](#in-process-co-located-and-shared-caches), and [shard and replica diagram](#shards-vs-replicas).
 
 Use [Choosing a Cache Architecture](#choosing-a-cache-architecture) to decide which stages are necessary. A local cache, shared cache, or managed service can each be appropriate; the requirement determines the choice.
 
