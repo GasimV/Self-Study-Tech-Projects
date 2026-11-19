@@ -31,6 +31,7 @@
 - [Deployment Choices](#deployment-choices)
   - [In-Process, Co-Located, and Shared Caches](#in-process-co-located-and-shared-caches)
   - [Two Requests, Two App Servers](#two-requests-two-app-servers)
+  - [Regular Cache vs. Distributed Cache](#regular-cache-vs-distributed-cache)
   - [Optional L1 and L2](#optional-l1-and-l2)
   - [Managed Cloud Caches](#managed-cloud-caches)
 - [Routing, Sharding, and Replication](#routing-sharding-and-replication)
@@ -597,6 +598,20 @@ Run the same two requests through each design. Start with empty caches and let t
 On a miss, the app reads PostgreSQL directly and fills the cache. The load balancer chooses the app server. A deployment with multiple cache nodes also needs a routing rule to find the node that owns a given cache key. A single cache server is enough to share entries, and sharding can spread keys across more servers as demand grows. See [Routing a Key](#routing-a-key).
 
 If PostgreSQL changes P100's title to `Laptop Pro`, either design can still return the old title until the cached copy is updated, removed, or expires. Sharing lets both apps reuse the same copy. Freshness still depends on the write and invalidation path. See [Updating the Source and Invalidating the Cache](#updating-the-source-and-invalidating-the-cache).
+
+### Regular Cache vs. Distributed Cache
+
+Here, **regular cache** means a cache inside each app server. A **shared cache** lets both apps reuse one entry and can start on one cache server. A **distributed cache** runs the shared cache across multiple cache nodes.
+
+| What happens? | Regular cache (local) | Distributed cache | What helps? |
+| --- | --- | --- | --- |
+| **Look up P100** | Each app checks its own memory. | Both apps reach the cache node responsible for P100 over the network. | Use a local cache for low latency when sharing adds little benefit. |
+| **App A fills P100, then App B gets the same request** | App B can miss and read PostgreSQL again. | App B can reuse the entry App A filled. | A shared entry saves the second database read in the [two-request example](#two-requests-two-app-servers). |
+| **The title changes to `Laptop Pro`** | Separate copies can remain stale on different apps. | Both apps can see the same stale title. | Commit the change, then [invalidate the affected entry](#updating-the-source-and-invalidating-the-cache). Use a TTL to limit how long a fill stays usable. |
+| **One cache server runs out of capacity** | Adding app servers adds separate caches that can duplicate the same data. | More cache nodes can hold different subsets of keys. | [Shard by key](#routing-a-key) so each app can find the node responsible for P100. |
+| **A cache node joins or leaves** | Adding an app starts an empty cache. Removing an app discards its own cache. | Some keys may have new owners, and their next lookup can miss. | [Consistent hashing](#worked-example-adding-or-removing-a-cache-node) limits which keys move. Refill missing entries at a rate the database can handle. |
+| **The hash ring has uneven ranges** | Each app manages its own set of cached keys. | Some cache nodes can own far more keys than others. | [Virtual nodes](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server) can spread ownership more evenly. A single popular key can still overload its owner. |
+| **A cache server fails** | An app restart empties that app's local cache. | All apps using the failed cache node can be affected. | Use [replicas and failover](#shards-vs-replicas) where needed, and cap fallback reads to protect PostgreSQL. |
 
 ### Optional L1 and L2
 
