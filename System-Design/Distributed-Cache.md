@@ -455,13 +455,13 @@ A **data version** identifies a source revision. A **schema/representation versi
 
 ## Eviction Policies and a Local LRU Cache
 
-| Policy | Expanded name | Removes | What to consider |
-| --- | --- | --- | --- |
-| **FIFO** | First in, first out | Earliest inserted entry | Ignores subsequent reuse |
-| **LIFO** | Last in, first out | Latest inserted entry | Can discard newly useful data; specialized rather than a general default |
-| **MRU** | Most recently used | Most recently accessed entry | Can suit particular scan/reuse patterns; validate the workload |
-| **LRU** | Least recently used | Least recently accessed entry | Recency is a useful prediction, not proof of future reuse |
-| **LFU** | Least frequently used | Entry with the lowest tracked frequency | Aging/decay helps adapt when previously popular entries become cold |
+| Policy | Expanded name | Removes | What to consider | Good-fit use case and software |
+| --- | --- | --- | --- | --- |
+| **FIFO** | First in, first out | Earliest inserted entry | Ignores subsequent reuse | **Restaurant reservation system.** The host's dashboard keeps a rolling cache of recent booking updates. When it fills, the oldest update drops out first. One Python implementation is [cachetools `FIFOCache`](https://cachetools.readthedocs.io/en/stable/#cachetools.FIFOCache). |
+| **LIFO** | Last in, first out | Latest inserted entry | Can discard newly useful data; specialized rather than a general default | **Social media story suggestions.** In a niche design, a cache holds older, reusable suggestions alongside temporary ones. A burst of one-off suggestions mostly replaces the newest entries from the same burst. One Python implementation is [Cacheout `LIFOCache`](https://cacheout.readthedocs.io/en/latest/lifo.html). |
+| **MRU** | Most recently used | Most recently accessed entry | Can suit particular scan/reuse patterns; validate the workload | **Document editing software.** A layout task makes repeated passes through a long document in page order. When the document exceeds cache capacity, the page just processed can be evicted because it comes up again only on the next pass. One Python implementation is [Cacheout `MRUCache`](https://cacheout.readthedocs.io/en/latest/mru.html). [Sequential scan study](https://courses.cs.duke.edu/spring03/cps216/papers/chou-dewitt-1985.pdf) |
+| **LRU** | Least recently used | Least recently accessed entry | Recency is a useful prediction, not proof of future reuse | **Web browser cache.** As a user browses a site, recently loaded images and stylesheets are likely to be reused on the next page. LRU keeps those resources ahead of older ones. A cache server example is [Redis `allkeys-lru`](https://redis.io/docs/latest/develop/reference/eviction/#approximated-lru-algorithm), which approximates LRU. |
+| **LFU** | Least frequently used | Entry with the lowest tracked frequency | Aging/decay helps adapt when previously popular entries become cold | **Music streaming service.** A cache of track details or album artwork can keep frequently requested items for popular songs even through gaps between plays. A cache server example is [Redis `allkeys-lfu`](https://redis.io/docs/latest/develop/reference/eviction/#lfu-eviction), which estimates access frequency and decays older counts. |
 
 Expiration and explicit invalidation are separate from choosing a capacity victim. A configuration may reject new writes instead of evicting existing entries. Policy names also do not specify every implementation detail.
 
