@@ -30,6 +30,7 @@
   - [LRU Pseudocode and Complexity](#lru-pseudocode-and-complexity)
 - [Deployment Choices](#deployment-choices)
   - [In-Process, Co-Located, and Shared Caches](#in-process-co-located-and-shared-caches)
+  - [Two Requests, Two App Servers](#two-requests-two-app-servers)
   - [Optional L1 and L2](#optional-l1-and-l2)
   - [Managed Cloud Caches](#managed-cloud-caches)
 - [Routing, Sharding, and Replication](#routing-sharding-and-replication)
@@ -243,18 +244,18 @@ Caching can reduce backend load and improve response time. It does not guarantee
 
 ### Challenges and Trade-Offs at a Glance
 
-These are the main costs and failure risks to consider together. Follow each challenge's link for the detailed explanation.
+Here, a **local cache** lives inside one application process, and a **distributed cache** is a shared service that runs across multiple cache servers. A remote cache on a single server already introduces network calls. Follow each challenge's link for more detail.
 
-| Challenge | Simple example | What helps |
-| --- | --- | --- |
-| **[Stale data](#a-stale-refill-race)** | P100's cached title differs from PostgreSQL | Explicit freshness rules, invalidation, and authoritative checks where required |
-| **[Invalidation complexity](#event-driven-invalidation-and-versioned-keys)** | One application's local copy misses an update | Reliable notifications, expiration, and reconciliation |
-| **[Network overhead](#in-process-co-located-and-shared-caches)** | A remote cache lookup costs more than the work it saves | Measure round trips, payload sizes, and bandwidth; consider suitable local caching |
-| **[Uneven load](#routing-a-key)** | One popular key overloads its cache server while others are idle | Request coalescing, suitable read replicas/local copies, and access-pattern design |
-| **[Memory and cost](#what-to-measure)** | Payloads, metadata, and replicas consume more resources than expected | Memory limits, eviction policies, headroom, and measured sizing |
-| **[Operational complexity](#shards-vs-replicas)** | A node fails or keys move during scaling | Compatible routing, supported failover, controlled warming, and recovery procedures |
-| **[Low reuse or frequent updates](#when-caching-helps)** | An entry changes or expires before anyone reuses it | Cache selectively, compare reuse with update/invalidation cost, or bypass caching |
-| **[Cache outage](#failure-scenarios-and-recovery)** | Fallback traffic overwhelms PostgreSQL | Bounded fallback, timeouts, circuit breaking, and load shedding |
+| Challenge | Local cache | Distributed cache | How to handle it |
+| --- | --- | --- | --- |
+| **[Stale data](#a-stale-refill-race)** | P100's cached title can differ from PostgreSQL after an update. | The same stale refill can happen, and a lagging replica can serve an older copy. | Set freshness limits and use authoritative reads for decisions that require current data. |
+| **[Invalidation complexity](#event-driven-invalidation-and-versioned-keys)** | One process can clear its own entry. With several app instances, each local copy needs attention. | Apps using the same shared entry can invalidate it once at its owning shard. Replicas and any local copies may catch up later. | Invalidate after the source commit, retry failures, and notify local caches that also hold the key. Use TTLs and reconciliation to limit the impact of missed updates. |
+| **[Network overhead](#in-process-co-located-and-shared-caches)** | A hit is a lookup inside the process. | A hit requires a network round trip. Large values add transfer cost, and calls can time out. | Measure hit latency and payload sizes. Use short timeouts and consider a local cache for frequently reused values. |
+| **[Uneven load](#routing-a-key)** | Each app serves hits for a popular key from its own cache. Concurrent misses can still overload the source. | Requests from many app instances for one popular key can overload its shard while others have spare capacity. | Coalesce misses, use local copies or read replicas where freshness permits, and revisit key placement for unevenly loaded shards. |
+| **[Memory and cost](#what-to-measure)** | Entries compete with the app for memory, and each app instance can retain a separate copy. | A shared cache can reduce per-app duplication, but cache servers, metadata, and replicas need their own budget. | Set a memory budget and an eviction policy. Size for payloads, metadata, replicas, and headroom using measurements. |
+| **[Operational complexity](#shards-vs-replicas)** | The app owns one cache within its own process. | Clients or a proxy need to route keys to the right shard as servers join, leave, or fail over. | Use supported routing and failover. Test changes in membership, recovery, and gradual refilling. |
+| **[Low reuse or frequent updates](#when-caching-helps)** | A value can expire or change before anyone reuses it. | The same low reuse can also mean paying for remote lookups and invalidation with little benefit. | Cache selectively. Compare the reads saved with lookup and update costs, and bypass the cache for low-value entries. |
+| **[Cache outage](#failure-scenarios-and-recovery)** | An app restart empties its local cache, so that instance needs to refill it. | A shared shard outage can send many app instances to PostgreSQL at once. | Cap concurrent fallback reads, limit retries, and shed load when the source is at capacity. |
 
 ## Designing a Distributed Cache: Step by Step
 
@@ -302,7 +303,7 @@ A 60-second entry lifetime does not guarantee that the value matches the latest 
 
    The limit bounds the number of entries. Evicted titles may need another database read, and even a recently used title can expire.
 
-3. **Share cached titles across application servers.** App A has P100 in its local cache. When traffic grows and App B joins, its local cache starts empty, so it reads P100 from PostgreSQL again. Move to a shared cache service and both apps can use the same entry once either app fills it. The cache can now be sized separately from the apps, and each lookup adds a network round trip.
+3. **Share cached titles across application servers.** App A has P100 in its local cache. When traffic grows and App B joins, its local cache starts empty, so it reads P100 from PostgreSQL again. Move to a shared cache service and both apps can use the same entry once either app fills it. The cache can now be sized separately from the apps, and each lookup adds a network round trip. See [Two Requests, Two App Servers](#two-requests-two-app-servers).
 
 4. **Split the keys when the shared cache server reaches its limit.** Route P100 to shard A and P200 to shard B on separate servers. Each application uses the same routing rules, so both reach shard A for P100. The shards divide storage and traffic. A surge of P100 requests can still overload shard A, and moving keys during scaling can cause misses and refill traffic.
 
@@ -556,25 +557,45 @@ See the existing [key-value complexity, RAM, and disk explanation](Databases-and
 
 A shared remote service can use one server or a cluster. Local caches also remain useful in large systems; they are not restricted to small applications.
 
+Restarting one application loses its local entries. A separate cache can stay warm across that application's restart, but can itself fail. Co-location shares CPU/memory and a host failure domain; remote placement does not automatically guarantee independent infrastructure or sufficient surviving capacity.
+
+### Two Requests, Two App Servers
+
+The catalog starts with one application server and a local cache. As traffic grows, we add App B and put a load balancer in front of both apps. Each request goes to one app. In this example, the first request for P100 goes to App A and the second goes to App B. See [Load Balancing Overview](Distributed-Systems-Building-Blocks.md#load-balancing-overview).
+
 ```mermaid
 flowchart TB
-    subgraph LOCAL["Local: independent in-process copies"]
-        direction LR
-        L1["App 1<br/>Local cache"]
-        L2["App 2<br/>Local cache"]
-        L3["App 3<br/>Local cache"]
-    end
-    subgraph SHARED["Shared remote service"]
+    subgraph LOCAL["Separate local caches"]
         direction TB
-        A1["App 1"] --> K["Shared cache<br/>One server or cluster"]
-        A2["App 2"] --> K
-        A3["App 3"] --> K
+        LU["Users"] --> LL["Load balancer"]
+        LL --> LA["App A<br/>Own cache"]
+        LL --> LB["App B<br/>Own cache"]
+        LA -->|On miss| LD["PostgreSQL"]
+        LB -->|On miss| LD
+    end
+    subgraph SHARED["One shared cache"]
+        direction TB
+        SU["Users"] --> SL["Load balancer"]
+        SL --> SA["App A"]
+        SL --> SB["App B"]
+        SA --> SK["Shared cache"]
+        SB --> SK
+        SA -->|On miss| SD["PostgreSQL"]
+        SB -->|On miss| SD
     end
 ```
 
-The local diagram shows in-process caches; a co-located separate process is the other local option in the table. Shared-cache arrows mean application access, not broadcasts to every server.
+Run the same two requests through each design. Start with empty caches and let the first request finish filling its cache before the second arrives. Assume the entry stays valid between requests.
 
-Restarting one application loses its local entries. A separate cache can stay warm across that application's restart, but can itself fail. Co-location shares CPU/memory and a host failure domain; remote placement does not automatically guarantee independent infrastructure or sufficient surviving capacity.
+| Request | Separate local caches | One shared cache |
+| --- | --- | --- |
+| **1. App A receives P100** | App A misses, reads `Laptop` from PostgreSQL, and fills its own cache. | App A misses, reads `Laptop` from PostgreSQL, and fills the shared entry `catalog-title:P100`. |
+| **2. App B receives P100** | App B checks its own memory, misses, and reads the same title from PostgreSQL again. It now has its own copy. | App B finds the entry App A filled and returns it without a database read. |
+| **PostgreSQL reads** | **2** | **1** |
+
+On a miss, the app reads PostgreSQL directly and fills the cache. The load balancer chooses the app server. A deployment with multiple cache nodes also needs a routing rule to find the node that owns a given cache key. A single cache server is enough to share entries, and sharding can spread keys across more servers as demand grows. See [Routing a Key](#routing-a-key).
+
+If PostgreSQL changes P100's title to `Laptop Pro`, either design can still return the old title until the cached copy is updated, removed, or expires. Sharing lets both apps reuse the same copy. Freshness still depends on the write and invalidation path. See [Updating the Source and Invalidating the Cache](#updating-the-source-and-invalidating-the-cache).
 
 ### Optional L1 and L2
 
