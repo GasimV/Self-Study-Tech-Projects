@@ -30,6 +30,7 @@
   - [LRU Pseudocode and Complexity](#lru-pseudocode-and-complexity)
 - [Deployment Choices](#deployment-choices)
   - [In-Process, Co-Located, and Shared Caches](#in-process-co-located-and-shared-caches)
+    - [Cache Placement Diagrams](#cache-placement-diagrams)
   - [Two Requests, Two App Servers](#two-requests-two-app-servers)
   - [Regular Cache vs. Distributed Cache](#regular-cache-vs-distributed-cache)
   - [Optional L1 and L2](#optional-l1-and-l2)
@@ -556,6 +557,74 @@ See the existing [key-value complexity, RAM, and disk explanation](Databases-and
 | **Shared remote service** | A separate cache accessed by several applications | Reuse across application instances; independent allocation | Network calls and a shared dependency |
 | **Distributed/sharded service** | Keys are divided across cache servers | Greater aggregate capacity and throughput | Placement, movement, hot keys, and recovery |
 | **Local L1 plus shared L2** | A small local layer in front of a shared layer | Avoid some remote lookups | Another copy and freshness policy to manage |
+
+#### Cache Placement Diagrams
+
+**1. In-process**
+
+```mermaid
+flowchart LR
+    subgraph PA["App A process"]
+        A["App code"] --> CA["Local cache"]
+    end
+    subgraph PB["App B process"]
+        B["App code"] --> CB["Local cache"]
+    end
+```
+
+Each app can keep its own copy of P100. A hit stays inside that app's process.
+
+**2. Co-located process or sidecar**
+
+```mermaid
+flowchart LR
+    subgraph HA["Host A"]
+        A["App A process"] -->|Local connection| CA["Cache process"]
+    end
+    subgraph HB["Host B"]
+        B["App B process"] -->|Local connection| CB["Cache process"]
+    end
+```
+
+Each lookup crosses a process boundary on the same host. The app and cache share that host's resources and can both be affected if it fails.
+
+**3. Shared remote service**
+
+```mermaid
+flowchart LR
+    A["App A"] -->|Network| S["Cache server<br/>Shared P100 entry"]
+    B["App B"] -->|Network| S
+```
+
+Once App A fills P100, App B can read that same entry. This example shows one shared cache server.
+
+**4. Distributed or sharded service**
+
+```mermaid
+flowchart LR
+    A["App A"] --> R["Key-aware routing"]
+    B["App B"] --> R
+    R -->|P100| C1["Cache node A"]
+    R -->|P200| C2["Cache node B"]
+```
+
+Both apps can use the same cache, with different keys stored on different servers. The routing step can run in a client library or a proxy. It selects the node responsible for the requested key. See [Routing a Key](#routing-a-key).
+
+**5. Local L1 plus shared L2**
+
+```mermaid
+flowchart LR
+    subgraph PA["App A process"]
+        A["App code"] --> L1A["Local L1"]
+    end
+    subgraph PB["App B process"]
+        B["App code"] --> L1B["Local L1"]
+    end
+    A -->|L1 miss over network| L2["Shared L2"]
+    B -->|L1 miss over network| L2
+```
+
+Each app checks its local L1 first and returns on a hit. On an L1 miss, the app checks the shared L2 across the network. See [Optional L1 and L2](#optional-l1-and-l2).
 
 A shared remote service can use one server or a cluster. Local caches also remain useful in large systems; they are not restricted to small applications.
 
