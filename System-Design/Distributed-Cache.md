@@ -617,6 +617,8 @@ flowchart LR
 
 Both apps can use the same cache, with different keys stored on different servers. The routing step can run in a client library or a proxy. It selects the node responsible for the requested key. See [Routing a Key](#routing-a-key).
 
+**Kubernetes example.** Run Redis Cluster with three primary Redis Pods, each responsible for a different set of hash slots. A Kubernetes Service can give the apps an initial address to connect to. Each app's cluster-aware Redis client learns the slot map and sends each key to the Redis Pod that owns its slot. P100 and P200 can go to different Pods, so the cache workload is spread across the primaries. [Redis Cluster client routing](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#client-connections-and-redirection-handling)
+
 **5. Local L1 plus shared L2**
 
 ```mermaid
