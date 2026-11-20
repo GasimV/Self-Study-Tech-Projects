@@ -752,6 +752,10 @@ A request for P100 reaches App A or App B through the load balancer. The app for
 
 ![Cache routing for P100 at hash 423. With modulo routing, the selected node changes from C1 to C4. With consistent hashing, the lookup changes from C3 to C4 and only the highlighted range moves.](assets/cache-key-routing-comparison.svg)
 
+> **450 was chosen for the illustration.** In a real consistent-hashing setup, a token is often calculated by hashing a stable server ID, such as `hash("C4")`. Some systems assign tokens explicitly. The ring is ordered by token value, so a new server can land between existing servers.
+>
+> If C4 landed above **500**, P100 at **423** would still reach **C3 at 500** first.
+
 In this ring, `(300, 450]` means hashes **greater than 300, up to and including 450**. P100 stays at 423 throughout. The change in ownership affects where the app looks. If the new owner has no usable entry, the app reads PostgreSQL and fills that cache. Coordinate routing updates and limit concurrent refills to protect the database. See the [before-and-after ring diagrams](Databases-and-Storage.md#scalability-partitioning-and-consistent-hashing).
 
 **Virtual nodes help spread ownership.** Give a physical server several tokens by hashing stable identifiers such as `C3#1`, `C3#2`, and `C3#3`. If the next token clockwise belongs to C3, the request goes to C3. With several tokens, C3 can own smaller ranges in different parts of the ring. This can spread keys more evenly. Requests for one hot key can still concentrate on its owner. See [Virtual Nodes: Multiple Tokens per Server](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server).
