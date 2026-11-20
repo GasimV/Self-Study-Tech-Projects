@@ -45,6 +45,7 @@
   - [What to Measure](#what-to-measure)
 - [Redis and Memcached](#redis-and-memcached)
   - [Roles and Capabilities](#roles-and-capabilities)
+  - [Standalone Redis, Sentinel, and Cluster](#standalone-redis-sentinel-and-cluster)
   - [Redis: Short Command Walkthrough](#redis-short-command-walkthrough)
   - [Memcached: Basic Text Protocol Walkthrough](#memcached-basic-text-protocol-walkthrough)
 - [Choosing a Cache Architecture](#choosing-a-cache-architecture)
@@ -865,6 +866,18 @@ Redis **RDB** snapshots and **AOF—append-only file** persistence are choices w
 Memcached documents standard-server limitations separately from optional restart functionality. Do not assume that a warm restart handles crashes or that adding cache servers automatically creates synchronized copies. [Memcached FAQ](https://docs.memcached.org/userguide/faq/), [warm restart](https://docs.memcached.org/features/restart/)
 
 For data that must survive loss, replication and persistence still do not replace appropriate backups and tested restoration. For disposable cache data, the recovery plan may instead be controlled reconstruction from the source.
+
+### Standalone Redis, Sentinel, and Cluster
+
+| Setup | Where the keys live | What happens if the primary fails? |
+| --- | --- | --- |
+| **Standalone Redis** | One Redis instance holds the whole dataset. | Recover or replace that instance. |
+| **Redis with Sentinel** | One primary holds the whole dataset, and replicas copy it. | Sentinel processes coordinate automatic promotion of a replica. Clients can ask Sentinel for the new primary's address. |
+| **Redis Cluster** | Multiple primaries each own a subset of the hash slots. Replicas can copy each primary's data. | An eligible replica can automatically take over the failed primary's slots if it wins an election backed by a majority of the voting primaries. |
+
+With **Redis Cluster**, each key maps automatically to a hash slot, and a cluster-aware client routes the request to the node that owns that slot. Spreading slots across primaries lets the dataset and throughput grow beyond one node. When adding a primary for capacity, move slots to it so it can take on traffic. [Scale with Redis Cluster](https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/)
+
+For example, P100 and P200 can live on different primaries. If P100's primary fails, a promoted replica takes over those same slots and clients update their routing. Replication is asynchronous, so the promoted replica may be missing a recent cache write. With **Sentinel**, promotion switches the primary for the whole dataset in that primary–replica group. [Redis Cluster specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#configuration-handling-propagation-and-failovers), [Redis Sentinel](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/)
 
 ### Redis: Short Command Walkthrough
 
