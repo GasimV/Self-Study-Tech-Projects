@@ -565,14 +565,14 @@ See the existing [key-value complexity, RAM, and disk explanation](Databases-and
 ```mermaid
 flowchart LR
     subgraph PA["App A process"]
-        A["App code"] --> CA["Local cache"]
+        A["App code"] --> CA["In-memory cache"]
     end
     subgraph PB["App B process"]
-        B["App code"] --> CB["Local cache"]
+        B["App code"] --> CB["In-memory cache"]
     end
 ```
 
-Each app can keep its own copy of P100. A hit stays inside that app's process.
+This is an **in-process, in-memory cache**. The codebase holds the caching logic, and each running app creates its own entries in RAM. For example, a hash map can store `catalog-title:P100` → `Laptop`. A hit stays inside that app's process. An app can also keep a local **disk cache** by storing cached data in files.
 
 **2. Co-located process or sidecar**
 
@@ -588,6 +588,9 @@ flowchart LR
 
 Each lookup crosses a process boundary on the same host. The app and cache share that host's resources and can both be affected if it fails.
 
+- **Docker on the same host.** Run the app and Redis in separate containers on the same user-defined Docker bridge network. If the Redis container is named `redis` and listens on port 6379, the app can connect to `redis:6379`. [Docker bridge networking](https://docs.docker.com/engine/network/drivers/bridge/)
+- **Kubernetes in the same Pod.** Redis can run as a sidecar container alongside the app. The containers share the Pod's network, so the app can connect to Redis through `localhost:6379`. [Kubernetes Pod networking](https://kubernetes.io/docs/concepts/workloads/pods/#pod-networking)
+
 **3. Shared remote service**
 
 ```mermaid
@@ -597,6 +600,8 @@ flowchart LR
 ```
 
 Once App A fills P100, App B can read that same entry. This example shows one shared cache server.
+
+**Kubernetes example.** Run Redis in its own Pod behind a Kubernetes Service. Multiple app Pods can connect over the network and reuse the same Redis cache, even when they run on different Kubernetes nodes. [Kubernetes Services](https://kubernetes.io/docs/concepts/services-networking/service/)
 
 **4. Distributed or sharded service**
 
