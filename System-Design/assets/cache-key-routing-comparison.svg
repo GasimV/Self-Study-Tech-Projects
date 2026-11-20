@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="844" viewBox="0 0 1200 844" role="img" aria-labelledby="title description">
+  <title id="title">Routing P100 before and after adding a cache node</title>
+  <desc id="description">The cache key catalog-title:P100 has illustrative hash 423. Modulo routing selects index 0, C1, with three nodes and index 3, C4, with four nodes. In consistent hashing, the first clockwise token is C3 at 500 before addition and C4 at 450 afterward. Only hashes above 300 through 450 inclusive change owners on the illustrated ring. The hash itself stays 423.</desc>
+  <rect x="0" y="0" width="1200" height="844" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
+  <text x="600" y="47" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#17283e" text-anchor="middle">How a cache key finds its server</text>
+  <text x="600" y="77" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="400" fill="#40556f" text-anchor="middle">Follow P100 before and after adding cache node C4.</text>
+  <rect x="24" y="101" width="1152" height="65" rx="12" fill="#f3f7fb" stroke="#d1dce7" stroke-width="1"/>
+  <text x="54" y="141" font-family="Consolas, monospace" font-size="25" font-weight="700" fill="#17283e" text-anchor="start">catalog-title:P100</text>
+  <polyline points="320,132 352,132" fill="none" stroke="#40556f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polygon points="362,132 352,137.2 352,126.8" fill="#40556f" stroke="none" stroke-width="1"/>
+  <text x="381" y="141" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#17283e" text-anchor="start">Hash function</text>
+  <polyline points="553,132 583,132" fill="none" stroke="#40556f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polygon points="593,132 583,137.2 583,126.8" fill="#40556f" stroke="none" stroke-width="1"/>
+  <rect x="608" y="114" width="83" height="39" rx="9" fill="#fff2ce" stroke="#efcc88" stroke-width="1"/>
+  <text x="649.5" y="141" font-family="Consolas, monospace" font-size="25" font-weight="700" fill="#a95110" text-anchor="middle">423</text>
+  <text x="718" y="140" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#40556f" text-anchor="start">The same hash is used in both examples.</text>
+  <rect x="24" y="184" width="570" height="635" rx="16" fill="#f3f7fb" stroke="#d1dce7" stroke-width="1"/>
+  <text x="46" y="225" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="700" fill="#17283e" text-anchor="start">Modulo routing</text>
+  <text x="46" y="253" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Divide by the node count and use the remainder.</text>
+  <rect x="40" y="273" width="538" height="213" rx="12" fill="#ffffff" stroke="#d1dce7" stroke-width="1"/>
+  <rect x="40" y="496" width="538" height="229" rx="12" fill="#ffffff" stroke="#d1dce7" stroke-width="1"/>
+  <rect x="606" y="184" width="570" height="635" rx="16" fill="#f3f7fb" stroke="#d1dce7" stroke-width="1"/>
+  <text x="628" y="225" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="700" fill="#17283e" text-anchor="start">Consistent hashing</text>
+  <text x="628" y="253" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Move clockwise to the first server token.</text>
+  <rect x="622" y="273" width="538" height="213" rx="12" fill="#ffffff" stroke="#d1dce7" stroke-width="1"/>
+  <rect x="622" y="496" width="538" height="229" rx="12" fill="#ffffff" stroke="#d1dce7" stroke-width="1"/>
+  <text x="58" y="307" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="start">Before adding C4</text>
+  <text x="58" y="350" font-family="Consolas, monospace" font-size="31" font-weight="700" fill="#17283e" text-anchor="start">423 % 3 = 0</text>
+  <text x="58" y="384" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Remainder 0 selects index 0.</text>
+  <rect x="58" y="406" width="111" height="60" rx="9" fill="#fff2ce" stroke="#d39338" stroke-width="2"/>
+  <text x="113.5" y="430" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 0</text>
+  <text x="113.5" y="455" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#a95110" text-anchor="middle">C1</text>
+  <rect x="183" y="406" width="111" height="60" rx="9" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="238.5" y="430" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 1</text>
+  <text x="238.5" y="455" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="middle">C2</text>
+  <rect x="308" y="406" width="111" height="60" rx="9" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="363.5" y="430" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 2</text>
+  <text x="363.5" y="455" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="middle">C3</text>
+  <text x="58" y="530" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="start">After adding C4</text>
+  <text x="58" y="573" font-family="Consolas, monospace" font-size="31" font-weight="700" fill="#17283e" text-anchor="start">423 % 4 = 3</text>
+  <text x="58" y="607" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Remainder 3 selects index 3.</text>
+  <rect x="58" y="629" width="111" height="60" rx="9" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="113.5" y="653" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 0</text>
+  <text x="113.5" y="678" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="middle">C1</text>
+  <rect x="183" y="629" width="111" height="60" rx="9" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="238.5" y="653" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 1</text>
+  <text x="238.5" y="678" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="middle">C2</text>
+  <rect x="308" y="629" width="111" height="60" rx="9" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="363.5" y="653" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 2</text>
+  <text x="363.5" y="678" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="middle">C3</text>
+  <rect x="433" y="629" width="111" height="60" rx="9" fill="#fff2ce" stroke="#d39338" stroke-width="2"/>
+  <text x="488.5" y="653" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#40556f" text-anchor="middle">Index 3</text>
+  <text x="488.5" y="678" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#a95110" text-anchor="middle">C4</text>
+  <text x="640" y="307" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="start">Before adding C4</text>
+  <text x="640" y="349" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Start at hash 423.</text>
+  <text x="640" y="378" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Next token is 500.</text>
+  <rect x="640" y="400" width="170" height="44" rx="8" fill="#fff2ce" stroke="#efcc88" stroke-width="1"/>
+  <text x="725" y="428" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#a95110" text-anchor="middle">Check C3</text>
+  <circle cx="966" cy="373" r="79" fill="none" stroke="#8297ad" stroke-width="2.4"/>
+  <polyline points="966,289 966,299" fill="none" stroke="#40556f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="966" y="283" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#40556f" text-anchor="middle">0</text>
+  <text x="966" y="367" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#17283e" text-anchor="middle">Clockwise</text>
+  <text x="966" y="391" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#40556f" text-anchor="middle">0–999</text>
+  <polyline points="995.77,429.65 994.52,430.3 993.25,430.91 991.97,431.49 990.68,432.05 989.37,432.58 988.06,433.08 986.73,433.55 985.39,433.99 984.05,434.4 982.69,434.78 981.33,435.14 979.96,435.46 978.58,435.75 977.2,436.01 975.81,436.24 974.42,436.44 973.02,436.61 971.62,436.75" fill="none" stroke="#a95110" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="971.62,436.75 973.49,436.67" fill="none" stroke="#a95110" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polygon points="966,437 973.32,432.77 973.67,440.56" fill="#a95110" stroke="none" stroke-width="1"/>
+  <circle cx="1012.44" cy="309.09" r="6.5" fill="#2563a6" stroke="#ffffff" stroke-width="1.3"/>
+  <text x="1030" y="313" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563a6" text-anchor="start">C1 · 100</text>
+  <circle cx="1041.13" cy="397.41" r="6.5" fill="#2563a6" stroke="#ffffff" stroke-width="1.3"/>
+  <text x="1058" y="396" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563a6" text-anchor="start">C2 · 300</text>
+  <circle cx="966" cy="452" r="6.5" fill="#f5b042" stroke="#ffffff" stroke-width="1.3"/>
+  <polyline points="966,452 950,470 924,470" fill="none" stroke="#40556f" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="917" y="475" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#a95110" text-anchor="end">C3 · 500</text>
+  <polygon points="1002.75,435.93 1009.75,442.93 1002.75,449.93 995.75,442.93" fill="#f3a45f" stroke="#a95110" stroke-width="1.7"/>
+  <polyline points="1009.75,442.93 1030,438.93 1040,438.93" fill="none" stroke="#a95110" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1046" y="443.93" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#a95110" text-anchor="start">P100 · 423</text>
+  <text x="640" y="530" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17283e" text-anchor="start">After adding C4</text>
+  <text x="640" y="572" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Start at hash 423.</text>
+  <text x="640" y="601" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="400" fill="#40556f" text-anchor="start">Next token is 450.</text>
+  <rect x="640" y="623" width="170" height="44" rx="8" fill="#fff2ce" stroke="#efcc88" stroke-width="1"/>
+  <text x="725" y="651" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#a95110" text-anchor="middle">Check C4</text>
+  <polyline points="1041.13,620.41 1040.64,621.88 1040.12,623.34 1039.57,624.79 1038.99,626.23 1038.38,627.66 1037.74,629.07 1037.08,630.48 1036.39,631.87 1035.67,633.24 1034.93,634.6 1034.16,635.95 1033.36,637.28 1032.54,638.59 1031.69,639.89 1030.81,641.17 1029.91,642.44 1028.99,643.68 1028.04,644.91 1027.07,646.12 1026.07,647.31 1025.05,648.48 1024.01,649.63 1022.95,650.75 1021.86,651.86 1020.75,652.95 1019.63,654.01 1018.48,655.05 1017.31,656.07 1016.12,657.07 1014.91,658.04 1013.68,658.99 1012.44,659.91 1011.17,660.81 1009.89,661.69 1008.59,662.54 1007.28,663.36 1005.95,664.16 1004.6,664.93 1003.24,665.67 1001.87,666.39 1000.48,667.08 999.07,667.74 997.66,668.38 996.23,668.99 994.79,669.57 993.34,670.12 991.88,670.64 990.41,671.13" fill="none" stroke="#91d9be" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="966" cy="596" r="79" fill="none" stroke="#8297ad" stroke-width="2.4"/>
+  <polyline points="966,512 966,522" fill="none" stroke="#40556f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="966" y="506" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#40556f" text-anchor="middle">0</text>
+  <text x="966" y="590" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#17283e" text-anchor="middle">Clockwise</text>
+  <text x="966" y="614" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#40556f" text-anchor="middle">0–999</text>
+  <polyline points="995.77,652.65 995.33,652.88 994.89,653.11 994.45,653.33 994.01,653.55 993.56,653.76 993.12,653.97 992.67,654.18 992.22,654.38 991.77,654.58 991.32,654.78 990.86,654.97 990.41,655.16 989.95,655.35 989.49,655.53 989.03,655.71 988.57,655.89 988.11,656.06 987.64,656.23" fill="none" stroke="#a95110" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="987.64,656.23 992.87,654.43" fill="none" stroke="#a95110" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polygon points="985.78,656.87 991.6,650.74 994.14,658.12" fill="#a95110" stroke="none" stroke-width="1"/>
+  <circle cx="1012.44" cy="532.09" r="6.5" fill="#2563a6" stroke="#ffffff" stroke-width="1.3"/>
+  <text x="1030" y="536" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563a6" text-anchor="start">C1 · 100</text>
+  <circle cx="1041.13" cy="620.41" r="6.5" fill="#2563a6" stroke="#ffffff" stroke-width="1.3"/>
+  <text x="1058" y="619" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563a6" text-anchor="start">C2 · 300</text>
+  <circle cx="990.41" cy="671.13" r="6.5" fill="#f5b042" stroke="#ffffff" stroke-width="1.3"/>
+  <polyline points="990.41,671.13 1003,698 1012,698" fill="none" stroke="#117659" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1018" y="704" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#a95110" text-anchor="start">C4 · 450</text>
+  <circle cx="966" cy="675" r="6.5" fill="#2563a6" stroke="#ffffff" stroke-width="1.3"/>
+  <polyline points="966,675 950,693 924,693" fill="none" stroke="#40556f" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="917" y="698" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#2563a6" text-anchor="end">C3 · 500</text>
+  <polygon points="1002.75,658.93 1009.75,665.93 1002.75,672.93 995.75,665.93" fill="#f3a45f" stroke="#a95110" stroke-width="1.7"/>
+  <polyline points="1009.75,665.93 1030,661.93 1040,661.93" fill="none" stroke="#a95110" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1046" y="666.93" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#a95110" text-anchor="start">P100 · 423</text>
+  <rect x="40" y="741" width="538" height="62" rx="10" fill="#e8f2fc" stroke="#b6cee5" stroke-width="1"/>
+  <text x="58" y="767" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#17283e" text-anchor="start">The divisor changes for every key.</text>
+  <text x="58" y="789" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#40556f" text-anchor="start">Many keys can point to different nodes.</text>
+  <rect x="622" y="741" width="538" height="62" rx="10" fill="#e5f6ef" stroke="#b0dacb" stroke-width="1"/>
+  <text x="640" y="767" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#117659" text-anchor="start">Only the green range changes owners.</text>
+  <text x="640" y="789" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="400" fill="#40556f" text-anchor="start">Hashes (300, 450] move from C3 to C4.</text>
+</svg>

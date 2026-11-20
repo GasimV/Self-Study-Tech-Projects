@@ -750,6 +750,8 @@ A request for P100 reaches App A or App B through the load balancer. The app for
 | **Add C4 at token 450** | First token is now 450, owned by **C4** | C4 takes `(300, 450]` from C3. A key at 470 still goes to C3. |
 | **Remove C4 again** | First token is 500, owned by **C3** | C3 takes back `(300, 450]`. Other ranges keep their owners. |
 
+![Cache routing for P100 at hash 423. With modulo routing, the selected node changes from C1 to C4. With consistent hashing, the lookup changes from C3 to C4 and only the highlighted range moves.](assets/cache-key-routing-comparison.svg)
+
 In this ring, `(300, 450]` means hashes **greater than 300, up to and including 450**. P100 stays at 423 throughout. The change in ownership affects where the app looks. If the new owner has no usable entry, the app reads PostgreSQL and fills that cache. Coordinate routing updates and limit concurrent refills to protect the database. See the [before-and-after ring diagrams](Databases-and-Storage.md#scalability-partitioning-and-consistent-hashing).
 
 **Virtual nodes help spread ownership.** Give a physical server several tokens by hashing stable identifiers such as `C3#1`, `C3#2`, and `C3#3`. If the next token clockwise belongs to C3, the request goes to C3. With several tokens, C3 can own smaller ranges in different parts of the ring. This can spread keys more evenly. Requests for one hot key can still concentrate on its owner. See [Virtual Nodes: Multiple Tokens per Server](Distributed-Systems-Theorems-and-Data-Structures.md#virtual-nodes-multiple-tokens-per-server).
