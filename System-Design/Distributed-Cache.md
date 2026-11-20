@@ -613,6 +613,8 @@ flowchart LR
     R -->|P200| C2["Cache node B"]
 ```
 
+> Both arrangements are standalone, meaning the cache runs separately from the apps. **#3** illustrates one shared cache server. **#4** illustrates a shared cache spread across multiple servers.
+
 Both apps can use the same cache, with different keys stored on different servers. The routing step can run in a client library or a proxy. It selects the node responsible for the requested key. See [Routing a Key](#routing-a-key).
 
 **5. Local L1 plus shared L2**
