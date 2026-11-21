@@ -635,7 +635,11 @@ flowchart LR
     B -->|L1 miss over network| L2
 ```
 
-Each app checks its local L1 first and returns on a hit. On an L1 miss, the app checks the shared L2 across the network. See [Optional L1 and L2](#optional-l1-and-l2).
+> **#5 is a two-tier setup.** Each app checks its own in-process cache (**L1**) first and returns on a hit. On a miss, it checks the standalone shared cache (**L2**) over the network. L2 can be one server like **#3** or a sharded cluster like **#4**. See [Optional L1 and L2](#optional-l1-and-l2).
+>
+> **Docker example.** App A and App B run in separate containers and each keeps L1 in its own RAM. On an L1 miss, either app can reach the same Redis container over a user-defined bridge network. A sharded L2 can use several Redis Cluster containers on that network and a cluster-aware client. [Docker bridge networking](https://docs.docker.com/engine/network/drivers/bridge/)
+>
+> **Kubernetes example.** Each app Pod keeps L1 inside its app process. For a single Redis Pod as L2, both app Pods connect through a Kubernetes Service. For Redis Cluster as L2, the apps use a cluster-aware client that routes each lookup to the Redis Pod responsible for the key's slot. [Kubernetes Services](https://kubernetes.io/docs/concepts/services-networking/service/), [Redis Cluster routing](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#client-connections-and-redirection-handling)
 
 A shared remote service can use one server or a cluster. Local caches also remain useful in large systems; they are not restricted to small applications.
 
