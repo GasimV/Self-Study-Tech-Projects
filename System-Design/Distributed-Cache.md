@@ -49,6 +49,7 @@
   - [Redis: Short Command Walkthrough](#redis-short-command-walkthrough)
   - [Memcached: Basic Text Protocol Walkthrough](#memcached-basic-text-protocol-walkthrough)
 - [Choosing a Cache Architecture](#choosing-a-cache-architecture)
+  - [When to Choose Co-Located vs. Standalone Caching](#when-to-choose-co-located-vs-standalone-caching)
 - [Study Map and Recall Summary](#study-map-and-recall-summary)
 - [Related Notes](#related-notes)
 - [Further Reading](#further-reading)
@@ -943,6 +944,21 @@ See the official [basic text protocol](https://docs.memcached.org/protocols/basi
 | **State cannot be reconstructed** | Evaluate a suitable primary-state durability/recovery design |
 
 Start with the smallest arrangement that meets measured needs. Before adding servers, confirm that keys, payload sizes, memory limits, refill behavior, and source capacity are understood. Adding nodes does not remove a single hot key or make cache/source updates atomic.
+
+### When to Choose Co-Located vs. Standalone Caching
+
+Diagram **#2** pairs each app with a cache process on the same host or in the same Pod. Diagrams **#3** and **#4** place a shared cache separately from the apps, on one server or across several nodes. See [Cache Placement Diagrams](#cache-placement-diagrams).
+
+| Decision factor | Co-located cache process (#2) | Standalone cache (#3 or #4) |
+| --- | --- | --- |
+| **Lookup latency** | The app calls a separate process on the same host or in the same Pod. | Each lookup crosses the network. |
+| **Reuse across apps** | App A and App B can each keep their own copy of P100. | App B can reuse the entry App A filled. |
+| **Scaling** | Cache capacity usually grows alongside app instances. | Cache capacity can grow independently. Start with one shared server and consider sharding when it reaches its limits. |
+| **Resources and failures** | The app and cache compete for host resources. A host failure can affect both. | Cache resources can be sized separately. A cache outage can affect every app that depends on it. |
+| **Technology and upgrades** | A separate cache process can use Redis. Its lifecycle is often tied to each app deployment. | The team can choose, tune, and upgrade the cache separately from the apps. |
+| **Operations and cost** | Deploy and monitor the cache alongside the app. Separate copies can duplicate memory use and refill work. | Operate a separate service. Sharing can reduce duplicated entries and database reads. |
+
+For P100, **choose co-located** when lookups need to stay close to the app and separate copies are acceptable. **Choose standalone** when App B should reuse the title App A cached or when the cache needs to grow independently.
 
 ## Study Map and Recall Summary
 
