@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="715" viewBox="0 0 1080 715" role="img" aria-labelledby="title description">
+  <title id="title">How Memcached and Redis handle the same product record</title>
+  <desc id="description">For P100, the application replaces the JSON value in Memcached or updates the title field of a Redis hash. Memcached uses several request workers. Redis executes most commands on its main thread and can use other threads for I/O and background work. After a crash, Memcached can be refilled from the database. Redis can reload saved data if configured for persistence, and recent writes may be missing.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#506277"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #19293c; }
+    .title { font-size: 33px; font-weight: 700; }
+    .subtitle { font-size: 19px; fill: #445870; }
+    .product { font-size: 24px; font-weight: 700; fill: #ffffff; }
+    .heading { font-size: 22px; font-weight: 700; }
+    .mono { font: 19px Consolas, Menlo, monospace; white-space: pre; }
+    .body { font-size: 19px; }
+    .small { font-size: 18px; }
+    .box { fill: #ffffff; stroke: #cbd7e3; }
+    .memcached { fill: #e8f6f2; stroke: #a9cec6; }
+    .redis { fill: #fff0eb; stroke: #e3bdb1; }
+    .branch, .arrow { fill: none; stroke: #506277; stroke-width: 2; }
+    .arrow { marker-end: url(#arrow); }
+  </style>
+  <rect width="1080" height="715" fill="#f4f7fa"/>
+  <text class="title" x="540" y="45" text-anchor="middle">Memcached vs. Redis</text>
+  <text class="subtitle" x="540" y="74" text-anchor="middle">Follow product P100 through a title update, concurrent requests, and a crash.</text>
+  <rect x="28" y="96" width="500" height="43" rx="9" fill="#126657"/>
+  <rect x="552" y="96" width="500" height="43" rx="9" fill="#a43b2c"/>
+  <text class="product" x="278" y="125" text-anchor="middle">Memcached</text>
+  <text class="product" x="802" y="125" text-anchor="middle">Redis</text>
+
+  <!-- The same product record represented two ways. -->
+  <rect class="box" x="28" y="152" width="500" height="166" rx="12"/>
+  <rect class="box" x="552" y="152" width="500" height="166" rx="12"/>
+  <text class="heading" x="48" y="182">Update a JSON value</text>
+  <text class="heading" x="572" y="182">Update a hash field</text>
+  <rect class="memcached" x="48" y="195" width="460" height="66" rx="8"/>
+  <rect class="redis" x="572" y="195" width="460" height="66" rx="8"/>
+  <text class="mono" x="64" y="221">product:P100</text>
+  <text class="mono" x="64" y="245">{"title":"Trail Mug","color":"blue"}</text>
+  <text class="mono" x="588" y="221">product:P100</text>
+  <text class="mono" x="588" y="245">title: Trail Mug</text>
+  <text class="mono" x="792" y="245">color: blue</text>
+  <text class="body" x="48" y="285">App replaces the whole JSON value.</text>
+  <text class="small" x="48" y="306">New title: Camp Mug. Color stays blue.</text>
+  <text class="mono" x="572" y="285">HSET product:P100 title "Camp Mug"</text>
+  <text class="small" x="572" y="306">Redis updates the title field. Color stays blue.</text>
+
+  <!-- CPU work on one server per engine. -->
+  <rect class="box" x="28" y="331" width="500" height="175" rx="12"/>
+  <rect class="box" x="552" y="331" width="500" height="175" rx="12"/>
+  <text class="heading" x="48" y="361">Multiple request workers</text>
+  <text class="heading" x="572" y="361">Main command thread</text>
+  <text class="small" x="278" y="391" text-anchor="middle">Concurrent client requests</text>
+  <text class="small" x="802" y="391" text-anchor="middle">Concurrent client requests</text>
+  <path class="branch" d="M278 398v8M120 406h316"/>
+  <path class="arrow" d="M120 406v18"/>
+  <path class="arrow" d="M278 406v18"/>
+  <path class="arrow" d="M436 406v18"/>
+  <path class="arrow" d="M802 398v26"/>
+  <rect class="memcached" x="48" y="426" width="144" height="34" rx="8"/>
+  <rect class="memcached" x="206" y="426" width="144" height="34" rx="8"/>
+  <rect class="memcached" x="364" y="426" width="144" height="34" rx="8"/>
+  <rect class="redis" x="651" y="426" width="302" height="34" rx="8"/>
+  <text class="small" x="120" y="449" text-anchor="middle">Worker A</text>
+  <text class="small" x="278" y="449" text-anchor="middle">Worker B</text>
+  <text class="small" x="436" y="449" text-anchor="middle">Worker C</text>
+  <text class="small" x="802" y="449" text-anchor="middle">Most commands execute here</text>
+  <text class="small" x="48" y="487">Workers can use multiple CPU cores.</text>
+  <text class="small" x="572" y="487">Other threads can handle I/O and background work.</text>
+
+  <!-- Recovery after a crash. -->
+  <rect class="box" x="28" y="519" width="500" height="169" rx="12"/>
+  <rect class="box" x="552" y="519" width="500" height="169" rx="12"/>
+  <text class="heading" x="48" y="549">After a crash: refill the cache</text>
+  <text class="heading" x="572" y="549">After a crash: reload saved data</text>
+  <rect class="memcached" x="48" y="566" width="158" height="38" rx="8"/>
+  <rect class="memcached" x="252" y="566" width="256" height="38" rx="8"/>
+  <rect class="redis" x="572" y="566" width="211" height="38" rx="8"/>
+  <rect class="redis" x="829" y="566" width="203" height="38" rx="8"/>
+  <path class="arrow" d="M214 585h29"/>
+  <path class="arrow" d="M791 585h29"/>
+  <text class="small" x="127" y="591" text-anchor="middle">Cache miss</text>
+  <text class="small" x="380" y="591" text-anchor="middle">Read product database</text>
+  <text class="small" x="677.5" y="591" text-anchor="middle">Snapshot or write log</text>
+  <text class="small" x="930.5" y="591" text-anchor="middle">Restore into memory</text>
+  <text class="body" x="48" y="635">The app caches the product again.</text>
+  <text class="small" x="48" y="660">Warm restart applies to compatible clean restarts.</text>
+  <text class="body" x="572" y="635">Requires configured persistence and saved data.</text>
+  <text class="small" x="572" y="660">Recent writes may be missing.</text>
+</svg>

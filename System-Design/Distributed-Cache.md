@@ -870,6 +870,10 @@ Redis and Memcached are examples to evaluate, not interchangeable guarantees.
 | **Persistence / recovery** | Optional snapshot/log persistence with different failure trade-offs | Primarily disposable cache semantics; optional warm restart is not general crash-safe durability |
 | **Reason to evaluate** | Required data operations or supported replication/persistence features | Straightforward disposable key/value caching with suitable client/proxy support |
 
+The illustration follows the same product record through an update, concurrent requests, and a crash. The threading examples show one server of each type. Recovery depends on the persistence settings and which data was saved.
+
+![Memcached stores P100 as JSON, handles requests on worker threads, and refills entries from the source after a crash. Redis can update one field of a hash, runs most commands on its main thread, and can reload an available snapshot or write log when persistence is configured.](assets/redis-memcached-comparison.svg)
+
 Using more CPU cores on one server is **scaling up**. Adding cache servers is **scaling out** and requires deciding where each key goes. Compare performance with your actual request mix and payload sizes. Large entries take more memory and network bandwidth even when they fit the configured limit.
 
 Redis **RDB** snapshots and **AOF—append-only file** persistence are choices with recovery and performance implications, not guarantees against every loss. Check synchronization, replication, and recovery behavior for the selected deployment. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
