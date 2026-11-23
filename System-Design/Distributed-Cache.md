@@ -862,11 +862,15 @@ Redis and Memcached are examples to evaluate, not interchangeable guarantees.
 | Dimension | Redis | Memcached |
 | --- | --- | --- |
 | **Values and operations** | Strings and additional server-side data structures/operations | Keyed byte values interpreted by the application, with documented cache operations |
+| **CPU and threading** | One main thread executes most commands per instance. Other threads can handle network I/O and background work. [Redis benchmarks](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/benchmarks/) | Multiple worker threads handle requests on one server and can use multiple CPU cores. [Memcached hardware guide](https://github.com/memcached/memcached/wiki/Hardware) |
+| **Key and item sizes** | The default bulk-string limit in the protocol is 512 MB. Check limits for the data type and deployment. [Redis protocol](https://redis.io/docs/latest/reference/protocol-spec/) | The basic text protocol allows keys up to 250 bytes. The default item-size limit is 1 MiB and can be configured. [Memcached protocol](https://docs.memcached.org/protocols/basic/) · [Configuration](https://github.com/memcached/memcached/wiki/ConfiguringServer) |
 | **Expiration and eviction** | Key expiry and configurable policies including approximate LRU/LFU | Item expiry and implementation-specific LRU-family memory management |
 | **Distribution** | Redis Cluster provides hash-slot placement; clients must understand the deployment | Client/proxy placement is central to a multi-server cache |
 | **Replication** | Supported primary/replica designs with documented failover behavior | Standard servers do not automatically replicate keys; additional client/proxy designs may add redundancy |
 | **Persistence / recovery** | Optional snapshot/log persistence with different failure trade-offs | Primarily disposable cache semantics; optional warm restart is not general crash-safe durability |
 | **Reason to evaluate** | Required data operations or supported replication/persistence features | Straightforward disposable key/value caching with suitable client/proxy support |
+
+Using more CPU cores on one server is **scaling up**. Adding cache servers is **scaling out** and requires deciding where each key goes. Compare performance with your actual request mix and payload sizes. Large entries take more memory and network bandwidth even when they fit the configured limit.
 
 Redis **RDB** snapshots and **AOF—append-only file** persistence are choices with recovery and performance implications, not guarantees against every loss. Check synchronization, replication, and recovery behavior for the selected deployment. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
 
