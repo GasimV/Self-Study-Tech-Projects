@@ -271,6 +271,8 @@ Goal → choose next step → request tool → validate and execute → observe 
 
 Agentic workflows can search, read files, query databases, or run code. They also add cost, latency, and more opportunities for mistakes. Use a fixed workflow when the steps are known; use an agent when the system must choose steps dynamically.
 
+For a worked example of caching tool results, distributing tasks, and saving checkpoints so a workflow can resume, see [Redis vs. Memcached for Agentic AI](Distributed-Cache.md#redis-vs-memcached-for-agentic-ai).
+
 **Agent controls:**
 
 - Give each tool the minimum permissions needed for the current task.

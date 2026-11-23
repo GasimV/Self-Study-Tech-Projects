@@ -45,6 +45,7 @@
   - [What to Measure](#what-to-measure)
 - [Redis and Memcached](#redis-and-memcached)
   - [Roles and Capabilities](#roles-and-capabilities)
+  - [Redis vs. Memcached for Agentic AI](#redis-vs-memcached-for-agentic-ai)
   - [Standalone Redis, Sentinel, and Cluster](#standalone-redis-sentinel-and-cluster)
   - [Redis: Short Command Walkthrough](#redis-short-command-walkthrough)
   - [Memcached: Basic Text Protocol Walkthrough](#memcached-basic-text-protocol-walkthrough)
@@ -871,6 +872,34 @@ Redis **RDB** snapshots and **AOF—append-only file** persistence are choices w
 Memcached documents standard-server limitations separately from optional restart functionality. Do not assume that a warm restart handles crashes or that adding cache servers automatically creates synchronized copies. [Memcached FAQ](https://docs.memcached.org/userguide/faq/), [warm restart](https://docs.memcached.org/features/restart/)
 
 For data that must survive loss, replication and persistence still do not replace appropriate backups and tested restoration. For disposable cache data, the recovery plan may instead be controlled reconstruction from the source.
+
+### Redis vs. Memcached for Agentic AI
+
+Choose **Memcached** for a simple, disposable cache. Evaluate **Redis** when agent workers also need to update shared state, distribute tasks, or search by similarity. A **checkpoint** saves where a workflow left off so another worker can resume it after an interruption.
+
+| What the agent needs | Redis | Memcached |
+| --- | --- | --- |
+| **Cache LLM responses or tool results** | Reuse a response by exact key | Reuse a response by exact key |
+| **Keep session state or recent conversation context** | Store and update structured state | Cache a serialized copy the app can reload or rebuild |
+| **Resume a workflow after a crash** | A LangGraph Redis checkpointer is available. Check persistence, eviction, expiration, and recovery settings. | Use a separate durable checkpoint store |
+| **Distribute tasks to workers** | Streams and consumer groups let workers receive and acknowledge tasks | Use a separate queue |
+| **Find similar requests or documents** | Vector similarity search is available in supported deployments | Exact-key lookup. Use a separate similarity search service. |
+| **Recover stored data** | Optional snapshots or append-only logs with different recovery guarantees | Warm restart can preserve entries across clean restarts. Use a durable store for data that must survive a crash. |
+
+[Memcached overview](https://docs.memcached.org/) · [Memcached warm restart](https://docs.memcached.org/features/restart/) · [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) · [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/) · [Redis vector search](https://redis.io/docs/latest/get-started/vector-database/) · [LangGraph Redis integration](https://github.com/redis-developer/langgraph-redis)
+
+**Example.** A support agent can cache a product lookup with either tool and fetch it again on a miss. If several workers also need to pick up tasks, Redis Streams can distribute them. If the agent must resume a refund workflow after a crash, it can save checkpoints in PostgreSQL with LangGraph's Postgres checkpointer. Configure and test recovery against the workflow's needs. The diagram shows the Redis option. [LangGraph checkpoint storage](https://docs.langchain.com/oss/python/langgraph/add-memory)
+
+```mermaid
+flowchart LR
+    User[Customer] --> Agent[Support agent]
+    Agent <-->|Model calls| LLM[LLM]
+    Agent <-->|Tool calls| Tools[Product and refund APIs]
+    Agent <-->|Cache and task stream| Redis[Redis]
+    Agent <-->|Save and load checkpoints| DB[PostgreSQL]
+```
+
+> **A cache miss means fetch the answer again. A lost checkpoint can mean losing the place where the workflow needs to resume.**
 
 ### Standalone Redis, Sentinel, and Cluster
 
