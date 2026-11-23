@@ -48,6 +48,8 @@
   - [When to Choose Redis or Memcached](#when-to-choose-redis-or-memcached)
   - [Redis vs. Memcached for Agentic AI](#redis-vs-memcached-for-agentic-ai)
   - [Standalone Redis, Sentinel, and Cluster](#standalone-redis-sentinel-and-cluster)
+    - [Sharding and Replication Side by Side](#sharding-and-replication-side-by-side)
+    - [Replica Acknowledgments and Network Splits](#replica-acknowledgments-and-network-splits)
   - [Redis: Short Command Walkthrough](#redis-short-command-walkthrough)
   - [Memcached: Basic Text Protocol Walkthrough](#memcached-basic-text-protocol-walkthrough)
 - [Choosing a Cache Architecture](#choosing-a-cache-architecture)
@@ -876,11 +878,22 @@ The illustration follows the same product record through an update, concurrent r
 
 Using more CPU cores on one server is **scaling up**. Adding cache servers is **scaling out** and requires deciding where each key goes. Compare performance with your actual request mix and payload sizes. Large entries take more memory and network bandwidth even when they fit the configured limit.
 
-Redis **RDB** snapshots and **AOF—append-only file** persistence are choices with recovery and performance implications, not guarantees against every loss. Check synchronization, replication, and recovery behavior for the selected deployment. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
+**When memory fills up.** Redis can evict keys by approximate recency (`allkeys-lru`), approximate frequency (`allkeys-lfu`), or random selection (`allkeys-random`). With `noeviction`, Redis keeps existing keys and can reject writes that need more memory. Memcached normally uses LRU-style eviction within groups of similarly sized items. See [eviction policy examples](#eviction-policies-and-a-local-lru-cache), [Redis eviction](https://redis.io/docs/latest/develop/reference/eviction/), and [Memcached memory management](https://docs.memcached.org/serverguide/performance/).
+
+**What Redis can reload after a restart.** Redis can run with persistence disabled for a disposable cache, or use these disk persistence modes. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
+
+| Mode | What Redis saves and restores |
+| --- | --- |
+| **RDB** | Saves a point-in-time snapshot. Changes made after the latest saved snapshot can be lost in a crash. |
+| **AOF (append-only file)** | Logs writes and replays the log on restart. The disk sync policy affects how many recent writes can be lost. |
+| **RDB + AOF** | Saves snapshots and keeps the write log. When both are enabled, Redis uses AOF on restart to reconstruct the dataset. |
 
 Memcached documents standard-server limitations separately from optional restart functionality. Do not assume that a warm restart handles crashes or that adding cache servers automatically creates synchronized copies. [Memcached FAQ](https://docs.memcached.org/userguide/faq/), [warm restart](https://docs.memcached.org/features/restart/)
 
 For data that must survive loss, replication and persistence still do not replace appropriate backups and tested restoration. For disposable cache data, the recovery plan may instead be controlled reconstruction from the source.
+
+- **Lua scripts** run a short sequence of operations inside Redis without other commands interleaving. For example, a script can increment a request counter and set its expiry on the first increment. Keep scripts short because other commands wait while the script runs. [Redis Lua scripting](https://redis.io/docs/latest/develop/programmability/eval-intro/)
+- **Publish/subscribe (Pub/Sub)** lets a publisher send a message to applications subscribed to a channel. For example, a product service can publish a P100 change so subscribers invalidate their local copies. A disconnected subscriber can miss the message. See [Event-Driven Invalidation and Versioned Keys](#event-driven-invalidation-and-versioned-keys) and [Redis Pub/Sub](https://redis.io/docs/latest/develop/pubsub/).
 
 ### When to Choose Redis or Memcached
 
@@ -938,6 +951,32 @@ flowchart LR
 With **Redis Cluster**, each key maps automatically to a hash slot, and a cluster-aware client routes the request to the node that owns that slot. Spreading slots across primaries lets the dataset and throughput grow beyond one node. When adding a primary for capacity, move slots to it so it can take on traffic. [Scale with Redis Cluster](https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/)
 
 For example, P100 and P200 can live on different primaries. If P100's primary fails, a promoted replica takes over those same slots and clients update their routing. Replication is asynchronous, so the promoted replica may be missing a recent cache write. With **Sentinel**, promotion switches the primary for the whole dataset in that primary–replica group. [Redis Cluster specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#configuration-handling-propagation-and-failovers), [Redis Sentinel](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/)
+
+#### Sharding and Replication Side by Side
+
+**Sharding** divides the keys. **Replication** copies the data on a shard. The diagram shows two example slot owners from a Redis Cluster and two independent Memcached servers. With Memcached, the client or proxy determines placement and the standard servers store their assigned keys independently. See [Shards vs. Replicas](#shards-vs-replicas), the [Redis Cluster specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/), and the [Memcached overview](https://docs.memcached.org/).
+
+```mermaid
+flowchart TB
+    subgraph Redis["Redis Cluster"]
+        RC["Client uses slot map"]
+        RC -->|P100| PA["Primary A"]
+        RC -->|P200| PB["Primary B"]
+        PA -.->|Copies A's keys| RA["Replica A"]
+        PB -.->|Copies B's keys| RB["Replica B"]
+    end
+    subgraph Memcached["Memcached"]
+        MC["Client or proxy chooses server"]
+        MC -->|P100| MA["Server A"]
+        MC -->|P200| MB["Server B"]
+    end
+```
+
+#### Replica Acknowledgments and Network Splits
+
+**Wait for a copy.** After Redis accepts a write for P100, `WAIT 1 100` on the same connection waits up to 100 milliseconds for one replica to acknowledge the preceding writes. A result of `0` means no replica acknowledgment arrived in time. The primary can still have the update. A result of `1` or more means replicas received the writes. This reduces the chance of losing them during failover. Disk persistence and which replica gets promoted still affect whether the write survives. [Redis `WAIT`](https://redis.io/docs/latest/commands/wait/)
+
+**Follow a network split.** Suppose the app can still connect to Redis Primary A, but A loses contact with a majority of the primaries. After the cluster timeout, A stops accepting writes. The majority side can recover the affected shard if an eligible replica is available for promotion. With Memcached, if the app loses access to Server A, it can treat the P100 lookup as a cache error and fetch from the database with a bounded fallback. Requests for P200 can still hit reachable Server B. During a split, the exact operation, client location, and deployment determine what works. See the [CAP theorem](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem), the [Redis Cluster specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#availability), and the [Memcached overview](https://docs.memcached.org/).
 
 ### Redis: Short Command Walkthrough
 
