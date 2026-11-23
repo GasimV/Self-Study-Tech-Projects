@@ -45,6 +45,7 @@
   - [What to Measure](#what-to-measure)
 - [Redis and Memcached](#redis-and-memcached)
   - [Roles and Capabilities](#roles-and-capabilities)
+  - [When to Choose Redis or Memcached](#when-to-choose-redis-or-memcached)
   - [Redis vs. Memcached for Agentic AI](#redis-vs-memcached-for-agentic-ai)
   - [Standalone Redis, Sentinel, and Cluster](#standalone-redis-sentinel-and-cluster)
   - [Redis: Short Command Walkthrough](#redis-short-command-walkthrough)
@@ -873,6 +874,23 @@ Memcached documents standard-server limitations separately from optional restart
 
 For data that must survive loss, replication and persistence still do not replace appropriate backups and tested restoration. For disposable cache data, the recovery plan may instead be controlled reconstruction from the source.
 
+### When to Choose Redis or Memcached
+
+Start with two questions. **What must the cache do with each value? What happens if that value disappears?** Then choose a deployment that can handle the expected traffic and failures.
+
+| Requirement | Design choice |
+| --- | --- |
+| **Store and retrieve whole values by key.** The source can recreate them. | Either fits. Memcached is a straightforward option for storing precomputed page fragments, API responses, or query results. Redis also works as a basic cache. [Memcached overview](https://docs.memcached.org/) |
+| **Maintain ranked data as individual scores change.** | Evaluate Redis when it can do work the application would otherwise handle, such as keeping player scores in order and returning the top ten from a sorted set. [Redis sorted sets](https://redis.io/docs/latest/data-types/sorted-sets/) |
+| **Keep serving cached data after a node fails.** | Evaluate a Redis deployment with replicas and failover. Check how long failover takes and whether recent writes can be missing. With standard Memcached, plan for misses and controlled refills when a node is lost. [Redis Sentinel](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/) · [Memcached overview](https://docs.memcached.org/) |
+| **Recover data after a crash.** | If losing the value breaks the application, treat it as durable state. Evaluate a database or a Redis deployment with appropriate persistence and tested recovery. [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) |
+| **Both engines meet the requirements.** | Prefer the one your team can operate more easily. Check client support, managed-service options, monitoring, and how the team handles outages. Compare memory use, p95 and p99 latency, and source load with realistic values and traffic. Include a cold-cache or node-loss test. |
+
+- **Product page.** App A caches the rendered details for P100. App B reads the whole value by key. If the entry disappears, the app can rebuild it from the product database. Memcached fits when the database can handle refills under the expected failure load.
+- **Gaming leaderboard.** Scores change frequently and the app needs the current top ten. Redis can maintain the ranking as scores change. If scores must survive failures, keep an authoritative score record with the required durability and make the ranking rebuildable.
+
+> **Choose the engine for the operations you need. Choose the deployment for what must keep working when a node fails.**
+
 ### Redis vs. Memcached for Agentic AI
 
 Choose **Memcached** for a simple, disposable cache. Evaluate **Redis** when agent workers also need to update shared state, distribute tasks, or search by similarity. A **checkpoint** saves where a workflow left off so another worker can resume it after an interruption.
@@ -977,6 +995,8 @@ See the official [basic text protocol](https://docs.memcached.org/protocols/basi
 | **State cannot be reconstructed** | Evaluate a suitable primary-state durability/recovery design |
 
 Start with the smallest arrangement that meets measured needs. Before adding servers, confirm that keys, payload sizes, memory limits, refill behavior, and source capacity are understood. Adding nodes does not remove a single hot key or make cache/source updates atomic.
+
+If you need a separate cache service, use [When to Choose Redis or Memcached](#when-to-choose-redis-or-memcached) to match the engine to the required operations and recovery behavior.
 
 ### When to Choose Co-Located vs. Standalone Caching
 
