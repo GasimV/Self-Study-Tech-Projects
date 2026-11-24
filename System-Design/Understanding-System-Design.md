@@ -41,8 +41,12 @@
 - [System Design vs. Solution Architecture](#system-design-vs-solution-architecture)
   - [Example: E-commerce platform](#example-e-commerce-platform)
   - [Key takeaway](#key-takeaway-1)
-- [Levels of Architecture: System Design vs. Solution Architecture vs. Enterprise Architecture](#levels-of-architecture-system-design-vs-solution-architecture-vs-enterprise-architecture)
+- [Architecture Scope and Overlap](#architecture-scope-and-overlap)
   - [1. Abstraction levels of architecture](#1-abstraction-levels-of-architecture)
+  - [System Architecture](#system-architecture)
+  - [Software Architecture](#software-architecture)
+  - [AI Architecture](#ai-architecture)
+  - [Worked Example: An Online Store's Support Assistant](#worked-example-an-online-stores-support-assistant)
   - [2. Recommended learning progression](#2-recommended-learning-progression)
 - [AI Architect Knowledge Map](#ai-architect-knowledge-map)
   - [Complete Knowledge Map](#complete-knowledge-map)
@@ -497,28 +501,11 @@ These outcomes depend on the implementation and workload. Replication or caching
 
 ## System Design vs. Software Architecture
 
-They overlap heavily, but **system design is broader**.
+**System design** is the activity of making and refining decisions about how a system works. **Software architecture** describes the major structures of its software, the responsibilities of its parts, and how those parts interact.
 
-- **Software architecture** = the system’s **high-level structure and major technical decisions**.
-- **System design** = the **full design process**, including architecture plus lower-level details such as APIs, databases, caching, queues, algorithms, failure handling, etc.
+In a store, high-level design might show a web app calling order, payment, and inventory services through an API gateway. Low-level design might specify the order API fields, database schema, and retry behavior. A decision about preventing duplicate charges can affect both the placement of responsibilities and the implementation of a retry.
 
-**Example — e-commerce system:**
-
-Architecture might decide:
-
-> Web app → API Gateway → Order Service / Payment Service / Inventory Service → databases
-
-System design goes further:
-
-> How does `Order Service` work? What API does it expose? Which DB schema? How are transactions handled? What happens if payment succeeds but inventory fails? How is caching implemented?
-
-A useful mental model:
-
-**System Design**  
-→ **High-Level Design / Software Architecture**  
-→ **Low-Level Design / Implementation details**
-
-So, **software architecture is largely the high-level part of system design**, not a completely separate discipline.
+[High-level design](#high-level-system-design) and [low-level design](#low-level-system-design) describe the level of detail. High-level design can cover software, data, network, and deployment decisions. See [Architecture Scope and Overlap](#architecture-scope-and-overlap).
 
 ## System Design and Related Engineering Disciplines
 
@@ -644,43 +631,82 @@ Therefore, system design can be performed at the subsystem level, while solution
 > In practice, the responsibilities often overlap. A solution architect may perform system design, and a system designer may make solution-level architectural decisions.
 
 
-## Levels of Architecture: System Design vs. Solution Architecture vs. Enterprise Architecture
+<a name="levels-of-architecture-system-design-vs-solution-architecture-vs-enterprise-architecture"></a>
 
-There is a natural progression from system design to solution architecture and then enterprise architecture. However, these disciplines overlap, and the distinction is primarily about scope and responsibilities, not strictly technical depth.
+## Architecture Scope and Overlap
+
+To place an architecture decision, ask **what is in scope, which disciplines contribute, and how much detail is needed?** System design is the work of deciding how a system will behave and revising those decisions as evidence changes. System architecture describes its major parts, relationships, and governing decisions.
+
+![Architecture scope moves from enterprise to solution to system. The system, software, and AI panels show how teams contribute to a store's support assistant. The shared band shows the authorized order API, and the final strip compares high-level and low-level design.](assets/architecture-scope-and-disciplines.svg)
 
 ### 1. Abstraction levels of architecture
 
-**Highest abstraction - Enterprise Architecture**
+| Scope | Question it answers | Online store example |
+| --- | --- | --- |
+| **Enterprise architecture** | What capabilities, standards, and technology direction should guide the organization? | Set shared identity, privacy, and retention rules across the company's products. |
+| **Solution architecture** | How will people, processes, and systems come together to solve a business problem? | Connect the storefront, order platform, assistant, and support team so shoppers can resolve delivery problems. |
+| **System architecture** | How is a particular system organized, how does it connect to its environment, and how will it behave? | Define the assistant application's boundaries, dependencies, deployment, and failure behavior. |
 
-- Aligns business strategy, processes, applications, data, and technology across the entire organization.  
+The selected boundary depends on the problem. An order platform can be one system in the store solution and contain several subsystems of its own. Software, AI, data, infrastructure, networking, and security can contribute at several scopes. [ISO/IEC/IEEE 42010](https://www.iso.org/standard/74393.html) · [NASA system design processes](https://www.nasa.gov/reference/4-0-system-design-processes/)
 
-**Higher abstraction - Solution Architecture**
+### System Architecture
 
-- Designs an end-to-end solution to a business problem, defining the required systems, technologies, integrations, and architectural decisions.
+| Design area | What to decide |
+| --- | --- |
+| **Context and requirements** | Identify users, operators, external systems, and the boundary. Set targets for latency, availability, capacity, and cost. |
+| **Decomposition and behavior** | Assign responsibilities to subsystems and define their interfaces. Trace data flow and the user journey across APIs, queues, and events, including normal, degraded, and recovery paths. |
+| **Traffic, deployment, and reliability** | Choose how DNS, load balancers, reverse proxies, and content delivery networks route requests where applicable. Decide where components run, how they scale, and how failures are isolated and recovered from. |
+| **Data and state** | Select databases, object storage, and caches based on access patterns. Consider indexes, transactions, partitioning, sharding, and replication. Define freshness, consistency, and durability for each kind of data. |
+| **Security and operation** | Identify trust boundaries, authentication, and authorization. Decide what to monitor, who responds to incidents, and how changes reach production. |
+| **Verification and trade-offs** | Check critical flows against requirements with representative load tests, dependency failures, and recovery exercises. Record the assumptions behind the design. |
 
-**More detailed design - System Design**
+Use the course notes to explain your choices for [networking](Networking-Fundamentals-for-System-Design.md), [traffic routing and service architecture](Distributed-Systems-Building-Blocks.md), [storage](Databases-and-Storage.md#database-selection-by-requirements), [caching](Distributed-Cache.md#choosing-a-cache-architecture), and [authorization](Identity-and-Access-Management.md#authorization-in-practice). For distributed deployments, connect the design to [latency, availability, and consistency](Distributed-System-Attributes.md) and use [CAP, PACELC, and consensus](Distributed-Systems-Theorems-and-Data-Structures.md) where they explain a trade-off. That note also lists [replication protocols for later study](Distributed-Systems-Theorems-and-Data-Structures.md#other-protocols-to-study-later).
 
-- Designs individual systems and their internal components, including APIs, databases, algorithms, data structures, and communication patterns.
-  
-This is a useful conceptual hierarchy, although real-world responsibilities often overlap.
+### Software Architecture
+
+| Design area | What to decide |
+| --- | --- |
+| **Structure and dependencies** | Organize frontend and backend responsibilities into modules or services. Decide which dependencies are allowed and where patterns such as a modular monolith or microservices help. |
+| **Runtime and contracts** | Define how components interact through APIs and events. Choose synchronous or asynchronous flows, version contracts, and handle retries and errors. |
+| **Domain and data ownership** | Define who owns orders, payments, and refunds. Put business rules, access checks, and transaction boundaries with the components that enforce them. |
+| **Quality and delivery** | Use boundaries that support testing and maintenance. Validate interfaces with contract tests and plan migrations, compatible releases, and rollback. |
+
+For example, the support UI presents refund eligibility while the refund service enforces it. React, Java, and Python are possible implementation choices for those responsibilities. [SEI software architecture practices](https://sei.cmu.edu/training/examination-software-architecture-principles-practices/)
+
+### AI Architecture
+
+Start with the task, the cost of mistakes, and a baseline. A rule-based workflow, a conventional machine-learning model, and a generative model solve different kinds of problems. A production design can combine them.
+
+| Design area | What to decide |
+| --- | --- |
+| **Data and knowledge architecture** | Select authorized sources. Design data pipelines using ETL (extract, transform, load) or ELT (extract, load, transform) as appropriate. Define data quality, ownership, privacy, retention, and versioning. For model development, plan labeling and separate training, validation, and test data. For retrieval, plan ingestion, indexing, access filters, and how updates reach the index. [ETL and ELT](Data-Engineering-for-Solution-Architecture.md#etl-and-elt) |
+| **Models, algorithms, and training** | Choose a model family and learning approach for the task. A decision-tree model can classify support tickets, while a transformer-based language model can draft replies. Compare using an existing model, fine-tuning it with task examples, and training from untrained weights. Fine-tuning can update the full model or a smaller set of parameters. Compare quality, data needs, and compute against the baseline. |
+| **Retrieval and agentic workflows** | With retrieval-augmented generation (RAG), use keyword or vector search to find authorized evidence, optionally rerank it, and supply it as context for a cited answer. Use a fixed workflow for predictable steps or an agent when it needs to choose which tool to call next. Define tools, permissions, step budgets, checkpoints, and when to ask a person for approval. |
+| **Inference and serving** | Choose hosted or self-managed serving, online or batch inference, model routing, and streaming where useful. Size capacity, measure latency and cost, and define fallbacks. |
+| **Evaluation and governance** | Test retrieval quality, answer accuracy, grounding, task completion, and safe tool use. Use representative offline tests and monitor production behavior. Define privacy and safety checks, escalation criteria, and who reviews failures. |
+| **MLOps and LLMOps** | Machine-learning operations (MLOps) and large language model operations (LLMOps) connect development and production. Version datasets, models, prompts, and indexes as applicable. Design pipelines for training or fine-tuning, evaluation gates, staged releases, monitoring, and rollback. Watch for changes in inputs and quality. Use feedback to decide whether to update the model, revise the prompt, or refresh the index. |
+
+For example, a pipeline can load approved policy documents into a staging store, then clean and version them before publishing them to the retrieval index. The assistant retrieves the indexed policy at request time. If evaluation instead reveals a recurring behavior problem such as inconsistent tool selection, consider fine-tuning against that specific problem. See [AI Systems Design](AI-Systems-Design.md#reference-architecture), [Data Engineering for Solution Architecture](Data-Engineering-for-Solution-Architecture.md#overview-and-core-mental-model), [MLOps architecture guidance](https://docs.cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning), and the [NIST AI RMF Playbook](https://airc.nist.gov/airmf-resources/playbook/).
+
+### Worked Example: An Online Store's Support Assistant
+
+A shopper asks, **“Where is my order, and can I get a refund?”** Company privacy rules govern the solution. The storefront connects the shopper to the assistant, and the support team can take over when needed. Inside the assistant system, a model, a policy index, and an order API each play a role.
+
+| Design question | Decision in this example |
+| --- | --- |
+| **High-level design (HLD)** | Route live order lookups through the order service. Retrieve approved refund policies from a separate index. If a required dependency fails, offer a support handoff. |
+| **Low-level design (LLD)** | Specify the order identifier, authenticated caller, and fields returned by the API. Set a timeout and define what the app displays when it expires. Use an idempotency key for a refund submission so a retry can be recognized. |
+| **Software and AI overlap** | The assistant decides when to request an order lookup and how to use the result. The API checks who can see the order. The refund service checks the business rules and approval before acting. |
+
+Check three outcomes. Can the system handle an unavailable dependency? Does the API prevent unauthorized or duplicate refunds? Does the assistant cite the right policy and hand off when it cannot answer?
+
+> **Scope tells you what you're designing. Disciplines tell you which concerns to address. HLD and LLD tell you how much detail you need.**
 
 ### 2. Recommended learning progression
 
-1. System Design (HLD + LLD)
-
-    - Understand how to design, implement, scale, and maintain software systems.
-
-2. Solution Architecture
-
-    - Learn how to combine systems, technologies, infrastructure, and integrations into complete business solutions.
-
-3. Enterprise Architecture
-
-    - Learn how to align the organization's overall technology landscape with its business capabilities, strategy, and long-term objectives.
-
-**Important**: System design is not exclusively lower-level. High-Level Design (HLD) involves architectural decisions that overlap significantly with solution architecture. Also, solution architecture is not necessarily less technical. It often requires deep expertise in distributed systems, cloud infrastructure, security, integration, and scalability.
-
-**Bottom line**: Studying system design first is a sensible path for a software engineer. Solution architecture builds on those technical foundations while expanding the scope to business requirements and end-to-end solutions. Enterprise architecture extends that scope to the organization as a whole.
+1. **System design.** Practice HLD and LLD on one system, including its software structure, dependencies, and failure behavior. For an AI application, add data, model, and evaluation decisions to the exercise.
+2. **Solution architecture.** Work outward from the business goal. Decide which systems to build, buy, or integrate and how the complete solution will be operated.
+3. **Enterprise architecture.** Study how shared capabilities, standards, and technology roadmaps support multiple solutions.
 
 ## AI Architect Knowledge Map
 

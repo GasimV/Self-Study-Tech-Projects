@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1176" height="1080" viewBox="0 0 1176 1080" role="img" aria-labelledby="title description">
+  <title id="title">Architecture scope and overlap</title>
+  <desc id="description">An online store support assistant illustrates three scopes, from company-wide enterprise architecture to solution architecture and the design of one system. System architecture defines boundaries, deployment, request routing, storage, and reliability. AI architecture includes ETL and ELT data pipelines. Software and AI architecture both shape the order lookup. The assistant decides when to call the order API, and the API checks access. High-level design identifies the order service boundary, while low-level design specifies fields, timeout, and error behavior.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#586e85"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #152a40; }
+    .title { font-size: 41px; font-weight: 700; }
+    .subtitle { font-size: 24px; fill: #41566b; }
+    .panel-title { font-size: 27px; font-weight: 700; }
+    .scope-title { font-size: 23px; font-weight: 700; }
+    .label { font-size: 21px; font-weight: 700; }
+    .body { font-size: 20px; fill: #2e465d; }
+    .system { fill: #ffffff; stroke: #b9c9d8; }
+    .software { fill: #edf4fe; stroke: #a9c4e6; }
+    .ai { fill: #e9f6ef; stroke: #a9cdb8; }
+    .overlap { fill: #fff3de; stroke: #dbc08b; }
+    .arrow { fill: none; stroke: #586e85; stroke-width: 2.5; marker-end: url(#arrow); }
+    .divider { stroke: #b9c9d8; stroke-width: 1; }
+  </style>
+  <rect width="1176" height="1080" fill="#f5f8fb"/>
+  <text class="title" x="32" y="58">Architecture scope and overlap</text>
+  <text class="subtitle" x="32" y="90">Designing an online store’s support assistant</text>
+
+  <!-- Scope moves from organization to solution to system. -->
+  <rect class="system" x="28" y="115" width="348" height="98" rx="12"/>
+  <rect class="system" x="414" y="115" width="348" height="98" rx="12"/>
+  <rect class="system" x="800" y="115" width="348" height="98" rx="12"/>
+  <path class="arrow" d="M382 164h24"/>
+  <path class="arrow" d="M768 164h24"/>
+  <text class="scope-title" x="47" y="145">Enterprise architecture</text>
+  <text class="body" x="47" y="172">Organization-wide direction</text>
+  <text class="body" x="47" y="196">Shared privacy and identity rules</text>
+  <text class="scope-title" x="433" y="145">Solution architecture</text>
+  <text class="body" x="433" y="172">End-to-end customer support</text>
+  <text class="body" x="433" y="196">Storefront, orders, assistant, staff</text>
+  <text class="scope-title" x="819" y="145">System architecture</text>
+  <text class="body" x="819" y="172">One system and its environment</text>
+  <text class="body" x="819" y="196">The assistant application</text>
+
+  <!-- The system view connects the software, model, and operational concerns. -->
+  <rect class="system" x="28" y="235" width="1120" height="167" rx="14"/>
+  <text class="panel-title" x="48" y="272">Design the whole system</text>
+  <text class="body" x="48" y="301">Define what the assistant does, what it depends on, and how it behaves.</text>
+  <path class="divider" d="M411 319v66 M784 319v66"/>
+  <text class="label" x="48" y="337">Context &amp; interfaces</text>
+  <text class="body" x="48" y="361">Users, dependencies, subsystem roles</text>
+  <text class="body" x="48" y="384">Data flow, APIs, queues, events</text>
+  <text class="label" x="429" y="337">Deployment &amp; reliability</text>
+  <text class="body" x="429" y="361">Capacity, latency, failure domains</text>
+  <text class="body" x="429" y="384">DNS, load balancing, scaling</text>
+  <text class="label" x="803" y="337">Security &amp; operations</text>
+  <text class="body" x="803" y="361">Trust boundaries and monitoring</text>
+  <text class="body" x="803" y="384">Load tests and failure exercises</text>
+
+  <!-- Two overlapping areas of design work. -->
+  <rect class="software" x="28" y="423" width="548" height="350" rx="14"/>
+  <rect class="ai" x="600" y="423" width="548" height="350" rx="14"/>
+  <text class="panel-title" x="48" y="459">Software architecture</text>
+  <text class="panel-title" x="620" y="459">AI architecture</text>
+  <text class="label" x="48" y="491">Structure &amp; dependencies</text>
+  <text class="body" x="48" y="513">Frontend, backend, modules, services</text>
+  <text class="label" x="48" y="539">Runtime behavior</text>
+  <text class="body" x="48" y="561">Sync and async flows, errors, retries</text>
+  <text class="label" x="48" y="587">Domain &amp; data ownership</text>
+  <text class="body" x="48" y="609">Business rules, transaction boundaries</text>
+  <text class="label" x="48" y="635">Interfaces &amp; security</text>
+  <text class="body" x="48" y="657">API and event contracts, permissions</text>
+  <text class="label" x="48" y="683">Quality attributes</text>
+  <text class="body" x="48" y="705">Performance, maintainability, testability</text>
+  <text class="label" x="48" y="731">Testing &amp; delivery</text>
+  <text class="body" x="48" y="753">Contract tests, migrations, releases, rollback</text>
+
+  <text class="label" x="620" y="491">Data &amp; knowledge</text>
+  <text class="body" x="620" y="513">ETL / ELT, datasets, indexes, access filters</text>
+  <text class="label" x="620" y="539">Models, algorithms &amp; training</text>
+  <text class="body" x="620" y="561">Model choice, training, fine-tuning</text>
+  <text class="label" x="620" y="587">Retrieval &amp; agentic workflows</text>
+  <text class="body" x="620" y="609">RAG, tools, permissions, human handoff</text>
+  <text class="label" x="620" y="635">Inference &amp; serving</text>
+  <text class="body" x="620" y="657">Routing, batch or online inference, latency, cost</text>
+  <text class="label" x="620" y="683">Evaluation &amp; governance</text>
+  <text class="body" x="620" y="705">Grounding, task success, safety, privacy</text>
+  <text class="label" x="620" y="731">MLOps &amp; LLMOps</text>
+  <text class="body" x="620" y="753">Pipelines, versioning, deployment, monitoring</text>
+
+  <path class="arrow" d="M302 775v15"/>
+  <path class="arrow" d="M874 775v15"/>
+  <rect class="overlap" x="28" y="796" width="1120" height="89" rx="12"/>
+  <text class="label" x="48" y="826">Shared decision: live order lookup</text>
+  <text class="body" x="48" y="859">The assistant decides when to call the order API.</text>
+  <path class="arrow" d="M511 852h45"/>
+  <text class="body" x="575" y="859">The API checks whether the shopper may see the order.</text>
+
+  <text class="body" x="32" y="909">Data and state: databases, object storage, caches, sharding, replication.</text>
+  <text class="body" x="32" y="932">Across the system: data architecture, infrastructure, networking, and security.</text>
+
+  <!-- A single system-design decision at two levels of detail. -->
+  <rect class="system" x="28" y="944" width="548" height="106" rx="12"/>
+  <rect class="system" x="600" y="944" width="548" height="106" rx="12"/>
+  <path class="arrow" d="M579 997h16"/>
+  <text class="label" x="48" y="978">High-level design (HLD)</text>
+  <text class="body" x="48" y="1009">Look up live status through the order service.</text>
+  <text class="body" x="48" y="1033">The order service owns the data.</text>
+  <text class="label" x="620" y="978">Low-level design (LLD)</text>
+  <text class="body" x="620" y="1009">Define request and response fields, the timeout,</text>
+  <text class="body" x="620" y="1033">and what the app displays on failure.</text>
+</svg>

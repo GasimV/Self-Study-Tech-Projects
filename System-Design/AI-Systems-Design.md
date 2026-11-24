@@ -36,6 +36,8 @@
 
 **AI systems design** is the design of complete applications that use models as components: clients, APIs, orchestration, retrieval, tools, storage, monitoring, and operations. It assumes the usual distributed systems foundations, then addresses the behavior and cost of model inference.
 
+For how AI architecture overlaps with system and software architecture, see [Architecture Scope and Overlap](Understanding-System-Design.md#architecture-scope-and-overlap).
+
 > The model is one dependency in the application. The system around it determines whether the result is useful, safe, fast, affordable, and reliable.
 
 Unlike ordinary deterministic code, an LLM can produce different responses to the same request. Even when output is constrained, quality depends on the prompt, available context, model, and external data. Design therefore combines **deterministic controls** (validation, permissions, budgets, tests) with **probabilistic evaluation** (task success, groundedness, human review).
