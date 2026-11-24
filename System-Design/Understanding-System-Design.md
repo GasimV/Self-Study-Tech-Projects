@@ -47,6 +47,7 @@
   - [Software Architecture](#software-architecture)
   - [AI Architecture](#ai-architecture)
   - [Worked Example: An Online Store's Support Assistant](#worked-example-an-online-stores-support-assistant)
+    - [Course Concepts in the Same Request](#course-concepts-in-the-same-request)
   - [2. Recommended learning progression](#2-recommended-learning-progression)
 - [AI Architect Knowledge Map](#ai-architect-knowledge-map)
   - [Complete Knowledge Map](#complete-knowledge-map)
@@ -637,7 +638,7 @@ Therefore, system design can be performed at the subsystem level, while solution
 
 To place an architecture decision, ask **what is in scope, which disciplines contribute, and how much detail is needed?** System design is the work of deciding how a system will behave and revising those decisions as evidence changes. System architecture describes its major parts, relationships, and governing decisions.
 
-![Architecture scope moves from enterprise to solution to system. The system, software, and AI panels show how teams contribute to a store's support assistant. The shared band shows the authorized order API, and the final strip compares high-level and low-level design.](assets/architecture-scope-and-disciplines.svg)
+![A shopper asks about a delayed order and a refund. Enterprise architecture sets access and approval rules, solution architecture connects the storefront to support, and system architecture defines the assistant's dependencies and fallback. Software architecture enforces order access, and AI architecture uses the order status and policy to explain the next step.](assets/architecture-scope-and-disciplines.svg)
 
 ### 1. Abstraction levels of architecture
 
@@ -690,17 +691,42 @@ For example, a pipeline can load approved policy documents into a staging store,
 
 ### Worked Example: An Online Store's Support Assistant
 
-A shopper asks, **“Where is my order, and can I get a refund?”** Company privacy rules govern the solution. The storefront connects the shopper to the assistant, and the support team can take over when needed. Inside the assistant system, a model, a policy index, and an order API each play a role.
+A shopper asks, **“Where is order 481, and can I get a refund?”** The order service reports **Delayed**. The store's policy sends delay-related refund requests to support for review. Follow that one request through the five architecture perspectives.
 
-| Design question | Decision in this example |
-| --- | --- |
-| **High-level design (HLD)** | Route live order lookups through the order service. Retrieve approved refund policies from a separate index. If a required dependency fails, offer a support handoff. |
-| **Low-level design (LLD)** | Specify the order identifier, authenticated caller, and fields returned by the API. Set a timeout and define what the app displays when it expires. Use an idempotency key for a refund submission so a retry can be recognized. |
-| **Software and AI overlap** | The assistant decides when to request an order lookup and how to use the result. The API checks who can see the order. The refund service checks the business rules and approval before acting. |
+| Architecture | Question | What gets decided here |
+| --- | --- | --- |
+| **Enterprise** | What rules should apply across the company? | Use the same customer-data access rules for the website, mobile app, and support desk. Require an authorized employee to approve delay-related refunds. |
+| **Solution** | How will the business handle this request from start to finish? | The shopper starts in the storefront. The assistant checks the order and explains the policy. Support reviews the case, and the refund service issues any approved refund. |
+| **System** | What parts does the assistant system need, and what happens when they fail? | Connect the assistant to the live order API, the approved-policy index, and the support system. If the order API times out, tell the shopper that live status is unavailable and offer a handoff. |
+| **Software** | How does the code enforce the rules? | The order API checks that order 481 belongs to the signed-in shopper before returning its status. The refund service checks staff approval and recognizes a retried request by its idempotency key so it cannot issue a second refund for that request. |
+| **AI** | How does the assistant choose what to look up and what to say? | Call the order API for live status and retrieve the approved delay policy to explain what happens next. Evaluate whether the assistant reports the right status, cites the policy, and hands the case to support when appropriate. |
 
-Check three outcomes. Can the system handle an unavailable dependency? Does the API prevent unauthorized or duplicate refunds? Does the assistant cite the right policy and hand off when it cannot answer?
+In this example the shopper sees, **“Order 481 is delayed. Our policy sends delay-related refund requests to support for review. I can connect you with a specialist.”**
+
+**System design is the work of turning those decisions into a working system.** For the same order lookup:
+
+- **High-level design (HLD).** Draw the storefront → assistant → order service path, and the separate path to human support.
+- **Low-level design (LLD).** Specify how the order ID and caller identity reach the API, what status it returns, and what message the storefront shows on timeout.
+- **Validate and revise.** Check that the response cites the right policy, another shopper cannot read order 481, and an unavailable order API triggers the handoff.
 
 > **Scope tells you what you're designing. Disciplines tell you which concerns to address. HLD and LLD tell you how much detail you need.**
+
+#### Course Concepts in the Same Request
+
+Start with the system that answers the shopper and opens a support case. Use the course topics to explain a choice, a trade-off, or a test in that design.
+
+| Course topic | How it applies to order 481 |
+| --- | --- |
+| **Requirements and capacity** | Define what the shopper must receive, how quickly live status should appear, and how much traffic to expect during a delivery disruption. Use those targets to size the order API, its database, and the assistant. [Requirements](#functional-and-non-functional-requirements) · [Capacity and server counts](#who-chooses-capacity-and-server-counts) |
+| **Networking and traffic** | DNS resolves the storefront address. HTTPS protects the connection. A reverse proxy or load balancer routes requests to healthy app instances. A CDN can serve static storefront assets. Add app instances when traffic grows, and check whether the order database or model becomes the bottleneck. [Networking](Networking-Fundamentals-for-System-Design.md) · [Load balancing and autoscaling](Distributed-Systems-Building-Blocks.md#autoscaling-with-load-balancing) |
+| **Storage and caching** | Keep order and refund records in a transactional database, and index the order lookup. Store approved policy files in object storage and index their content for retrieval. Cache reusable policy text with a freshness rule. For the shopper's current order status, read through the order API using its required consistency guarantees. [Database selection](Databases-and-Storage.md#database-selection-by-requirements) · [Caching](Distributed-Cache.md#choosing-a-cache-architecture) |
+| **Services, queues, and transactions** | The order lookup is synchronous because the shopper is waiting. The app can enqueue the support case for later processing and report it as accepted once the handoff is durably recorded. A retried message should refer to the same case. The refund service checks approval and records a pending refund in a local transaction before sending a payment request with the same idempotency key on retries. [Service architecture](Distributed-Systems-Building-Blocks.md#microservices-architectures) · [Distributed transactions](Databases-and-Storage.md#distributed-transactions) |
+| **Replication, sharding, and agreement** | Evaluate replicas for failover and check how the database coordinates writes and elects leaders. During a network split, the refund service may have to pause writes to preserve consistency. During normal operation, waiting for extra replica acknowledgments can add latency. If the order database outgrows one server, compare shard keys and their effect on lookups. [Sharding](Databases-and-Storage.md#partitioning-and-sharding) · [CAP](Distributed-Systems-Theorems-and-Data-Structures.md#cap-theorem) · [PACELC](Distributed-Systems-Theorems-and-Data-Structures.md#pacelc-theorem) · [Consensus](Distributed-Systems-Theorems-and-Data-Structures.md#consensus-and-replication-protocols) |
+| **Security, failure handling, and operations** | Test access to someone else's order, an order API timeout, and a retried refund request. Track request latency, order lookup failures, and support queue age. Trace order and case IDs through the workflow so an operator can investigate failures. [Authorization](Identity-and-Access-Management.md#authorization-in-practice) · [Distributed system attributes](Distributed-System-Attributes.md) |
+| **Data pipelines and AI** | Use ETL or ELT to prepare approved policies for indexing. Evaluate whether the assistant retrieved the right policy, called the live API, cited the evidence, and handed off appropriately. Version the policy index with the model and prompt revisions used in evaluation. [ETL and ELT](Data-Engineering-for-Solution-Architecture.md#etl-and-elt) · [AI evaluation](AI-Systems-Design.md#evaluation-and-observability) |
+| **Algorithms and data structures** | If a shared cache grows across nodes, evaluate key placement. Consistent hashing can limit key movement when cache nodes change. If operations needs distinct shopper counts for a dashboard, HyperLogLog can estimate them with bounded memory for a fixed configuration. Treat that count as an estimate. [System design uses for these algorithms](Distributed-Systems-Theorems-and-Data-Structures.md#where-these-algorithms-fit-in-system-design) |
+
+> **Start from the request and its guarantees. Each component you add should have a clear reason to be there.**
 
 ### 2. Recommended learning progression
 

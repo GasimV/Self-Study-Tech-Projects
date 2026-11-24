@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1176" height="1080" viewBox="0 0 1176 1080" role="img" aria-labelledby="title description">
   <title id="title">Architecture scope and overlap</title>
-  <desc id="description">An online store support assistant illustrates three scopes, from company-wide enterprise architecture to solution architecture and the design of one system. System architecture defines boundaries, deployment, request routing, storage, and reliability. AI architecture includes ETL and ELT data pipelines. Software and AI architecture both shape the order lookup. The assistant decides when to call the order API, and the API checks access. High-level design identifies the order service boundary, while low-level design specifies fields, timeout, and error behavior.</desc>
+  <desc id="description">A shopper asks about order 481 and a refund. Enterprise architecture sets shared access and refund approval rules. Solution architecture connects the storefront, assistant, and support staff. System architecture defines the live order API, policy index, and fallback to support. Software architecture enforces order access. AI architecture uses the status and policy to explain the next step and includes ETL and ELT data pipelines. High-level design identifies the order service boundary, while low-level design specifies fields, timeout, and error behavior.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0 0 8 4 0 8Z" fill="#586e85"/>
@@ -23,7 +23,7 @@
   </style>
   <rect width="1176" height="1080" fill="#f5f8fb"/>
   <text class="title" x="32" y="58">Architecture scope and overlap</text>
-  <text class="subtitle" x="32" y="90">Designing an online store’s support assistant</text>
+  <text class="subtitle" x="32" y="90">Shopper: “Where is order 481, and can I get a refund?”</text>
 
   <!-- Scope moves from organization to solution to system. -->
   <rect class="system" x="28" y="115" width="348" height="98" rx="12"/>
@@ -32,19 +32,19 @@
   <path class="arrow" d="M382 164h24"/>
   <path class="arrow" d="M768 164h24"/>
   <text class="scope-title" x="47" y="145">Enterprise architecture</text>
-  <text class="body" x="47" y="172">Organization-wide direction</text>
-  <text class="body" x="47" y="196">Shared privacy and identity rules</text>
+  <text class="body" x="47" y="172">Set company-wide access rules</text>
+  <text class="body" x="47" y="196">Staff approve delay refunds</text>
   <text class="scope-title" x="433" y="145">Solution architecture</text>
-  <text class="body" x="433" y="172">End-to-end customer support</text>
-  <text class="body" x="433" y="196">Storefront, orders, assistant, staff</text>
+  <text class="body" x="433" y="172">Connect storefront and support</text>
+  <text class="body" x="433" y="196">Send the refund case for review</text>
   <text class="scope-title" x="819" y="145">System architecture</text>
-  <text class="body" x="819" y="172">One system and its environment</text>
-  <text class="body" x="819" y="196">The assistant application</text>
+  <text class="body" x="819" y="172">Use live order API and policy index</text>
+  <text class="body" x="819" y="196">Offer handoff if order lookup fails</text>
 
   <!-- The system view connects the software, model, and operational concerns. -->
   <rect class="system" x="28" y="235" width="1120" height="167" rx="14"/>
   <text class="panel-title" x="48" y="272">Design the whole system</text>
-  <text class="body" x="48" y="301">Define what the assistant does, what it depends on, and how it behaves.</text>
+  <text class="body" x="48" y="301">Which parts let the assistant read live status, explain the refund policy, and reach support?</text>
   <path class="divider" d="M411 319v66 M784 319v66"/>
   <text class="label" x="48" y="337">Context &amp; interfaces</text>
   <text class="body" x="48" y="361">Users, dependencies, subsystem roles</text>
@@ -68,7 +68,7 @@
   <text class="label" x="48" y="587">Domain &amp; data ownership</text>
   <text class="body" x="48" y="609">Business rules, transaction boundaries</text>
   <text class="label" x="48" y="635">Interfaces &amp; security</text>
-  <text class="body" x="48" y="657">API and event contracts, permissions</text>
+  <text class="body" x="48" y="657">Order API checks who owns the order</text>
   <text class="label" x="48" y="683">Quality attributes</text>
   <text class="body" x="48" y="705">Performance, maintainability, testability</text>
   <text class="label" x="48" y="731">Testing &amp; delivery</text>
@@ -79,7 +79,7 @@
   <text class="label" x="620" y="539">Models, algorithms &amp; training</text>
   <text class="body" x="620" y="561">Model choice, training, fine-tuning</text>
   <text class="label" x="620" y="587">Retrieval &amp; agentic workflows</text>
-  <text class="body" x="620" y="609">RAG, tools, permissions, human handoff</text>
+  <text class="body" x="620" y="609">RAG and tools: explain the delay and next step</text>
   <text class="label" x="620" y="635">Inference &amp; serving</text>
   <text class="body" x="620" y="657">Routing, batch or online inference, latency, cost</text>
   <text class="label" x="620" y="683">Evaluation &amp; governance</text>
