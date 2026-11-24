@@ -584,6 +584,7 @@ Warehouses, lakes, lakehouses, mesh, and streaming address different concerns an
 ## Related Notes
 
 - [System design at different scales](Understanding-System-Design.md#system-design-at-different-scales)
+- [Distributed Messaging and Event-Driven Architecture](Distributed-Messaging-and-Event-Driven-Architecture.md)
 - [Databases and Storage](Databases-and-Storage.md)
 - [Greenplum and relational analytics](Databases-and-Storage.md#greenplum-relational-analytics-with-mpp)
 - [Distributed consistency](Distributed-System-Attributes.md#consistency) and [durability](Distributed-System-Attributes.md#durability)
