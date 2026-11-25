@@ -8,6 +8,8 @@
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
   - [Pub/Sub: One Event, Independent Subscribers](#pubsub-one-event-independent-subscribers)
 - [Designing a Distributed Messaging System](#designing-a-distributed-messaging-system)
+  - [What a Queue Gives You and What You Must Design](#what-a-queue-gives-you-and-what-you-must-design)
+  - [Design Questions](#design-questions)
   - [Conceptual Messaging API](#conceptual-messaging-api)
 - [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery)
 - [Worked Design: Refund Review for Order 481](#worked-design-refund-review-for-order-481)
@@ -123,6 +125,20 @@ flowchart LR
 Both subscriptions can receive the event. Workers within the notification subscription can share notification work. A slow reporting consumer has its own backlog and can catch up within the configured retention window. It can still contribute to costs or load on shared broker resources. One implementation is an Amazon SNS topic with two Amazon SQS queues. [SNS fan-out to SQS](https://docs.aws.amazon.com/sns/latest/dg/sns-sqs-as-subscriber.html) · [Google Cloud Pub/Sub subscriptions](https://docs.cloud.google.com/pubsub/docs/subscription-overview)
 
 ## Designing a Distributed Messaging System
+
+### What a Queue Gives You and What You Must Design
+
+| Advantage | Design decision |
+| --- | --- |
+| **Absorb bursts** | Decide how much work can wait and how quickly workers must catch up. During a spike in delayed orders, review requests pile up until workers process them. |
+| **Decouple services** | The store can accept order 481's review request while support workers are busy. Define the message contract and size the store and worker capacity separately. |
+| **Recover unfinished work** | Set acknowledgment and retry rules. If a worker crashes after saving the case, the next worker can use the request ID in the redelivered message to find the existing case and acknowledge the delivery. |
+
+> **Redelivery gives the work another chance. Idempotency lets repeated attempts produce one business result.**
+
+Define ordering and any exactly-once guarantee for the specific operation that needs it. [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery)
+
+### Design Questions
 
 | Design question | Decision to make |
 | --- | --- |
