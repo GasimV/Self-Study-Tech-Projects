@@ -7,6 +7,7 @@
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
   - [Pub/Sub: One Event, Independent Subscribers](#pubsub-one-event-independent-subscribers)
 - [Designing a Distributed Messaging System](#designing-a-distributed-messaging-system)
+  - [Conceptual Messaging API](#conceptual-messaging-api)
 - [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery)
 - [Worked Design: Refund Review for Order 481](#worked-design-refund-review-for-order-481)
 - [Kafka, Kinesis, and Platform Selection](#kafka-kinesis-and-platform-selection)
@@ -15,6 +16,9 @@
     - [Kafka Acknowledgments and Consumer Lag](#kafka-acknowledgments-and-consumer-lag)
   - [Kafka vs. RabbitMQ for Order 481](#kafka-vs-rabbitmq-for-order-481)
   - [Choose a Platform by Requirement](#choose-a-platform-by-requirement)
+  - [Kafka and RabbitMQ Command Walkthroughs](#kafka-and-rabbitmq-command-walkthroughs)
+    - [Kafka: Publish and Read a Retained Event](#kafka-publish-and-read-a-retained-event)
+    - [RabbitMQ: Route and Acknowledge a Review Command](#rabbitmq-route-and-acknowledge-a-review-command)
 - [Stream Processing, CQRS, and Event Sourcing](#stream-processing-cqrs-and-event-sourcing)
 - [Operations and Design Checklist](#operations-and-design-checklist)
 - [Related Notes](#related-notes)
@@ -86,6 +90,22 @@ Both subscriptions can receive the event. Workers within the notification subscr
 | **What happens when a node fails?** | Choose replication and failure domains that meet the recovery goal. Tie producer confirmation to the platform's storage policy, and test failover and reconstruction of consumer progress. |
 
 **Backlog example.** If arrivals are 1,000 messages/s and workers complete 800/s for 60 seconds, the backlog grows by `(1,000 − 800) × 60 = 12,000` messages. If arrivals then drop to 500/s, the same workers clear it at `800 − 500 = 300` messages/s. Draining those 12,000 messages takes 40 seconds. These numbers assume an initially empty queue, stable rates within each interval, and no retries. A queue absorbs a burst as storage and delay. Sustained arrivals above completion capacity require more capacity, less intake, or reduced work per message.
+
+### Conceptual Messaging API
+
+These operation names describe the responsibilities of a messaging interface. Each platform exposes them through its own client protocol or API. The producer sends the [order 481 message envelope](#worked-design-refund-review-for-order-481) as the payload.
+
+| Operation | Example inputs | What the result means |
+| --- | --- | --- |
+| **CreateTopic** | Name `support-events`, partition count, replication factor, retention | The topic is ready for publication once creation succeeds. Invalid settings or a conflicting name need error handling. |
+| **DeclareQueue / Bind** | Queue `refund-review`, exchange `support.commands`, routing key `refund.review.create` | The binding gives matching commands a route to the queue. Queue settings and routing rules are separate choices. |
+| **Publish** | Topic or exchange, partition or routing key, message envelope | The result confirms what the platform and chosen settings promise, such as a successful append or route. The worker reports its outcome separately. |
+| **Receive** | Queue or subscription, maximum message count, wait time where supported | A pull-style interface returns deliveries with handles for acknowledgment, or an empty batch. In a push-style interface, the worker subscribes and receives deliveries as capacity permits. |
+| **Acknowledge** | Delivery handle for `CreateRefundReview` | Finish this delivery after durably creating or finding the case. Rejection, retry, and requeue behavior depend on the broker. |
+| **Fetch** | Kafka topic, partition, starting offset, size or wait limits | Read a batch of retained records. A consumer group assigns partitions and uses committed progress on restart. |
+| **CommitOffset** | Kafka group, topic, partition, next offset | Save the group's restart position. After finishing offset `42` and the preceding required work, commit `43`. Other groups keep their own positions. |
+
+For a publish timeout, the sender may be unsure whether the broker accepted the message. Retry with the same review request ID so the worker can recognize the same business operation. On the read side, RabbitMQ acknowledgments track individual deliveries, while Kafka offsets track where a group will resume in a partition. [RabbitMQ confirms and acknowledgments](https://www.rabbitmq.com/docs/confirms) · [Kafka consumer positions](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
 
 ## Delivery, Ordering, and Recovery
 
@@ -254,6 +274,80 @@ Use a queue when the primary requirement is **getting a job done**. Evaluate a r
 | **Live notifications or an existing Redis-based stream** | **Redis Pub/Sub** for live signals. **Redis Streams** for retained entries and consumer groups. | Pub/Sub messages can be missed while disconnected. With Streams, evaluate acknowledgment, trimming, persistence, and failure behavior. [Redis Pub/Sub delivery semantics](https://redis.io/docs/latest/develop/pubsub/#delivery-semantics) · [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/) |
 
 Kinesis Data Streams retains the stream. **Amazon Data Firehose** delivers streaming data to supported destinations such as Amazon S3. **Amazon Managed Service for Apache Flink** runs stream-processing applications. These roles can be combined when the use case needs them. [Amazon Data Firehose](https://docs.aws.amazon.com/firehose/latest/dev/what-is-this-service.html) · [Managed Service for Apache Flink](https://docs.aws.amazon.com/managed-flink/latest/java/what-is.html)
+
+### Kafka and RabbitMQ Command Walkthroughs
+
+Run each block in **Bash** against its own isolated lab broker. The examples assume the broker and CLI tools are already available, the sample destinations and groups are new, and other clients are idle on those destinations. Use fresh lab names for a repeat run. Both examples use fictional order 481.
+
+#### Kafka: Publish and Read a Retained Event
+
+From the **Kafka 4.3** distribution directory, assume a single lab broker at `localhost:9092` with consumer groups working. Create a two-partition topic. The single replica is sufficient to show routing and reads on one broker. [Kafka quick start](https://kafka.apache.org/43/getting-started/quickstart/) · [Kafka topic configuration](https://kafka.apache.org/43/configuration/topic-configs/)
+
+```bash
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create \
+  --topic support-events-lab --partitions 2 --replication-factor 1 \
+  --config min.insync.replicas=1
+```
+
+Publish the event that a refund-review case has opened. The text before `|` is the partition key, so the record is keyed by order ID `481`. The text after `|` is its value. [Kafka console producer options](https://github.com/apache/kafka/blob/4.3.0/tools/src/main/java/org/apache/kafka/tools/ConsoleProducer.java) · [Kafka line reader](https://github.com/apache/kafka/blob/4.3.0/tools/src/main/java/org/apache/kafka/tools/LineMessageReader.java)
+
+```bash
+printf '%s\n' '481|{"messageId":"msg-702","type":"RefundReviewOpened","schemaVersion":1,"timestamp":"2026-11-06T10:01:00Z","correlationId":"flow-481-1","payload":{"orderId":"481","reviewRequestId":"req-481-1"}}' | \
+  bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic support-events-lab \
+    --command-property acks=all --reader-property parse.key=true --reader-property 'key.separator=|'
+```
+
+Read one event with each of two fresh groups. Both should print key `481` and the `RefundReviewOpened` payload. The console commands display the record. A consumer that writes a result to a database should commit its offset after the write succeeds. [Kafka console consumer options](https://github.com/apache/kafka/blob/4.3.0/tools/src/main/java/org/apache/kafka/tools/consumer/ConsoleConsumerOptions.java) · [Kafka offset commits](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
+```bash
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic support-events-lab \
+  --group reporting-lab --from-beginning --max-messages 1 --timeout-ms 10000 \
+  --formatter-property print.key=true
+
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic support-events-lab \
+  --group notifications-lab --from-beginning --max-messages 1 --timeout-ms 10000 \
+  --formatter-property print.key=true
+```
+
+#### RabbitMQ: Route and Acknowledge a Review Command
+
+Use **`rabbitmqadmin` v2** with an existing connection alias called `messaging-lab` and permission to use the lab virtual host `/`. Declare a direct exchange, a classic queue, and a binding that matches the routing key exactly. [RabbitMQ management CLI](https://www.rabbitmq.com/docs/management-cli) · [RabbitMQ direct exchanges](https://www.rabbitmq.com/docs/exchanges)
+
+```bash
+rabbitmqadmin --node messaging-lab --vhost / exchanges declare \
+  --name support.commands.lab --type direct --durable true
+
+rabbitmqadmin --node messaging-lab --vhost / queues declare \
+  --name refund-review-lab --type classic --durable true
+
+rabbitmqadmin --node messaging-lab --vhost / bindings declare \
+  --source support.commands.lab --destination-type queue \
+  --destination refund-review-lab --routing-key refund.review.create
+```
+
+Publish the review command to that exchange. The binding routes the message to `refund-review-lab`. [RabbitMQ management API publish operation](https://www.rabbitmq.com/docs/http-api-reference)
+
+```bash
+rabbitmqadmin --node messaging-lab --vhost / publish message \
+  --exchange support.commands.lab --routing-key refund.review.create \
+  --properties '{"content_type":"application/json","delivery_mode":2}' \
+  --payload '{"messageId":"msg-701","type":"CreateRefundReview","schemaVersion":1,"timestamp":"2026-11-06T10:00:00Z","correlationId":"flow-481-1","payload":{"orderId":"481","reviewRequestId":"req-481-1"}}'
+```
+
+Fetch one message and requeue it. Fetch again to see the same review request, this time acknowledging it for removal. A third fetch should return no message under the lab assumptions. [RabbitMQ management API fetch and acknowledgment modes](https://www.rabbitmq.com/docs/http-api-reference) · [RabbitMQ CLI flags](https://github.com/rabbitmq/rabbitmqadmin-ng/blob/main/src/cli/mod.rs)
+
+```bash
+rabbitmqadmin --node messaging-lab --vhost / get messages \
+  --queue refund-review-lab --count 1 --ack-mode ack_requeue_true
+
+rabbitmqadmin --node messaging-lab --vhost / get messages \
+  --queue refund-review-lab --count 1 --ack-mode ack_requeue_false
+
+rabbitmqadmin --node messaging-lab --vhost / get messages \
+  --queue refund-review-lab --count 1 --ack-mode ack_requeue_false
+```
+
+These management commands let you observe routing and queue behavior in a lab. In the worked system, an AMQP (Advanced Message Queuing Protocol) client receives each delivery, creates or finds the case, then acknowledges it after the database commit. [RabbitMQ consumer acknowledgments](https://www.rabbitmq.com/docs/confirms)
 
 ## Stream Processing, CQRS, and Event Sourcing
 
