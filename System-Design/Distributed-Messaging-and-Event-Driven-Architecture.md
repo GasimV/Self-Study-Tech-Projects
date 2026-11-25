@@ -89,17 +89,39 @@ A **message** is the unit sent between components. It can carry a command, an ev
 
 | Pattern | Who receives the work or data? | Progress and retention | Example |
 | --- | --- | --- | --- |
-| **Work queue** | Workers compete for a job. A particular attempt is assigned to a worker, and the job may be redelivered. | Completion is tracked per message, commonly through acknowledgment or deletion. Unfinished work remains subject to the queue's retention and retry rules. | Open one case for a refund-review request. |
+| **Work queue** | Workers (consumers) compete for jobs. A particular attempt is assigned to one worker, and the job may be redelivered. | Completion is tracked per message, commonly through acknowledgment or deletion. Unfinished work remains subject to the queue's retention and retry rules. | Open one case for a refund-review request. |
 | **Pub/Sub** | Each matching subscription can receive the event. Several workers can share one subscription when the platform supports it. | Each subscription can progress independently. Offline delivery, retention, and replay depend on the service and configuration. | Notify the shopper and update the support dashboard. |
 | **Retained log** | Readers or consumer groups consume records at their own pace. | Readers track positions. Retention or compaction governs when records disappear, independently of whether any reader has finished. | Replay retained review events to rebuild a dashboard. |
 
 ### Work Queue: One Job, Competing Workers
 
+The producer submits a job to the **queue broker**, also called a **queue manager**. The broker stores the job and delivers each attempt to one **consumer**, a worker that processes the job.
+
+```mermaid
+flowchart LR
+    P["Producer"] -->|Publish job| Q["Queue broker<br/>(queue manager)"]
+    Q -->|Store pending work| S[("Message storage")]
+    Q -->|Deliver job| W["Worker A or B<br/>(consumer)"]
+    W -.->|Acknowledge after success| Q
+```
+
+| Teaching point | What to remember |
+| --- | --- |
+| **Queue broker (queue manager)** | Delivers jobs and applies the queue's ordering and retry rules. |
+| **Message storage** | Holds pending jobs according to the configured durability and retention policies. |
+| **Load balancing** | Workers (consumers) share the jobs. Limit how many jobs each consumer can have in flight. |
+| **Fault tolerance and recovery** | Replication can help the queue survive broker failures. If a consumer fails before acknowledging, the job can be redelivered. Make processing safe to repeat. |
+| **Scalability** | Add consumers when processing is the bottleneck and downstream systems can handle the extra load. |
+
+A **workflow orchestrator** decides which step of a multi-step process runs next. It can submit a job to the broker, which handles delivery to a consumer. [AWS workflow orchestration example](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/saga-orchestration.html)
+
+The sequence below shows two confirmations. The broker confirms publication to the producer, and the consumer acknowledges the job after saving the result.
+
 ```mermaid
 sequenceDiagram
     participant P as Producer
-    participant Q as Queue broker
-    participant W as Worker
+    participant Q as Queue broker (queue manager)
+    participant W as Worker (consumer)
     P->>Q: Send review command
     Note over Q: Store under configured durability policy
     Q-->>P: Confirm publication
