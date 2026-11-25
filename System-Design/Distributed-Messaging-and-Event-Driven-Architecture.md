@@ -36,6 +36,33 @@ Two common messaging patterns answer **who should receive the message?**
 
 A **retained log** answers **what history can readers go back to?** It keeps events according to a retention policy so readers can catch up or replay them. Reporting can use that history to rebuild its dashboard.
 
+```mermaid
+flowchart TB
+    subgraph WQ["Work queue · share jobs"]
+        direction LR
+        Q["Order 481 review queue"]
+        Q -->|Picks up the review| WA["Worker A"]
+        Q -.->|Available for other jobs| WB["Worker B"]
+    end
+
+    subgraph PS["Pub/Sub · share events"]
+        direction LR
+        T["Topic: RefundReviewOpened"]
+        T --> N["Notifications"]
+        T --> R["Reporting"]
+    end
+
+    subgraph RL["Retained log · replay history"]
+        direction LR
+        L["Retained review events"]
+        L -->|At the end| NC["Notifications caught up"]
+        L -->|From earlier| RR["Reporting rebuilds dashboard"]
+    end
+
+    WQ ~~~ PS
+    PS ~~~ RL
+```
+
 ## Synchronous Calls, Messages, and Events
 
 A shopper asks, **“Where is order 481, and can I get a refund?”** The assistant checks the live status. The order is delayed, and the store's policy sends delay-related refund requests to support. When the shopper asks for help, the system accepts a review request. Support can open the case later, then notify the shopper and report on workload.
