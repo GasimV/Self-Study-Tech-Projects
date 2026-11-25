@@ -11,6 +11,9 @@
 - [Worked Design: Refund Review for Order 481](#worked-design-refund-review-for-order-481)
 - [Kafka, Kinesis, and Platform Selection](#kafka-kinesis-and-platform-selection)
   - [Kafka: Partitions, Replicas, and Consumer Groups](#kafka-partitions-replicas-and-consumer-groups)
+    - [How Kafka Stores and Fetches Records](#how-kafka-stores-and-fetches-records)
+    - [Kafka Acknowledgments and Consumer Lag](#kafka-acknowledgments-and-consumer-lag)
+  - [Kafka vs. RabbitMQ for Order 481](#kafka-vs-rabbitmq-for-order-481)
   - [Choose a Platform by Requirement](#choose-a-platform-by-requirement)
 - [Stream Processing, CQRS, and Event Sourcing](#stream-processing-cqrs-and-event-sourcing)
 - [Operations and Design Checklist](#operations-and-design-checklist)
@@ -196,6 +199,45 @@ flowchart TB
 [Kafka introduction](https://kafka.apache.org/43/getting-started/introduction/) · [Kafka consumer positions](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html) · [Kafka KRaft](https://kafka.apache.org/43/operations/kraft/) · [Kafka 4.0 upgrade guide](https://kafka.apache.org/40/getting-started/upgrade/)
 
 **Exactly-once boundary.** A Kafka consume-transform-produce workflow can use transactions to commit output records and input offsets together, with downstream readers using read-committed isolation. Kafka Streams can also include managed state updates within its processing guarantee when configured appropriately. A write to an unrelated database or a call to a payment API requires its own coordination or idempotency mechanism. [Kafka delivery semantics](https://kafka.apache.org/43/design/design/) · [Kafka Streams concepts](https://kafka.apache.org/43/streams/core-concepts/)
+
+#### How Kafka Stores and Fetches Records
+
+1. **Send a batch.** The producer groups records going to the same partition and can compress them together. One request carries several records. Waiting to fill a batch can add delay.
+2. **Append to a segment.** The partition leader appends the batch to the active **log segment's** data file. A partition's log is stored as a series of these segments. Kafka rolls to a new one as needed. With delete-based retention, it can remove eligible old segments as units.
+3. **Find an offset.** Suppose P0 has segments starting at offsets `0` and `40`. To fetch `42`, Kafka selects the segment starting at `40`, uses its **sparse offset index** to jump to a nearby file position, and scans forward. A sparse index stores selected positions, so it can stay small.
+4. **Fetch a batch.** The operating system's **page cache** can serve recently used log data from RAM. On a supported path, Kafka can use `sendfile` to transfer log bytes to the socket with fewer copies through application memory. That path depends on how traffic is served, including whether TLS is used. If too little data is available for a fetch, the broker can wait briefly before replying. This **long poll** reduces repeated empty requests.
+
+Batching and caching can reduce disk, network, and CPU work. The time it takes to acknowledge a write still depends on the replication and durability settings. For performance comparisons, test with the same message sizes, hardware, and durability requirements. [Kafka design](https://kafka.apache.org/43/design/design/) · [Kafka log implementation](https://kafka.apache.org/43/implementation/log/)
+
+#### Kafka Acknowledgments and Consumer Lag
+
+**When can a publish succeed?** The **in-sync replica set (ISR)** includes the leader and followers that are keeping up within Kafka's rules. With `acks=all`, a successful write waits for the full current ISR. The `min.insync.replicas` setting specifies how small that set can be for such a write to succeed.
+
+Suppose P0 has three configured replicas and uses `acks=all` with `min.insync.replicas=2`. Assume the leader is reachable and the ISR stays the same for each write in the table.
+
+| Replicas currently in sync | What happens when the producer writes |
+| --- | --- |
+| **3**, including the leader | The leader waits for all three to have the record. |
+| **2**, including the leader | The write can succeed once both have the record. The third replica has dropped out of the ISR. |
+| **1**, the leader | A write with `acks=all` cannot succeed with this ISR size. |
+
+The partition's **high watermark** marks the replication boundary that limits what consumers can read. Transactional visibility can impose an additional limit. A producer acknowledgment describes the configured write outcome. The consumer records its own progress after doing its work. [Kafka topic settings](https://kafka.apache.org/43/configuration/topic-configs/) · [Kafka producer settings](https://kafka.apache.org/43/configuration/producer-configs/) · [Kafka consumer positions and isolation](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
+**What happens when reporting goes offline?** After handling offset `42`, the reporting group commits `43` as its next position in P0. With the worker down, the log end advances to `48`, the next position after the newest record. The difference is `48 − 43 = 5` offsets. With consecutive, visible records, those are records `43` through `47`. The group resumes at `43` if that history is still available. Gaps, for example after compaction, can make the offset distance differ from the number of records to process. [Kafka consumer offsets](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
+### Kafka vs. RabbitMQ for Order 481
+
+Compare a **RabbitMQ work queue** and a **Kafka retained topic** using one refund review.
+
+| Design question | RabbitMQ work queue | Kafka retained topic |
+| --- | --- | --- |
+| **What do we send?** | Route `CreateRefundReview` through an exchange to a review queue. One worker handles a delivery and opens or finds the case. | Publish `RefundReviewOpened` to `support-events`. Notification and reporting groups can each read the event. |
+| **What does completion mean?** | The worker acknowledges the command once the case is durable. A successful acknowledgment lets the queue remove that message. | Each group commits its position after processing. The record remains available according to the topic's retention policy. |
+| **What if processing fails?** | A worker can receive the command again. A configured dead-letter exchange can route eligible failures to a bound dead-letter queue. | The group can resume from its committed position. The application or its framework decides how to retry or divert a poison record. |
+| **What order can we rely on?** | Queue delivery is normally FIFO. Priorities, redelivery, and concurrent workers can affect the order observed or the order in which work completes. | Records have an order within each partition. Keying by order ID can keep changes for one order together. |
+| **What happens when reporting needs history?** | A normal work queue is a backlog of jobs. RabbitMQ Streams is a separate option for retaining and replaying records. | A reporting group can start from an earlier retained position to rebuild its view. |
+
+Use a queue when the primary requirement is **getting a job done**. Evaluate a retained topic when independent teams need **the same event history**. A system can use both: the review worker opens the case from a queue, then publishes the resulting fact for independent consumers. [RabbitMQ queues](https://www.rabbitmq.com/docs/queues) · [RabbitMQ dead-letter exchanges](https://www.rabbitmq.com/docs/dlx) · [RabbitMQ Streams](https://www.rabbitmq.com/docs/streams) · [Kafka design](https://kafka.apache.org/43/design/design/)
 
 ### Choose a Platform by Requirement
 
