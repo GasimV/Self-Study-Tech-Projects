@@ -36,6 +36,10 @@ Two common messaging patterns answer **who should receive the message?**
 
 A **retained log** answers **what history can readers go back to?** It keeps events according to a retention policy so readers can catch up or replay them. Reporting can use that history to rebuild its dashboard.
 
+When modules become independently deployed services, calls that once stayed inside one process can cross the network. A queue lets the sender hand off work so a worker can process it later. For order 481, the store can accept a review request while the support workers are busy, and the command can wait in a queue for a worker. A modular monolith can also queue background work. Microservices can combine queues with direct calls, such as the live order lookup. [Microservices architecture](Distributed-Systems-Building-Blocks.md#microservices-architectures)
+
+A **distributed queue** gives applications one logical place to send work. Behind it, multiple servers can hold copies for failover, divide the workload for capacity, or do both, depending on the design. If jobs must finish in a particular order, choose and test the ordering behavior explicitly. [RabbitMQ quorum queues](https://www.rabbitmq.com/docs/quorum-queues) · [Delivery, ordering, and recovery](#delivery-ordering-and-recovery)
+
 ```mermaid
 flowchart TB
     subgraph WQ["Work queue · share jobs"]
