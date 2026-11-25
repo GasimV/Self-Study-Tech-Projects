@@ -2,6 +2,7 @@
 
 ## Table of Contents
 
+- [Messaging Mental Model](#messaging-mental-model)
 - [Synchronous Calls, Messages, and Events](#synchronous-calls-messages-and-events)
 - [Work Queues, Pub/Sub, and Retained Logs](#work-queues-pubsub-and-retained-logs)
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
@@ -23,6 +24,17 @@
 - [Operations and Design Checklist](#operations-and-design-checklist)
 - [Related Notes](#related-notes)
 - [References](#references)
+
+## Messaging Mental Model
+
+In a distributed system, independently running services communicate by sending messages. Asynchronous messaging lets a sender hand off work and continue while the receiver handles it at its own pace.
+
+Two common messaging patterns answer **who should receive the message?**
+
+- **Work queue — share jobs.** Workers share a backlog. One worker handles each delivery attempt. For order 481, the job is to open a refund-review case.
+- **Publish/subscribe (Pub/Sub) — share events.** Each matching subscription can receive the same event independently. When the case opens, notifications tell the shopper and reporting updates its dashboard.
+
+A **retained log** answers **what history can readers go back to?** It keeps events according to a retention policy so readers can catch up or replay them. Reporting can use that history to rebuild its dashboard.
 
 ## Synchronous Calls, Messages, and Events
 
