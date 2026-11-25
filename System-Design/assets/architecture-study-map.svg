@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1092" viewBox="0 0 1120 1092" role="img" aria-labelledby="title description">
+  <title id="title">Architecture study map</title>
+  <desc id="description">Architectural scope narrows from enterprise to solution to system. A system can be decomposed into subsystems and components. Software, AI, data, infrastructure, network, and security architecture can contribute at every scope. Security, reliability, performance, scalability, cost, and operations are shared concerns. High-level and low-level design describe the amount of detail. C4 shows system context, containers, components, and code. Engineering turns decisions into working systems using appropriate methods, languages, frameworks, and tools.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#51677d"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #152a40; }
+    .title { font-size: 41px; font-weight: 700; }
+    .subtitle { font-size: 23px; fill: #41576d; }
+    .heading { font-size: 26px; font-weight: 700; }
+    .label { font-size: 22px; font-weight: 700; }
+    .body { font-size: 20px; fill: #2d455d; }
+    .panel { fill: #ffffff; stroke: #becbd8; }
+    .scope { fill: #f7faff; stroke: #b5c9e3; }
+    .system { fill: #eaf2ff; stroke: #9db8de; }
+    .disciplines { fill: #edf7f4; stroke: #aacfc4; }
+    .quality { fill: #fff4df; stroke: #dcc193; }
+    .detail { fill: #eef4fc; stroke: #b5c9e3; }
+    .views { fill: #f2effb; stroke: #c5bae1; }
+    .methods { fill: #f4f7fa; stroke: #c4cfdb; }
+    .arrow { fill: none; stroke: #51677d; stroke-width: 2; marker-end: url(#arrow); }
+  </style>
+
+  <rect width="1120" height="1092" fill="#f5f8fb"/>
+  <text class="title" x="28" y="56">Architecture study map</text>
+  <text class="subtitle" x="28" y="87">Scope, expertise, design detail, visualization, and engineering</text>
+
+  <!-- Scope narrows. Arrows here show a change of focus. -->
+  <rect class="panel" x="28" y="106" width="1064" height="260" rx="14"/>
+  <text class="heading" x="48" y="139">Architectural scope</text>
+  <rect class="scope" x="48" y="153" width="1024" height="48" rx="8"/>
+  <rect class="scope" x="48" y="219" width="1024" height="48" rx="8"/>
+  <rect class="system" x="48" y="285" width="1024" height="66" rx="8"/>
+  <path class="arrow" d="M560 203v13"/>
+  <path class="arrow" d="M560 269v13"/>
+  <text class="label" x="66" y="184">Enterprise architecture</text>
+  <text class="body" x="379" y="184">Organization-wide strategy, capabilities, and governance</text>
+  <text class="label" x="66" y="250">Solution architecture</text>
+  <text class="body" x="379" y="250">People, processes, and systems solving a business problem</text>
+  <text class="label" x="66" y="313">System architecture</text>
+  <text class="body" x="379" y="310">System boundaries, interfaces, and behavior</text>
+  <text class="body" x="379" y="337">Decompose where needed: system → subsystem → component</text>
+
+  <!-- Technical disciplines can contribute at any scope. -->
+  <rect class="disciplines" x="28" y="381" width="1064" height="265" rx="14"/>
+  <text class="heading" x="48" y="414">Overlapping technical disciplines</text>
+  <text class="body" x="48" y="440">Choose the expertise the decision needs at any scope.</text>
+  <rect class="panel" x="48" y="453" width="500" height="54" rx="8"/>
+  <rect class="panel" x="572" y="453" width="500" height="54" rx="8"/>
+  <rect class="panel" x="48" y="516" width="500" height="54" rx="8"/>
+  <rect class="panel" x="572" y="516" width="500" height="54" rx="8"/>
+  <rect class="panel" x="48" y="579" width="500" height="54" rx="8"/>
+  <rect class="panel" x="572" y="579" width="500" height="54" rx="8"/>
+  <text class="label" x="64" y="476">Software architecture</text>
+  <text class="body" x="64" y="498">Frontend, backend, APIs, services, patterns</text>
+  <text class="label" x="588" y="476">AI architecture</text>
+  <text class="body" x="588" y="498">Models, training, RAG, agents, inference, evaluation</text>
+  <text class="label" x="64" y="539">Data architecture</text>
+  <text class="body" x="64" y="561">Data models, storage, pipelines, ETL and ELT</text>
+  <text class="label" x="588" y="539">Infrastructure architecture</text>
+  <text class="body" x="588" y="561">Cloud, compute, containers, Kubernetes, storage</text>
+  <text class="label" x="64" y="602">Network architecture</text>
+  <text class="body" x="64" y="624">DNS, TCP/IP, subnets, routing, connectivity</text>
+  <text class="label" x="588" y="602">Security architecture</text>
+  <text class="body" x="588" y="624">IAM, access control, TLS, firewalls, data protection</text>
+
+  <rect class="quality" x="28" y="660" width="1064" height="65" rx="12"/>
+  <text class="label" x="48" y="688">Concerns across disciplines</text>
+  <text class="body" x="48" y="712">Security, reliability, performance, scalability, cost, and operations</text>
+
+  <!-- Detail and visualization answer separate questions. -->
+  <rect class="detail" x="28" y="738" width="1064" height="68" rx="12"/>
+  <text class="heading" x="48" y="768">Design detail</text>
+  <text class="body" x="48" y="792">System design refines both.</text>
+  <text class="body" x="367" y="766">High-level design (HLD): major boundaries and interactions</text>
+  <text class="body" x="367" y="791">Low-level design (LLD): API fields, timeouts, and errors</text>
+
+  <rect class="views" x="28" y="819" width="1064" height="68" rx="12"/>
+  <text class="heading" x="48" y="849">Visualization</text>
+  <text class="body" x="48" y="873">Choose a view for the question.</text>
+  <text class="body" x="367" y="847">C4: System Context → Container → Component → Code</text>
+  <text class="body" x="367" y="872">Also: landscape, deployment, and dynamic views</text>
+
+  <!-- Methods and tools are grouped with the work they support. -->
+  <rect class="panel" x="28" y="901" width="1064" height="166" rx="14"/>
+  <text class="heading" x="48" y="934">Engineering and operations</text>
+  <text class="body" x="48" y="960">Build, test, deploy, and improve the system. DevOps, MLOps, and SRE support this work.</text>
+  <rect class="methods" x="48" y="975" width="1024" height="76" rx="8"/>
+  <text class="label" x="64" y="1001">Application code</text>
+  <text class="body" x="64" y="1024">Python, Java, C++</text>
+  <text class="body" x="64" y="1045">React, FastAPI</text>
+  <text class="label" x="320" y="1001">AI, events, and state</text>
+  <text class="body" x="320" y="1024">PyTorch, LangGraph</text>
+  <text class="body" x="320" y="1045">Kafka, Redis</text>
+  <text class="label" x="575" y="1001">Deployment</text>
+  <text class="body" x="575" y="1024">Terraform, Docker</text>
+  <text class="label" x="830" y="1001">Methods</text>
+  <text class="body" x="830" y="1024">Design patterns, tests</text>
+  <text class="body" x="830" y="1045">Controlled experiments</text>
+</svg>

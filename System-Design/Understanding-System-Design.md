@@ -43,10 +43,12 @@
   - [Key takeaway](#key-takeaway-1)
 - [Architecture Scope and Overlap](#architecture-scope-and-overlap)
   - [1. Abstraction levels of architecture](#1-abstraction-levels-of-architecture)
+  - [Where the Course Topics Fit](#where-the-course-topics-fit)
   - [System Architecture](#system-architecture)
   - [Software Architecture](#software-architecture)
   - [AI Architecture](#ai-architecture)
   - [Worked Example: An Online Store's Support Assistant](#worked-example-an-online-stores-support-assistant)
+    - [C4 Views of the Order 481 Example](#c4-views-of-the-order-481-example)
     - [Course Concepts in the Same Request](#course-concepts-in-the-same-request)
   - [2. Recommended learning progression](#2-recommended-learning-progression)
 - [AI Architect Knowledge Map](#ai-architect-knowledge-map)
@@ -636,9 +638,19 @@ Therefore, system design can be performed at the subsystem level, while solution
 
 ## Architecture Scope and Overlap
 
-To place an architecture decision, ask **what is in scope, which disciplines contribute, and how much detail is needed?** System design is the work of deciding how a system will behave and revising those decisions as evidence changes. System architecture describes its major parts, relationships, and governing decisions.
+Use this study map to place an architecture decision. **System design** is the work of deciding how a system will behave, testing those decisions, and revising them as evidence changes. **System architecture** describes the resulting structure, relationships, and governing decisions.
 
-![A shopper asks about a delayed order and a refund. Enterprise architecture sets access and approval rules, solution architecture connects the storefront to support, and system architecture defines the assistant's dependencies and fallback. Software architecture enforces order access, and AI architecture uses the order status and policy to explain the next step.](assets/architecture-scope-and-disciplines.svg)
+![Architecture study map. Scope narrows from enterprise to solution to system, which can contain subsystems and components. Six technical disciplines contribute across scopes. Separate bands show design detail, C4 views, and the work of building and operating the solution.](assets/architecture-study-map.svg)
+
+| Dimension | Question to ask | How to use it |
+| --- | --- | --- |
+| **Architectural scope** | What are we designing? | Choose the organization, a business solution, a system, or a particular subsystem or component as the focus. |
+| **Technical specialization** | Which expertise contributes? | Bring in software, AI, data, infrastructure, network, and security architecture as the decision requires. |
+| **Design detail** | How much detail does the decision need? | Use high-level design (HLD) for major boundaries and interactions. Use low-level design (LLD) for details such as API fields, timeouts, and error handling. |
+| **Visualization** | Which view will make the decision clear? | Use the C4 model to show progressively more detail in software architecture. Choose a deployment, dynamic, or landscape view when the question calls for it. |
+| **Realization** | How will we build and operate it? | Turn decisions into software and infrastructure, then test, deploy, monitor, and improve the result. |
+
+Engineering practices and tools support that last step. For example, teams can use Python, Java, or C++ for implementation, React and FastAPI for application interfaces, PyTorch and LangGraph for model and agent work, Redis and Kafka for caching and messaging, and Terraform and Docker for deployment. Design patterns, algorithms, and controlled experiments guide how those tools are used.
 
 ### 1. Abstraction levels of architecture
 
@@ -648,7 +660,22 @@ To place an architecture decision, ask **what is in scope, which disciplines con
 | **Solution architecture** | How will people, processes, and systems come together to solve a business problem? | Connect the storefront, order platform, assistant, and support team so shoppers can resolve delivery problems. |
 | **System architecture** | How is a particular system organized, how does it connect to its environment, and how will it behave? | Define the assistant application's boundaries, dependencies, deployment, and failure behavior. |
 
-The selected boundary depends on the problem. An order platform can be one system in the store solution and contain several subsystems of its own. Software, AI, data, infrastructure, networking, and security can contribute at several scopes. [ISO/IEC/IEEE 42010](https://www.iso.org/standard/74393.html) · [NASA system design processes](https://www.nasa.gov/reference/4-0-system-design-processes/)
+The selected boundary depends on the problem. An order platform can be one system in the store solution and contain checkout and fulfillment subsystems. Each subsystem can be decomposed again into components with defined responsibilities and interfaces. Software, AI, data, infrastructure, networking, and security can contribute at enterprise, solution, and system scope. Treat the map as a way to organize study and design decisions. [ISO/IEC/IEEE 42010](https://www.iso.org/standard/74393.html) · [NASA system design processes](https://www.nasa.gov/reference/4-0-system-design-processes/) · [The Open Group's TOGAF overview](https://help.opengroup.org/hc/en-us/articles/32726995273362-Understanding-the-TOGAF-Standard)
+
+### Where the Course Topics Fit
+
+| Course topics | Where to study them |
+| --- | --- |
+| **Scalability, replication, sharding, consensus, distributed caching** | Distributed system design. [Sharding and partitioning](Databases-and-Storage.md#partitioning-and-sharding) · [Consensus and replication](Distributed-Systems-Theorems-and-Data-Structures.md#consensus-and-replication-protocols) · [Distributed cache](Distributed-Cache.md) |
+| **Frontend, backend, API contracts, design patterns** | Software architecture and engineering. [Software Architecture](#software-architecture) · [API Design](#api-design) |
+| **Machine learning, training, fine-tuning, agents, retrieval, inference** | AI architecture and engineering. [AI Architecture](#ai-architecture) · [AI Systems Design](AI-Systems-Design.md) |
+| **Data models, storage, data pipelines, ETL/ELT** | Data architecture and engineering. [Database selection](Databases-and-Storage.md#database-selection-by-requirements) · [ETL and ELT](Data-Engineering-for-Solution-Architecture.md#etl-and-elt) |
+| **Cloud, deployment, automation, CI/CD, monitoring** | Infrastructure architecture, DevOps, and site reliability engineering (SRE). [Cloud and on-premises design](#system-design-in-cloud-and-on-premises-environments) · [Cloud-native implementations](Distributed-Systems-Building-Blocks.md#cloud-native-implementations) |
+| **Model deployment, evaluation, monitoring** | Machine-learning operations (MLOps) and large language model operations (LLMOps). [AI evaluation and observability](AI-Systems-Design.md#evaluation-and-observability) · [AI and ML architecture guidance](https://docs.cloud.google.com/architecture/framework/perspectives/ai-ml) |
+| **DNS, routing, load balancing, protocols** | Network and system architecture. [Networking fundamentals](Networking-Fundamentals-for-System-Design.md) · [Load balancers](Distributed-Systems-Building-Blocks.md#load-balancers) |
+| **Authentication, authorization, encryption** | Security architecture. [Identity and access management](Identity-and-Access-Management.md#authorization-in-practice) · [AI security and privacy](AI-Systems-Design.md#security-privacy-and-data-residency) |
+
+Security, reliability, performance, scalability, cost, and operations are concerns across disciplines. For order 481, the order API, policy index, and model can all affect the same response-time target. [Google Cloud Well-Architected Framework](https://docs.cloud.google.com/architecture/framework)
 
 ### System Architecture
 
@@ -693,6 +720,8 @@ For example, a pipeline can load approved policy documents into a staging store,
 
 A shopper asks, **“Where is order 481, and can I get a refund?”** The order service reports **Delayed**. The store's policy sends delay-related refund requests to support for review. Follow that one request through the five architecture perspectives.
 
+![Enterprise architecture sets refund approval rules. Solution architecture connects the storefront and support. System architecture defines the assistant's dependencies and fallback. Software architecture enforces order access, and AI architecture uses order status and policy to explain the next step.](assets/architecture-scope-and-disciplines.svg)
+
 | Architecture | Question | What gets decided here |
 | --- | --- | --- |
 | **Enterprise** | What rules should apply across the company? | Use the same customer-data access rules for the website, mobile app, and support desk. Require an authorized employee to approve delay-related refunds. |
@@ -710,6 +739,19 @@ In this example the shopper sees, **“Order 481 is delayed. Our policy sends de
 - **Validate and revise.** Check that the response cites the right policy, another shopper cannot read order 481, and an unavailable order API triggers the handoff.
 
 > **Scope tells you what you're designing. Disciplines tell you which concerns to address. HLD and LLD tell you how much detail you need.**
+
+#### C4 Views of the Order 481 Example
+
+C4 zooms into software architecture through **System Context, Container, Component, and Code** diagrams. Here the system of interest is the **store's support assistant**. Choose the view based on what the reader needs to understand. [C4 diagram types](https://c4model.com/diagrams)
+
+| C4 view | What it would show for the support assistant | Typical design use |
+| --- | --- | --- |
+| **System Context** | The shopper and support staff interact with the assistant. The order API and support system are external dependencies. | HLD of the system boundary and its environment. |
+| **Container** | Inside the boundary, show the support web interface, the assistant API, and the policy index. The web interface calls the assistant API, which reads the index and calls the external systems. | HLD of the main applications, data stores, and communication paths. |
+| **Component** | Zoom into the assistant API. Show the orchestrator, authorization checks, retriever, and order API adapter, including which parts they call. | HLD or LLD, depending on how much detail the view shows. |
+| **Code** | Zoom into the order API adapter. Show its lookup interface, the call timeout, and the error it returns for the orchestrator to handle. | Optional LLD for a component whose implementation needs explanation. |
+
+A **C4 container** is an application or data store. For instance, the assistant API can be one C4 container, and Docker can be a way to deploy it. The HLD/LLD mapping above is approximate. A **system landscape** view could show the rest of the retailer's systems, a **deployment** view where the assistant runs, and a **dynamic** view the sequence of calls for order 481. [C4 containers](https://c4model.com/abstractions/container) · [C4 component diagrams](https://c4model.com/diagrams/component) · [C4 code diagrams](https://c4model.com/diagrams/code)
 
 #### Course Concepts in the Same Request
 
