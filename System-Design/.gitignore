@@ -10,6 +10,7 @@
 !assets/cache-key-routing-comparison.svg
 !assets/redis-memcached-comparison.svg
 !assets/architecture-scope-and-disciplines.svg
+!assets/refund-review-messaging-architecture.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
 /examples/merkle_tree/merkle_tree_dsa

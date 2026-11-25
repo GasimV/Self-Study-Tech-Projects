@@ -106,6 +106,8 @@ For order 481, a worker can save a case and crash before acknowledging the comma
 
 ## Worked Design: Refund Review for Order 481
 
+![Order 481 messaging architecture. The assistant checks live status, the app accepts a refund-review request and queues it through an outbox, and a worker opens the case. A topic shares the case-opened event with notification and reporting subscribers. Authorized staff decide whether to approve the refund separately.](assets/refund-review-messaging-architecture.svg)
+
 After the live status check, the shopper asks the assistant to hand the issue to support. The app saves the review request and a **transactional outbox** record in one local database transaction. The outbox is a table of messages to publish. The app can now say **“Review request received”** and return a tracking ID, even if the broker is temporarily unavailable. [Transactional outbox pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html)
 
 ```mermaid

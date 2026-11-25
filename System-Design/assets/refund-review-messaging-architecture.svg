@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="884" viewBox="0 0 1120 884" role="img" aria-labelledby="title description">
+  <title id="title">Order 481: from live status to refund review</title>
+  <desc id="description">First the shopper asks the assistant for live order status. The order API reports that order 481 is delayed. When the shopper requests a review, the app commits the review request and its outbox entry together and returns a tracking ID. In the background, an outbox relay publishes the CreateRefundReview command to a work queue. A worker creates or finds the case by request ID and acknowledges after committing. The support outbox relay publishes RefundReviewOpened to a topic, which feeds independent notification and reporting subscriptions. Authorized staff review the case and may approve a refund in a separate step.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#526980"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #172b42; }
+    .title { font-size: 37px; font-weight: 700; }
+    .subtitle { font-size: 22px; fill: #3e556e; }
+    .lane-title { font-size: 25px; font-weight: 700; }
+    .label { font-size: 21px; font-weight: 700; }
+    .body { font-size: 20px; fill: #29435d; }
+    .mono { font-family: Consolas, Menlo, monospace; font-size: 20px; }
+    .read { fill: #edf5ff; stroke: #adc7e4; }
+    .work { fill: #edf8f2; stroke: #acd0be; }
+    .events { fill: #f1effb; stroke: #c3b8e1; }
+    .approval { fill: #fff3dd; stroke: #ddc28e; }
+    .card { fill: #ffffff; stroke: #b7c6d8; }
+    .highlight { fill: #e0f3e9; stroke: #8cbaa4; }
+    .line, .arrow { fill: none; stroke: #526980; stroke-width: 2.5; }
+    .arrow { marker-end: url(#arrow); }
+  </style>
+
+  <rect width="1120" height="884" fill="#f7f9fc"/>
+  <text class="title" x="28" y="54">Order 481: from live status to refund review</text>
+  <text class="subtitle" x="28" y="84">“Where is my order, and can I get a refund?”</text>
+
+  <!-- Synchronous request and response. -->
+  <rect class="read" x="28" y="108" width="1064" height="145" rx="14"/>
+  <text class="lane-title" x="48" y="144">1. Answer now</text>
+  <rect class="card" x="48" y="161" width="223" height="71" rx="10"/>
+  <rect class="card" x="312" y="161" width="223" height="71" rx="10"/>
+  <rect class="card" x="576" y="161" width="223" height="71" rx="10"/>
+  <rect class="card" x="840" y="161" width="232" height="71" rx="10"/>
+  <path class="arrow" d="M277 197h28"/>
+  <path class="arrow" d="M541 197h28"/>
+  <path class="arrow" d="M805 197h28"/>
+  <text class="label" x="64" y="189">Shopper</text>
+  <text class="body" x="64" y="215">Asks about order 481</text>
+  <text class="label" x="328" y="189">Store assistant</text>
+  <text class="body" x="328" y="215">Requests live status</text>
+  <text class="label" x="592" y="189">Order API</text>
+  <text class="body" x="592" y="215">Checks order access</text>
+  <text class="label" x="856" y="189">Reply to shopper</text>
+  <text class="body" x="856" y="215">“Order 481 is delayed.”</text>
+
+  <!-- The visible response and background work branch from one database commit. -->
+  <rect class="work" x="28" y="273" width="1064" height="292" rx="14"/>
+  <text class="lane-title" x="48" y="309">2. Queue the work</text>
+  <rect class="card" x="48" y="331" width="223" height="76" rx="10"/>
+  <rect class="card" x="312" y="331" width="417" height="76" rx="10"/>
+  <rect class="highlight" x="770" y="331" width="302" height="76" rx="10"/>
+  <path class="arrow" d="M277 369h28"/>
+  <path class="arrow" d="M735 369h28"/>
+  <text class="label" x="64" y="361">Shopper</text>
+  <text class="body" x="64" y="388">Requests a review</text>
+  <text class="label" x="328" y="361">App commits request and outbox entry</text>
+  <text class="body" x="328" y="388">Both saved in one database transaction</text>
+  <text class="label" x="786" y="361">Request received</text>
+  <text class="body" x="786" y="388">App returns a tracking ID</text>
+
+  <text class="label" x="48" y="472">Background path</text>
+  <text class="body" x="48" y="498">After the app commits</text>
+  <path class="arrow" d="M420 409v36"/>
+  <text class="body" x="432" y="438">Outbox entry</text>
+  <rect class="card" x="312" y="452" width="216" height="76" rx="10"/>
+  <rect class="card" x="569" y="452" width="226" height="76" rx="10"/>
+  <rect class="card" x="836" y="452" width="236" height="76" rx="10"/>
+  <path class="arrow" d="M534 490h28"/>
+  <path class="arrow" d="M801 490h28"/>
+  <text class="label" x="328" y="482">App outbox relay</text>
+  <text class="body" x="328" y="509">Publishes command</text>
+  <text class="label" x="585" y="482">Review work queue</text>
+  <text class="mono" x="585" y="509">CreateRefundReview</text>
+  <text class="label" x="852" y="482">Review worker</text>
+  <text class="body" x="852" y="509">Opens or finds case</text>
+  <text class="body" x="48" y="549">The worker saves the case and its event outbox entry together, then acknowledges the command.</text>
+
+  <!-- The case outcome flows down, then left into two independent subscriptions. -->
+  <rect class="events" x="28" y="585" width="1064" height="187" rx="14"/>
+  <text class="lane-title" x="48" y="622">3. Notify subscribers</text>
+  <text class="body" x="338" y="622">One event, two independent subscriptions</text>
+  <path class="arrow" d="M953 530v109"/>
+  <text class="label" x="939" y="622" text-anchor="end">Case opened</text>
+  <rect class="card" x="836" y="646" width="236" height="81" rx="10"/>
+  <rect class="card" x="477" y="646" width="287" height="81" rx="10"/>
+  <rect class="card" x="48" y="638" width="334" height="49" rx="10"/>
+  <rect class="card" x="48" y="699" width="334" height="49" rx="10"/>
+  <path class="arrow" d="M830 687h-59"/>
+  <path class="line" d="M471 687h-47 M424 662v61"/>
+  <path class="arrow" d="M424 662h-36"/>
+  <path class="arrow" d="M424 723h-36"/>
+  <text class="label" x="852" y="678">Support outbox relay</text>
+  <text class="body" x="852" y="706">Publishes case event</text>
+  <text class="label" x="493" y="678">Support events topic</text>
+  <text class="mono" x="493" y="706">RefundReviewOpened</text>
+  <text class="body" x="64" y="669">Notifications tell the shopper</text>
+  <text class="body" x="64" y="730">Reporting updates its dashboard</text>
+
+  <!-- Human approval is a separate business milestone. -->
+  <rect class="approval" x="28" y="792" width="1064" height="65" rx="12"/>
+  <text class="label" x="48" y="831">Refund approved</text>
+  <text class="body" x="252" y="831">Authorized staff review the case and may approve an eligible refund.</text>
+</svg>
