@@ -4,11 +4,14 @@
 >
 > Its principles also apply at solution and enterprise levels, but those have broader, specialized disciplines.
 >
-> **Mental model:** System Design is the discipline; System Architecture is one of its principal outcomes.
+> <u>**Mental model:**</u> System Design is the ***discipline***; System Architecture is one of its ***principal outcomes***. System architecture defines the overall structure, interactions, and behavior of a system. System design is the *discipline* used to design that system, its subsystems, and components through HLD and LLD. ***System design knowledge is the technical foundation that connects all these architectural and engineering disciplines.***
+
+[See the mental model in practice](#worked-example-ai-powered-banking-assistant)
 
 ## Table of Contents
 
 - [Overview](#overview)
+  - [Worked Example: AI-Powered Banking Assistant](#worked-example-ai-powered-banking-assistant)
 - [System Design at Different Scales](#system-design-at-different-scales)
   - [General vs. Distributed System Design](#general-vs-distributed-system-design)
   - [Small Applications vs. Large Systems](#small-applications-vs-large-systems)
@@ -73,6 +76,43 @@ Design connects user needs with technical decisions. For an online store, this i
 The goal is to meet today's requirements while making future changes manageable. Good design anticipates bottlenecks and failures, supports expected growth, and balances infrastructure cost with the team's ability to build and operate the system.
 
 > Start with the required behavior and operating conditions. These determine which architecture and mechanisms are useful.
+
+### Worked Example: AI-Powered Banking Assistant
+
+A customer asks, **“What’s my balance, and why was I charged this fee?”** Follow that request from the business solution into the custom assistant and its design decisions.
+
+**1. Solution Architecture**
+
+The bank builds the **AI Assistant System** and connects it to three other systems. The existing **Core Banking System** owns balances and transactions. The purchased **Customer Relationship Management (CRM) System** manages support cases. The existing **Identity Management System** signs customers in.
+
+![AI-powered banking solution with four systems. The custom-developed AI Assistant is highlighted alongside the existing Core Banking System, purchased CRM System, and existing Identity Management System.](assets/banking-assistant-solution-architecture.svg)
+
+**2. System Architecture — Custom-developed AI Assistant**
+
+The signed-in customer asks the question in the frontend. The gateway routes it to the backend, which checks account access and fetches the live balance and fee details from core banking. The backend passes the fee details to the AI subsystem, which retrieves approved policy and uses it to explain the fee. That approach is called **retrieval-augmented generation (RAG)**. If the customer needs a specialist, the backend opens a support case in the CRM.
+
+![Custom AI assistant with a React frontend and gateway, replicated backend and AI subsystems, and a data subsystem. Infrastructure and networking support these parts, alongside shared security, observability, DevOps, and MLOps practices.](assets/banking-assistant-system-architecture.svg)
+
+The arrows show how the layers interact. Infrastructure and networking support several subsystems, and cross-cutting work such as security applies across them.
+
+**3. System Design Considerations**
+
+| Area | High-Level Design (HLD) | Low-Level Design (LLD) |
+| --- | --- | --- |
+| **Overall system** | Keep policy questions available when core banking is down. | Return a clear “balance unavailable” result if the lookup times out. |
+| **Frontend** | Use one chat interface for questions and support handoff. | Define the loading, answer, and error states of a chat message. |
+| **Backend** | Make the backend responsible for the balance lookup. | Specify the balance API request, response, and timeout behavior. |
+| **AI** | Use RAG to answer fee questions from approved policy. | Retrieve policy passages filtered by fee type and effective date. |
+| **Data** | Use a separate search index for approved policy documents. | Store the fee type and effective date with each indexed passage. |
+| **Networking** | Route application traffic through a public gateway to private services. | Define which gateway routes reach the backend and which ports they use. |
+| **Infrastructure** | Scale backend and AI replicas independently. | Configure a separate autoscaling rule for each deployment. |
+| **Security** | Require a signed-in customer and enforce account access in the backend. | Check that the authenticated customer can access the requested account before the lookup. |
+
+**Final mental model:**
+- **Solution architecture** chooses the systems that solve the business problem together.
+- **System architecture** describes the custom assistant as a whole and how its parts work together.
+- **System design** is the discipline used to make those decisions at high and low levels of detail.
+- **Engineering** implements, tests, deploys, and operates the system.
 
 ## System Design at Different Scales
 

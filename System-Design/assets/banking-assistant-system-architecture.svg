@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="696" height="606" viewBox="0 0 696 606" role="img" aria-labelledby="title description">
+  <title id="title">System Architecture of the Custom-developed AI Assistant</title>
+  <desc id="description">Thousands of concurrent users access the AI Assistant System. The frontend communicates with the API gateway and load balancer. The backend and highlighted AI subsystem have multiple replicas. A data layer, infrastructure, networking, and shared operational capabilities support them.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; text-anchor: middle; }
+    .label { fill: #141414; font-size: 14px; font-weight: 600; }
+    .detail { fill: #585858; font-size: 13px; }
+    .panel { fill: #f1f1f1; stroke: #d6d6d6; }
+    .arrow { fill: none; stroke: #585858; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <path id="two-way-arrow" d="M-3 0v10m-2.5-2.5 2.5 2.5 2.5-2.5M3 10V0M.5 2.5 3 0l2.5 2.5" class="arrow"/>
+  </defs>
+
+  <rect x="2" y="1" width="692" height="604" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="348" y="37" class="label">Thousands of Concurrent Users</text>
+  <path d="M348 60v8m-3-3 3 3 3-3" class="arrow"/>
+
+  <rect x="14" y="79" width="668" height="492" rx="8" fill="none" stroke="#dcdcdc"/>
+  <text x="348" y="108" class="label">AI Assistant System</text>
+  <text x="348" y="146" class="label">Frontend — React</text>
+  <use href="#two-way-arrow" x="348" y="170"/>
+  <text x="348" y="213" class="label">API Gateway / Load Balancer</text>
+  <use href="#two-way-arrow" x="348" y="235"/>
+
+  <rect x="352" y="254" width="318" height="85" rx="8" fill="#eaf0f9"/>
+  <text x="185" y="282" class="label">Backend Subsystem</text>
+  <text x="185" y="306" class="detail">Java/C#, business logic, APIs</text>
+  <text x="185" y="325" class="detail">Multiple replicas</text>
+  <text x="511" y="282" class="label">AI Subsystem</text>
+  <text x="511" y="306" class="detail">Python, agents, RAG, LLMs</text>
+  <text x="511" y="325" class="detail">Multiple replicas</text>
+  <use href="#two-way-arrow" x="348" y="349"/>
+
+  <text x="348" y="392" class="label">Data Subsystem</text>
+  <text x="348" y="415" class="detail">PostgreSQL · Redis · Qdrant · Kafka</text>
+
+  <rect x="26" y="433" width="644" height="59" rx="7" class="panel"/>
+  <text x="348" y="459" class="label">Infrastructure &amp; Networking</text>
+  <text x="348" y="483" class="detail">Cloud, Kubernetes, servers, subnets, DNS</text>
+
+  <rect x="26" y="500" width="644" height="59" rx="7" class="panel"/>
+  <text x="348" y="526" class="label">Cross-cutting concerns</text>
+  <text x="348" y="549" class="detail">Security · Observability · DevOps · MLOps</text>
+
+  <text x="348" y="592" class="detail">Illustrative architecture; technologies are selected according to actual requirements.</text>
+</svg>

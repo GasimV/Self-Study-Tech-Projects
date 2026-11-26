@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="694" height="260" viewBox="0 0 694 260" role="img" aria-labelledby="title description">
+  <title id="title">AI-Powered Banking Solution</title>
+  <desc id="description">A custom-developed AI Assistant System is highlighted in a two-by-two grid with an existing Core Banking System, a purchased CRM System, and an existing Identity Management System.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; text-anchor: middle; }
+    .label { fill: #141414; font-size: 14px; font-weight: 600; }
+    .detail { fill: #585858; font-size: 13px; }
+    .arrow { fill: none; stroke: #585858; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+
+  <rect x="1" y="1" width="692" height="258" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="347" y="40" class="label">AI-Powered Banking Solution</text>
+  <path d="M347 67v8m-3-3 3 3 3-3" class="arrow"/>
+
+  <rect x="13" y="86" width="330" height="66" rx="7" fill="#eaf0f9" stroke="#7da7fa"/>
+  <text x="178" y="114" class="label">AI Assistant System</text>
+  <text x="178" y="137" class="detail">Custom-developed</text>
+  <text x="516" y="113" class="label">Core Banking System</text>
+  <text x="516" y="136" class="detail">Existing</text>
+  <text x="178" y="188" class="label">CRM System</text>
+  <text x="178" y="211" class="detail">Purchased</text>
+  <text x="516" y="188" class="label">Identity Management System</text>
+  <text x="516" y="211" class="detail">Existing</text>
+
+  <text x="347" y="245" class="detail">Solution architecture defines system selection, responsibilities, integrations, and business workflows.</text>
+</svg>

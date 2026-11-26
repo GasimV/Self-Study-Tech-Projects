@@ -11,6 +11,8 @@
 !assets/redis-memcached-comparison.svg
 !assets/architecture-scope-and-disciplines.svg
 !assets/architecture-study-map.svg
+!assets/banking-assistant-solution-architecture.svg
+!assets/banking-assistant-system-architecture.svg
 !assets/refund-review-messaging-architecture.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
