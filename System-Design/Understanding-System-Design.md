@@ -4,7 +4,7 @@
 >
 > Its principles also apply at solution and enterprise levels, but those have broader, specialized disciplines.
 >
-> <u>**Mental model:**</u> System Design is the ***discipline***; System Architecture is one of its ***principal outcomes***. System architecture defines the overall structure, interactions, and behavior of a system. System design is the *discipline* used to design that system, its subsystems, and components through HLD and LLD. ***System design knowledge is the technical foundation that connects all these architectural and engineering disciplines.***
+> <u>**Mental model:**</u> System Design is the ***discipline***; System Architecture is one of its ***principal outcomes***. System architecture defines the overall structure, interactions, and behavior of a system. System design is the *discipline* used to design that system, its subsystems, and components through HLD and LLD.
 
 [See the mental model in practice](#worked-example-ai-powered-banking-assistant)
 
@@ -113,6 +113,8 @@ The arrows show how the layers interact. Infrastructure and networking support s
 - **System architecture** describes the custom assistant as a whole and how its parts work together.
 - **System design** is the discipline used to make those decisions at high and low levels of detail.
 - **Engineering** implements, tests, deploys, and operates the system.
+
+> **System design knowledge is the technical foundation that connects all these architectural and engineering disciplines.**
 
 ## System Design at Different Scales
 
