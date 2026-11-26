@@ -164,11 +164,15 @@ Define ordering and any exactly-once guarantee for the specific operation that n
 
 | Design question | Decision to make |
 | --- | --- |
-| **What must be delivered and in what order?** | Identify the business effect, the acceptable loss or duplication, and the ordering scope. Decide who can replay work and what a replay may change. |
-| **How much work arrives?** | Estimate sustained and peak messages per second, payload size, and fan-out. Set a limit on acceptable message age and size retention for recovery time and storage cost. |
+| **Ordering and delivery.** What must arrive, and in what order? | Identify the business effect, acceptable loss or duplication, and ordering scope. For example, order status changes may need to stay in order for each order ID. [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery) |
+| **Persistence and retention.** What must survive, and for how long? | Decide which failures a confirmed message must survive, how long an unprocessed message can wait, and whether to keep completed messages for replay. Balance recovery needs with storage cost. [Work Queues, Pub/Sub, and Retained Logs](#work-queues-pubsub-and-retained-logs) |
+| **Security and access.** Who can do what? | Grant each producer and consumer only the permissions it needs. Control who can administer or replay messages, protect data in transit and at rest, and keep sensitive fields out of messages when IDs suffice. [Operations and Design Checklist](#operations-and-design-checklist) |
+| **Technology choice.** Which platform fits the work? | Start with the required routing, delivery, or replay behavior. Check client-library support for your languages, compatibility with your infrastructure, and performance under realistic load. [Choose a Platform by Requirement](#choose-a-platform-by-requirement) |
+| **Message format.** What do the producer and consumer agree on? | Choose a serialization format, a payload size limit, and a schema. Include enough metadata to identify and trace the work across services. [Order 481 example](#worked-design-refund-review-for-order-481) |
+| **Fault tolerance.** What happens when a broker or worker fails? | Choose replication and failure domains that meet the recovery goal. Tie producer confirmation to the storage policy and test failover and recovery of consumer progress. Set retry limits and decide when to move a message to a dead-letter queue. [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery) |
+| **How much work arrives?** | Estimate sustained and peak messages per second, payload size, and fan-out. Use these estimates to size the broker and consumers. |
 | **How do consumers keep up?** | Bound in-flight work, use batches where the delay is acceptable, and scale consumers within partition and downstream capacity. Apply backpressure by slowing intake or limiting delivery when consumers fall behind. |
 | **How is work spread across machines?** | Choose a routing or partition key. A key such as tenant ID preserves locality but can concentrate load from a busy tenant. More partitions can add parallelism at the cost of more coordination. |
-| **What happens when a node fails?** | Choose replication and failure domains that meet the recovery goal. Tie producer confirmation to the platform's storage policy, and test failover and reconstruction of consumer progress. |
 
 **Backlog example.** If arrivals are 1,000 messages/s and workers complete 800/s for 60 seconds, the backlog grows by `(1,000 − 800) × 60 = 12,000` messages. If arrivals then drop to 500/s, the same workers clear it at `800 − 500 = 300` messages/s. Draining those 12,000 messages takes 40 seconds. These numbers assume an initially empty queue, stable rates within each interval, and no retries. A queue absorbs a burst as storage and delay. Sustained arrivals above completion capacity require more capacity, less intake, or reduced work per message.
 
@@ -249,6 +253,8 @@ An illustrative command envelope:
   }
 }
 ```
+
+**Serialization** turns the producer’s in-memory command into bytes it can send. Here the relay encodes the `CreateRefundReview` envelope as UTF-8 JSON. **Deserialization** turns those bytes back into a command the worker can use. The worker parses the JSON, verifies that it supports schema version 1, and checks that the command has all required fields before opening the case.
 
 The `messageId` identifies the envelope, the `correlationId` follows the work across services, and the `reviewRequestId` identifies the business operation across retries. A new event such as `RefundReviewOpened` has its own message ID and can carry the same correlation and review-request IDs. Validate schemas and keep only the information each consumer needs.
 
