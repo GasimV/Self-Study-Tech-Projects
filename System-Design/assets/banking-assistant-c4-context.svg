@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="466" viewBox="0 0 780 466" role="img" aria-labelledby="title description">
+  <title id="title">C4 System Context for the AI Banking Assistant</title>
+  <desc id="description">A banking customer asks the AI Banking Assistant about a balance and fee and signs in through Identity Management. The assistant reads balance and fee details from Core Banking and opens support cases in CRM.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 19px; font-weight: 700; }
+    .name { font-size: 15px; font-weight: 650; }
+    .detail, .edge-label { font-size: 13px; }
+    .type { font-size: 12px; fill: #43546a; }
+    .person { fill: #e7f6f1; stroke: #6ca791; }
+    .focus { fill: #eaf0f9; stroke: #7da7fa; }
+    .dependency { fill: #f1f1f1; stroke: #c6cdd6; }
+    .edge { fill: none; stroke: #53657a; stroke-width: 1.5; marker-end: url(#arrow); }
+    .edge-label { paint-order: stroke; stroke: #f8f8f8; stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="778" height="464" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">C4 System Context</text>
+
+  <rect x="280" y="58" width="220" height="77" rx="8" class="person"/>
+  <text x="390" y="81" class="name">Banking customer</text>
+  <text x="390" y="101" class="type">[Person]</text>
+  <text x="390" y="121" class="detail">Asks about a balance and fee</text>
+
+  <rect x="258" y="204" width="264" height="89" rx="8" class="focus"/>
+  <text x="390" y="230" class="name">AI Banking Assistant</text>
+  <text x="390" y="251" class="type">[Software System]</text>
+  <text x="390" y="274" class="detail">Answers account and policy questions</text>
+
+  <rect x="25" y="371" width="210" height="72" rx="8" class="dependency"/>
+  <text x="130" y="394" class="name">Identity Management</text>
+  <text x="130" y="412" class="type">[External System]</text>
+  <text x="130" y="431" class="detail">Authenticates customers</text>
+  <rect x="285" y="371" width="210" height="72" rx="8" class="dependency"/>
+  <text x="390" y="394" class="name">Core Banking</text>
+  <text x="390" y="412" class="type">[External System]</text>
+  <text x="390" y="431" class="detail">Owns live account records</text>
+  <rect x="545" y="371" width="210" height="72" rx="8" class="dependency"/>
+  <text x="650" y="394" class="name">CRM</text>
+  <text x="650" y="412" class="type">[External System]</text>
+  <text x="650" y="431" class="detail">Manages support cases</text>
+
+  <path d="M280 97H130V371" class="edge"/>
+  <text x="130" y="168" class="edge-label">Signs in</text>
+  <path d="M390 135V204" class="edge"/>
+  <text x="390" y="173" class="edge-label">Asks a question</text>
+  <path d="M390 293V371" class="edge"/>
+  <text x="390" y="335" class="edge-label">Reads balance and fee details</text>
+  <path d="M522 248H650V371" class="edge"/>
+  <text x="650" y="310" class="edge-label">Opens a support case</text>
+</svg>

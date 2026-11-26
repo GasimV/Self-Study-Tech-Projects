@@ -12,6 +12,7 @@
 
 - [Overview](#overview)
   - [Worked Example: AI-Powered Banking Assistant](#worked-example-ai-powered-banking-assistant)
+    - [C4 Views of the AI Banking Assistant](#c4-views-of-the-ai-banking-assistant)
 - [System Design at Different Scales](#system-design-at-different-scales)
   - [General vs. Distributed System Design](#general-vs-distributed-system-design)
   - [Small Applications vs. Large Systems](#small-applications-vs-large-systems)
@@ -95,6 +96,8 @@ The bank builds the **AI Assistant System** and connects it to three other syste
 
 High-level design (HLD) defines which systems are involved, what each is responsible for, and how they connect. A C4 **System Landscape** can show the systems together. A C4 **System Context** view can show the assistant with its users and external dependencies. [C4 System Landscape](https://c4model.com/diagrams/system-landscape) · [C4 System Context](https://c4model.com/diagrams/system-context)
 
+Follow the custom assistant across its [three C4 views](#c4-views-of-the-ai-banking-assistant) below.
+
 **C4 System Landscape example.** In Simon Brown’s fictional Big Bank, customers use ATMs and Internet Banking. Both connect to Core Banking, and Internet Banking also relies on an email service outside the bank’s boundary.
 
 [![C4 System Landscape for Big Bank showing customers, bank staff, ATMs, Internet Banking, Core Banking, and an external email service connected by labeled arrows. Select the image to see it at full size.](assets/c4-big-bank-system-landscape.png)](assets/c4-big-bank-system-landscape.png)
@@ -108,6 +111,24 @@ The signed-in customer asks the question in the frontend. The gateway routes it 
 ![Custom AI assistant with a React frontend and gateway, replicated backend and AI subsystems, and a data subsystem. Infrastructure and networking support these parts, alongside shared security, observability, DevOps, and MLOps practices.](assets/banking-assistant-system-architecture.svg)
 
 The arrows show how the layers interact. Infrastructure and networking support several subsystems, and cross-cutting work such as security applies across them.
+
+#### C4 Views of the AI Banking Assistant
+
+Follow the same balance-and-fee question as each view zooms in. Blue boxes mark the system or its parts in focus. Gray boxes show supporting software outside the view’s boundary, and teal marks the customer.
+
+**System Context.** Start with one box for the assistant. The customer signs in through Identity Management. The assistant reads live account data from Core Banking and sends support cases to CRM. [C4 System Context](https://c4model.com/diagrams/system-context)
+
+![C4 System Context showing the banking customer asking the AI Banking Assistant about a balance and fee. The customer signs in through Identity Management. The assistant reads from Core Banking and sends support cases to CRM.](assets/banking-assistant-c4-context.svg)
+
+**Container.** Open the assistant box to see its applications and data store. The web app sends the question to the Backend API. The API reads the live balance and fee details and asks the AI Service to explain the fee using policy from the index. [C4 Container](https://c4model.com/diagrams/container)
+
+![C4 Container view showing a React web app, Backend API, AI Service, and approved-policy index inside the AI Banking Assistant. The web app uses Identity Management, the Backend API connects to Core Banking and CRM, and the AI Service retrieves policy from the index.](assets/banking-assistant-c4-container.svg)
+
+**Component.** Open just the Backend API. The request handler checks the customer’s identity and access to the requested account before calling the Core Banking adapter. It sends the fee details to the AI Service through a client, and uses the CRM adapter if the customer needs a support handoff. [C4 Component](https://c4model.com/diagrams/component)
+
+![C4 Component view of the Backend API showing the request handler, identity and account-access check, Core Banking adapter, AI Service client, and CRM adapter. Account access is checked before the balance and fee lookup.](assets/banking-assistant-c4-component.svg)
+
+> **C4 recall.** Context shows the whole system and its surroundings. A container is an application or data store inside that system. A component is a part inside one container.
 
 **4. System Design Considerations**
 

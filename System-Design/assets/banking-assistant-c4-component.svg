@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="568" viewBox="0 0 780 568" role="img" aria-labelledby="title description">
+  <title id="title">C4 Component View of the Backend API</title>
+  <desc id="description">Inside the Backend API, a request handler checks customer identity and account access before calling the Core Banking adapter. The handler uses a client to get a fee explanation from the AI Service and a CRM adapter to open a support case when needed.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 19px; font-weight: 700; }
+    .name { font-size: 15px; font-weight: 650; }
+    .detail, .edge-label { font-size: 13px; }
+    .type { font-size: 12px; fill: #43546a; }
+    .boundary { fill: none; stroke: #7c899a; stroke-dasharray: 6 4; }
+    .boundary-label { font-size: 14px; font-weight: 650; text-anchor: start; }
+    .focus { fill: #eaf0f9; stroke: #7da7fa; }
+    .dependency { fill: #f1f1f1; stroke: #c6cdd6; }
+    .edge, .connector { fill: none; stroke: #53657a; stroke-width: 1.5; }
+    .edge { marker-end: url(#arrow); }
+    .edge-label { paint-order: stroke; stroke: #f8f8f8; stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="778" height="566" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">C4 Component</text>
+
+  <rect x="277" y="53" width="226" height="57" rx="8" class="dependency"/>
+  <text x="390" y="76" class="name">Web App</text>
+  <text x="390" y="96" class="type">[Container · React]</text>
+  <rect x="24" y="142" width="732" height="288" rx="9" class="boundary"/>
+  <text x="38" y="164" class="boundary-label">Backend API [Container]</text>
+
+  <rect x="278" y="178" width="224" height="72" rx="8" class="focus"/>
+  <text x="390" y="201" class="name">Request handler</text>
+  <text x="390" y="220" class="type">[Component]</text>
+  <text x="390" y="239" class="detail">Coordinates each request</text>
+  <rect x="544" y="178" width="193" height="72" rx="8" class="focus"/>
+  <text x="640.5" y="201" class="name">Identity and access</text>
+  <text x="640.5" y="220" class="type">[Component]</text>
+  <text x="640.5" y="239" class="detail">Checks account permissions</text>
+
+  <rect x="43" y="327" width="194" height="72" rx="8" class="focus"/>
+  <text x="140" y="350" class="name">Core Banking adapter</text>
+  <text x="140" y="369" class="type">[Component]</text>
+  <text x="140" y="388" class="detail">Fetches live account details</text>
+  <rect x="293" y="327" width="194" height="72" rx="8" class="focus"/>
+  <text x="390" y="350" class="name">AI Service client</text>
+  <text x="390" y="369" class="type">[Component]</text>
+  <text x="390" y="388" class="detail">Requests a fee explanation</text>
+  <rect x="543" y="327" width="194" height="72" rx="8" class="focus"/>
+  <text x="640" y="350" class="name">CRM adapter</text>
+  <text x="640" y="369" class="type">[Component]</text>
+  <text x="640" y="388" class="detail">Handles support handoff</text>
+
+  <rect x="43" y="484" width="194" height="60" rx="8" class="dependency"/>
+  <text x="140" y="509" class="name">Core Banking</text>
+  <text x="140" y="531" class="type">[External System]</text>
+  <rect x="293" y="484" width="194" height="60" rx="8" class="dependency"/>
+  <text x="390" y="509" class="name">AI Service</text>
+  <text x="390" y="531" class="type">[Container · Python]</text>
+  <rect x="543" y="484" width="194" height="60" rx="8" class="dependency"/>
+  <text x="640" y="509" class="name">CRM</text>
+  <text x="640" y="531" class="type">[External System]</text>
+
+  <path d="M390 110V178" class="edge"/>
+  <text x="390" y="132" class="edge-label">Sends question</text>
+  <path d="M502 213H544" class="edge"/>
+  <text x="523" y="169" class="edge-label">Checks access first</text>
+  <path d="M390 250V289M140 289H640" class="connector"/>
+  <text x="490" y="276" class="edge-label">After authorization</text>
+  <path d="M140 289V327" class="edge"/>
+  <path d="M390 289V327" class="edge"/>
+  <path d="M640 289V327" class="edge"/>
+  <path d="M140 399V484" class="edge"/>
+  <text x="140" y="459" class="edge-label">Reads balance and fee details</text>
+  <path d="M390 399V484" class="edge"/>
+  <text x="390" y="459" class="edge-label">Requests fee explanation</text>
+  <path d="M640 399V484" class="edge"/>
+  <text x="640" y="459" class="edge-label">Opens case when needed</text>
+</svg>

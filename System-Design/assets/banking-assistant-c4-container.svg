@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="600" viewBox="0 0 780 600" role="img" aria-labelledby="title description">
+  <title id="title">C4 Container View of the AI Banking Assistant</title>
+  <desc id="description">Inside the assistant boundary are a React web app, Backend API, AI Service, and Qdrant approved-policy index. The web app uses Identity Management. The Backend API reads from Core Banking and opens cases in CRM. The AI Service reads approved policy from the index.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 19px; font-weight: 700; }
+    .name { font-size: 15px; font-weight: 650; }
+    .detail, .edge-label { font-size: 13px; }
+    .type { font-size: 12px; fill: #43546a; }
+    .boundary { fill: none; stroke: #7c899a; stroke-dasharray: 6 4; }
+    .boundary-label { font-size: 14px; font-weight: 650; text-anchor: end; }
+    .person { fill: #e7f6f1; stroke: #6ca791; }
+    .focus { fill: #eaf0f9; stroke: #7da7fa; }
+    .dependency { fill: #f1f1f1; stroke: #c6cdd6; }
+    .edge { fill: none; stroke: #53657a; stroke-width: 1.5; marker-end: url(#arrow); }
+    .edge-label { paint-order: stroke; stroke: #f8f8f8; stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="778" height="598" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">C4 Container</text>
+
+  <rect x="50" y="56" width="230" height="62" rx="8" class="person"/>
+  <text x="165" y="82" class="name">Banking customer</text>
+  <text x="165" y="103" class="type">[Person]</text>
+  <rect x="24" y="156" width="496" height="416" rx="9" class="boundary"/>
+  <text x="506" y="177" class="boundary-label">AI Banking Assistant [Software System]</text>
+
+  <rect x="50" y="196" width="230" height="72" rx="8" class="focus"/>
+  <text x="165" y="219" class="name">Web App</text>
+  <text x="165" y="238" class="type">[Container · React]</text>
+  <text x="165" y="257" class="detail">Presents chat and sign-in</text>
+  <rect x="50" y="337" width="230" height="72" rx="8" class="focus"/>
+  <text x="165" y="360" class="name">Backend API</text>
+  <text x="165" y="379" class="type">[Container · Java or C#]</text>
+  <text x="165" y="398" class="detail">Authorizes and handles requests</text>
+  <rect x="50" y="479" width="205" height="72" rx="8" class="focus"/>
+  <text x="152.5" y="502" class="name">AI Service</text>
+  <text x="152.5" y="521" class="type">[Container · Python]</text>
+  <text x="152.5" y="540" class="detail">Explains fees using policy</text>
+  <rect x="326" y="479" width="177" height="72" rx="8" class="focus"/>
+  <text x="414.5" y="502" class="name">Approved-policy index</text>
+  <text x="414.5" y="521" class="type">[Container · Qdrant]</text>
+  <text x="414.5" y="540" class="detail">Indexes policy passages</text>
+
+  <rect x="553" y="196" width="202" height="72" rx="8" class="dependency"/>
+  <text x="654" y="224" class="name">Identity Management</text>
+  <text x="654" y="246" class="type">[External System]</text>
+  <rect x="553" y="308" width="202" height="72" rx="8" class="dependency"/>
+  <text x="654" y="336" class="name">Core Banking</text>
+  <text x="654" y="358" class="type">[External System]</text>
+  <rect x="553" y="394" width="202" height="72" rx="8" class="dependency"/>
+  <text x="654" y="422" class="name">CRM</text>
+  <text x="654" y="444" class="type">[External System]</text>
+
+  <path d="M165 118V196" class="edge"/>
+  <text x="165" y="144" class="edge-label">Asks about balance and fee</text>
+  <path d="M280 232H553" class="edge"/>
+  <text x="411" y="223" class="edge-label">Signs the customer in through</text>
+  <path d="M165 268V337" class="edge"/>
+  <text x="165" y="307" class="edge-label">Sends question</text>
+  <path d="M280 354H553" class="edge"/>
+  <text x="409" y="345" class="edge-label">Reads balance and fee details</text>
+  <path d="M280 391H467V429H553" class="edge"/>
+  <text x="373" y="383" class="edge-label">Opens a support case</text>
+  <path d="M165 409V479" class="edge"/>
+  <text x="165" y="448" class="edge-label">Requests fee explanation</text>
+  <path d="M255 515H326" class="edge"/>
+  <text x="290" y="505" class="edge-label">Reads</text>
+</svg>

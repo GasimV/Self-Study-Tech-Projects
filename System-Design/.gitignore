@@ -14,6 +14,9 @@
 !assets/banking-assistant-enterprise-architecture.svg
 !assets/banking-assistant-solution-architecture.svg
 !assets/banking-assistant-system-architecture.svg
+!assets/banking-assistant-c4-context.svg
+!assets/banking-assistant-c4-container.svg
+!assets/banking-assistant-c4-component.svg
 !assets/refund-review-messaging-architecture.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
