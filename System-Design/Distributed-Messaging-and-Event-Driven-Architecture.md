@@ -5,6 +5,7 @@
 - [Messaging Mental Model](#messaging-mental-model)
 - [Synchronous Calls, Messages, and Events](#synchronous-calls-messages-and-events)
 - [Work Queues, Pub/Sub, and Retained Logs](#work-queues-pubsub-and-retained-logs)
+  - [Queues, Pub/Sub, Streams, and Where Kafka Fits](#queues-pubsub-streams-and-where-kafka-fits)
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
   - [Pub/Sub: One Event, Independent Subscribers](#pubsub-one-event-independent-subscribers)
 - [Designing a Distributed Messaging System](#designing-a-distributed-messaging-system)
@@ -87,11 +88,25 @@ A **message** is the unit sent between components. It can carry a command, an ev
 
 ## Work Queues, Pub/Sub, and Retained Logs
 
-| Pattern | Who receives the work or data? | Progress and retention | Example |
-| --- | --- | --- | --- |
-| **Work queue** | Workers (consumers) compete for jobs. A particular attempt is assigned to one worker, and the job may be redelivered. | Completion is tracked per message, commonly through acknowledgment or deletion. Unfinished work remains subject to the queue's retention and retry rules. | Open one case for a refund-review request. |
-| **Pub/Sub** | Each matching subscription can receive the event. Several workers can share one subscription when the platform supports it. | Each subscription can progress independently. Offline delivery, retention, and replay depend on the service and configuration. | Notify the shopper and update the support dashboard. |
-| **Retained log** | Readers or consumer groups consume records at their own pace. | Readers track positions. Retention or compaction governs when records disappear, independently of whether any reader has finished. | Replay retained review events to rebuild a dashboard. |
+### Queues, Pub/Sub, Streams, and Where Kafka Fits
+
+| Pattern | Question it answers | Order 481 example |
+| --- | --- | --- |
+| **Work queue** | Which worker should do this job? | Review workers compete for `CreateRefundReview`. One worker handles a delivery attempt and acknowledges after saving the case. A failure can lead to another attempt. |
+| **Pub/Sub** | Which subscribers need to react independently? | Notifications and Reporting can each receive `RefundReviewOpened` through their own matching subscription. Putting Reporting on the review queue would make it compete for review jobs. |
+| **Retained event stream** | Which history can readers revisit? | Reporting rebuilds its dashboard by replaying review events that are still retained. Readers track their positions independently. |
+
+**Work sharing and fan-out describe who receives a message. Retention describes what stays available later.** These choices can work together. An Amazon SNS topic can fan out to separate SQS queues, each with its own competing workers. Delivery, ordering, and replay depend on the platform and its configuration. [SNS fan-out to SQS](https://docs.aws.amazon.com/sns/latest/dg/sns-sqs-as-subscriber.html) · [Google Cloud Pub/Sub replay](https://docs.cloud.google.com/pubsub/docs/replay-overview)
+
+Kafka is a **distributed event-streaming platform built on partitioned, retained logs**. Suppose `support-events` has partitions P0 and P1, and Kafka appends the Order 481 `RefundReviewOpened` event at offset `42` in P0.
+
+- **Across groups, share the event.** Notifications and Reporting use different group IDs. Both can read the same stored record at P0 offset `42`, each at its own pace.
+- **Within a group, share the work.** In the Notifications group, Worker A reads P0 and Worker B reads P1. An ordinary Kafka consumer group assigns each partition to one member at a time. If A processes the event and restarts before committing its progress, the group can process the record again.
+- **Keep history for replay.** After A finishes offset `42` and all earlier required work, Notifications can commit `43` as its next P0 offset. Reporting keeps its own position and can still read `42` while it is retained. Kafka orders records within each partition. Retention or compaction governs which records remain available. [Kafka introduction](https://kafka.apache.org/43/getting-started/introduction/) · [Kafka consumer groups and offsets](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
+Kafka 4.2 made **share groups** production-ready. They support queue-style processing with per-record acknowledgment and let several members consume from the same partition. The example above uses ordinary consumer groups with partition assignments. [Kafka 4.2 upgrade notes](https://kafka.apache.org/43/getting-started/upgrade/)
+
+> **Queues share jobs. Pub/Sub shares events. Retained streams preserve replayable history. Kafka uses retained logs to support both independent subscribers and shared work.**
 
 ### Work Queue: One Job, Competing Workers
 
@@ -270,6 +285,8 @@ The `messageId` identifies the envelope, the `correlationId` follows the work ac
 ## Kafka, Kinesis, and Platform Selection
 
 ### Kafka: Partitions, Replicas, and Consumer Groups
+
+For the short example of how Kafka combines these patterns, see [Queues, Pub/Sub, Streams, and Where Kafka Fits](#queues-pubsub-streams-and-where-kafka-fits).
 
 Kafka brokers store records in named **topics**, each divided into **partitions**. A partition is an ordered log with its own **offsets**, the positions readers use to track progress. A partition leader handles writes, while follower replicas fetch its records. A broker can lead some partitions and replicate others.
 
