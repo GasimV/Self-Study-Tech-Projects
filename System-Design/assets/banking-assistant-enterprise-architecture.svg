@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="694" height="348" viewBox="0 0 694 348" role="img" aria-labelledby="title description">
+  <title id="title">Enterprise Architecture for the Bank</title>
+  <desc id="description">The bank aims to expand digital self-service and protect customer data. Four TOGAF architecture domains show the decisions involved: Business, Data, Application, and Technology. The Architecture Development Method helps the bank assess its current architecture, define a target, and plan and govern the transition.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; text-anchor: middle; }
+    .label { fill: #141414; font-size: 14px; font-weight: 600; }
+    .detail { fill: #585858; font-size: 13px; }
+    .panel { fill: #f1f1f1; stroke: #d6d6d6; }
+  </style>
+
+  <rect x="1" y="1" width="692" height="346" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="347" y="30" class="label">Enterprise Architecture</text>
+
+  <rect x="13" y="43" width="668" height="53" rx="7" fill="#eaf0f9" stroke="#7da7fa"/>
+  <text x="347" y="65" class="label">Bank-wide goal</text>
+  <text x="347" y="85" class="detail">Expand digital self-service while protecting customer data.</text>
+
+  <text x="347" y="121" class="label">Four TOGAF architecture domains</text>
+  <rect x="13" y="133" width="330" height="54" rx="7" class="panel"/>
+  <text x="178" y="156" class="label">Business</text>
+  <text x="178" y="176" class="detail">Digital self-service and support handoff</text>
+  <rect x="351" y="133" width="330" height="54" rx="7" class="panel"/>
+  <text x="516" y="156" class="label">Data</text>
+  <text x="516" y="176" class="detail">Account-data ownership and access rules</text>
+
+  <rect x="13" y="195" width="330" height="54" rx="7" class="panel"/>
+  <text x="178" y="218" class="label">Application</text>
+  <text x="178" y="238" class="detail">Core banking, CRM, identity, and assistant systems</text>
+  <rect x="351" y="195" width="330" height="54" rx="7" class="panel"/>
+  <text x="516" y="218" class="label">Technology</text>
+  <text x="516" y="238" class="detail">Hosting, networking, and security standards</text>
+
+  <rect x="13" y="262" width="668" height="56" rx="7" class="panel"/>
+  <text x="347" y="285" class="label">TOGAF Architecture Development Method (ADM)</text>
+  <text x="347" y="306" class="detail">Assess the current architecture → Define the target → Plan and govern the transition</text>
+  <text x="347" y="336" class="detail">Simplified view of an optional enterprise architecture framework.</text>
+</svg>

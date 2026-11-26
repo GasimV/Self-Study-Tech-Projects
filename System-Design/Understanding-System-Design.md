@@ -79,15 +79,23 @@ The goal is to meet today's requirements while making future changes manageable.
 
 ### Worked Example: AI-Powered Banking Assistant
 
-A customer asks, **“What’s my balance, and why was I charged this fee?”** Follow that request from the business solution into the custom assistant and its design decisions.
+A customer asks, **“What’s my balance, and why was I charged this fee?”** Follow that request from the bank’s strategy through the business solution to the custom assistant and its design decisions.
 
-**1. Solution Architecture**
+**1. Enterprise Architecture**
+
+The bank prioritizes digital self-service and sets shared rules for customer identity and account-data access across all channels. Those decisions guide the assistant and other projects. The bank can use **TOGAF** to organize this work and plan how to move from its current architecture to its target. [The Open Group’s TOGAF guidance](https://help.opengroup.org/hc/en-us/articles/32115987894930-How-the-ArchiMate-Language-and-the-TOGAF-Standard-Complement-Each-Other)
+
+![Enterprise architecture for the bank. The bank-wide goal of secure digital self-service guides four TOGAF domains: Business, Data, Application, and Technology. The Architecture Development Method helps the bank assess its current architecture, define its target, and plan and govern the transition.](assets/banking-assistant-enterprise-architecture.svg)
+
+**2. Solution Architecture**
 
 The bank builds the **AI Assistant System** and connects it to three other systems. The existing **Core Banking System** owns balances and transactions. The purchased **Customer Relationship Management (CRM) System** manages support cases. The existing **Identity Management System** signs customers in.
 
 ![AI-powered banking solution with four systems. The custom-developed AI Assistant is highlighted alongside the existing Core Banking System, purchased CRM System, and existing Identity Management System.](assets/banking-assistant-solution-architecture.svg)
 
-**2. System Architecture — Custom-developed AI Assistant**
+High-level design (HLD) defines which systems are involved, what each is responsible for, and how they connect. A C4 **System Landscape** can show the systems together. A C4 **System Context** view can show the assistant with its users and external dependencies. [C4 System Landscape](https://c4model.com/diagrams/system-landscape) · [C4 System Context](https://c4model.com/diagrams/system-context)
+
+**3. System Architecture — Custom-developed AI Assistant**
 
 The signed-in customer asks the question in the frontend. The gateway routes it to the backend, which checks account access and fetches the live balance and fee details from core banking. The backend passes the fee details to the AI subsystem, which retrieves approved policy and uses it to explain the fee. That approach is called **retrieval-augmented generation (RAG)**. If the customer needs a specialist, the backend opens a support case in the CRM.
 
@@ -95,7 +103,7 @@ The signed-in customer asks the question in the frontend. The gateway routes it 
 
 The arrows show how the layers interact. Infrastructure and networking support several subsystems, and cross-cutting work such as security applies across them.
 
-**3. System Design Considerations**
+**4. System Design Considerations**
 
 | Area | High-Level Design (HLD) | Low-Level Design (LLD) |
 | --- | --- | --- |
@@ -109,6 +117,8 @@ The arrows show how the layers interact. Infrastructure and networking support s
 | **Security** | Require a signed-in customer and enforce account access in the backend. | Check that the authenticated customer can access the requested account before the lookup. |
 
 **Final mental model:**
+
+- **Enterprise architecture** sets the direction and shared rules for the whole bank. [Architecture Scope and Overlap](#architecture-scope-and-overlap)
 - **Solution architecture** chooses the systems that solve the business problem together.
 - **System architecture** describes the custom assistant as a whole and how its parts work together.
 - **System design** is the discipline used to make those decisions at high and low levels of detail.
