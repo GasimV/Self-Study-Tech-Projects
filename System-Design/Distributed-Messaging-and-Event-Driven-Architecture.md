@@ -4,6 +4,7 @@
 
 - [Messaging Mental Model](#messaging-mental-model)
 - [Synchronous Calls, Messages, and Events](#synchronous-calls-messages-and-events)
+  - [What Can a Message Carry?](#what-can-a-message-carry)
 - [Work Queues, Pub/Sub, and Retained Logs](#work-queues-pubsub-and-retained-logs)
   - [Queues, Pub/Sub, Streams, and Where Kafka Fits](#queues-pubsub-streams-and-where-kafka-fits)
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
@@ -81,6 +82,32 @@ A shopper asks, **“Where is order 481, and can I get a refund?”** The assist
 | Inform other systems that the review exists | **Event:** `RefundReviewOpened` | Notification and reporting services can react independently. |
 
 A **message** is the unit sent between components. It can carry a command, an event, or a request or response. A **producer** sends it, a **consumer** handles it, and a **broker** can store and route it. In publish/subscribe (**Pub/Sub**), the producer is a **publisher**, the named destination is a **topic**, and a **subscription** defines a subscriber's delivery interest and, where supported, its progress.
+
+### What Can a Message Carry?
+
+In distributed messaging, a **message is a unit of data exchanged between distributed components**. <u>Kafka *does not inherently care* what that data represents.</u>
+
+| Message type | Meaning | Example |
+| --- | --- | --- |
+| **Command** | Request to perform an action | `ProcessPayment` |
+| **Event** | Notification that something happened | `PaymentCompleted` |
+| **Log** | Record of system activity | `Authentication failed` |
+| **Telemetry** | Measurement or sensor data | `CPU usage: 85%` |
+| **Business data** | Information exchanged between services | Customer profile update |
+| **AI task** | Request for AI processing | `GenerateDocumentSummary` |
+
+Kafka transports and stores these messages as **records within topics**.
+
+**Mental model:**
+
+- **Message:** What is communicated.
+- **Kafka:** Infrastructure for transporting, storing, and distributing messages.
+- **Producer:** Component sending messages.
+- **Consumer:** Component receiving and processing messages.
+
+***The meaning and processing logic of each message are defined by your application, not Kafka.***
+
+An application log entry is something a message can carry. Kafka’s retained log is where Kafka stores records.
 
 **Event-driven architecture (EDA)** organizes parts of a system around events that other components can react to. It lets those components run and recover at their own pace. They still share expectations about what each event means, how it is formatted, and how promptly it becomes available. The same design can use EDA for follow-up work and synchronous calls for answers the shopper needs immediately.
 
@@ -288,7 +315,7 @@ The `messageId` identifies the envelope, the `correlationId` follows the work ac
 
 For the short example of how Kafka combines these patterns, see [Queues, Pub/Sub, Streams, and Where Kafka Fits](#queues-pubsub-streams-and-where-kafka-fits).
 
-Kafka brokers store records in named **topics**, each divided into **partitions**. A partition is an ordered log with its own **offsets**, the positions readers use to track progress. A partition leader handles writes, while follower replicas fetch its records. A broker can lead some partitions and replicate others.
+Kafka brokers store records in named **topics**, each divided into **partitions**. A partition is an ordered log with its own **offsets**, the positions readers use to track progress. A partition leader handles writes, while follower replicas fetch its records. A broker can lead some partitions and replicate others. [What Can a Message Carry?](#what-can-a-message-carry)
 
 In this example, the producer keys support events by order ID. P0 and P1 are two partitions of `support-events`. The producer routes an event to one partition. Each consumer group keeps its own progress for both partitions.
 
