@@ -1,5 +1,11 @@
 # Understanding System Design
 
+> **System Design primarily focuses on designing a system, its subsystems, and components.** It covers both High-Level Design (HLD) and Low-Level Design (LLD), including software, AI, data, infrastructure, networking, and security.
+>
+> Its principles also apply at solution and enterprise levels, but those have broader, specialized disciplines.
+>
+> **Mental model:** System Design is the discipline; System Architecture is one of its principal outcomes.
+
 ## Table of Contents
 
 - [Overview](#overview)
