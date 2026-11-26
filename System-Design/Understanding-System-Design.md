@@ -95,6 +95,12 @@ The bank builds the **AI Assistant System** and connects it to three other syste
 
 High-level design (HLD) defines which systems are involved, what each is responsible for, and how they connect. A C4 **System Landscape** can show the systems together. A C4 **System Context** view can show the assistant with its users and external dependencies. [C4 System Landscape](https://c4model.com/diagrams/system-landscape) · [C4 System Context](https://c4model.com/diagrams/system-context)
 
+**C4 System Landscape example.** In Simon Brown’s fictional Big Bank, customers use ATMs and Internet Banking. Both connect to Core Banking, and Internet Banking also relies on an email service outside the bank’s boundary.
+
+[![C4 System Landscape for Big Bank showing customers, bank staff, ATMs, Internet Banking, Core Banking, and an external email service connected by labeled arrows. Select the image to see it at full size.](assets/c4-big-bank-system-landscape.png)](assets/c4-big-bank-system-landscape.png)
+
+*C4 System Landscape for the fictional Big Bank. Simon Brown.* [Original diagram](https://c4model.com/images/examples/SystemLandscape.png) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+
 **3. System Architecture — Custom-developed AI Assistant**
 
 The signed-in customer asks the question in the frontend. The gateway routes it to the backend, which checks account access and fetches the live balance and fee details from core banking. The backend passes the fee details to the AI subsystem, which retrieves approved policy and uses it to explain the fee. That approach is called **retrieval-augmented generation (RAG)**. If the customer needs a specialist, the backend opens a support case in the CRM.
