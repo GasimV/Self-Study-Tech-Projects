@@ -96,7 +96,7 @@ The bank builds the **AI Assistant System** and connects it to three other syste
 
 High-level design (HLD) defines which systems are involved, what each is responsible for, and how they connect. A C4 **System Landscape** can show the systems together. A C4 **System Context** view can show the assistant with its users and external dependencies. [C4 System Landscape](https://c4model.com/diagrams/system-landscape) · [C4 System Context](https://c4model.com/diagrams/system-context)
 
-Follow the custom assistant across its [three C4 views](#c4-views-of-the-ai-banking-assistant) below.
+Follow the custom assistant in the [C4 walkthrough](#c4-views-of-the-ai-banking-assistant) below.
 
 **C4 System Landscape example.** In Simon Brown’s fictional Big Bank, customers use ATMs and Internet Banking. Both connect to Core Banking, and Internet Banking also relies on an email service outside the bank’s boundary.
 
@@ -124,9 +124,13 @@ Follow the same balance-and-fee question as each view zooms in. Blue boxes mark 
 
 ![C4 Container view showing a React web app, Backend API, AI Service, and approved-policy index inside the AI Banking Assistant. The web app uses Identity Management, the Backend API connects to Core Banking and CRM, and the AI Service retrieves policy from the index.](assets/banking-assistant-c4-container.svg)
 
-**Component.** Open just the Backend API. The request handler checks the customer’s identity and access to the requested account before calling the Core Banking adapter. It sends the fee details to the AI Service through a client, and uses the CRM adapter if the customer needs a support handoff. [C4 Component](https://c4model.com/diagrams/component)
+**Component — Backend API.** The request handler checks the customer’s identity and access to the requested account before calling the Core Banking adapter. It sends the fee details to the AI Service through a client, and uses the CRM adapter if the customer needs a support handoff. [C4 Component](https://c4model.com/diagrams/component)
 
 ![C4 Component view of the Backend API showing the request handler, identity and account-access check, Core Banking adapter, AI Service client, and CRM adapter. Account access is checked before the balance and fee lookup.](assets/banking-assistant-c4-component.svg)
+
+**Component — AI Service.** The handler receives the question and fee details from the Backend API. The retriever looks up approved policy by fee type and the date the fee was charged. The generator gives those passages and fee details to a large language model (LLM). The citation check matches the draft’s references against the retrieved passages. If supporting policy is missing or the check fails, the service tells the Backend API it cannot verify an explanation.
+
+![C4 Component view of the AI Service. The Backend API requests a fee explanation. Inside the AI Service, a handler calls a policy retriever, an explanation generator, and a citation check. The retriever reads the approved-policy index, and the generator invokes an LLM endpoint.](assets/banking-assistant-c4-ai-service-component.svg)
 
 > **C4 recall.** Context shows the whole system and its surroundings. A container is an application or data store inside that system. A component is a part inside one container.
 

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="568" viewBox="0 0 780 568" role="img" aria-labelledby="title description">
+  <title id="title">C4 Component View of the AI Service</title>
+  <desc id="description">The Backend API requests a fee explanation from the AI Service. A handler coordinates policy retrieval, generation, and a citation check. A retriever reads the approved-policy index, and a generator calls a model endpoint. The citation check matches citations against the retrieved policy passages.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 19px; font-weight: 700; }
+    .name { font-size: 15px; font-weight: 650; }
+    .detail, .edge-label { font-size: 13px; }
+    .type { font-size: 12px; fill: #43546a; }
+    .boundary { fill: none; stroke: #7c899a; stroke-dasharray: 6 4; }
+    .boundary-label { font-size: 14px; font-weight: 650; text-anchor: start; }
+    .focus { fill: #eaf0f9; stroke: #7da7fa; }
+    .dependency { fill: #f1f1f1; stroke: #c6cdd6; }
+    .edge, .connector { fill: none; stroke: #53657a; stroke-width: 1.5; }
+    .edge { marker-end: url(#arrow); }
+    .edge-label { paint-order: stroke; stroke: #f8f8f8; stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="778" height="566" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">C4 Component — AI Service</text>
+
+  <rect x="277" y="53" width="226" height="57" rx="8" class="dependency"/>
+  <text x="390" y="76" class="name">Backend API</text>
+  <text x="390" y="96" class="type">[Container · Java or C#]</text>
+  <rect x="24" y="142" width="732" height="288" rx="9" class="boundary"/>
+  <text x="38" y="164" class="boundary-label">AI Service [Container · Python]</text>
+
+  <rect x="257" y="178" width="266" height="72" rx="8" class="focus"/>
+  <text x="390" y="201" class="name">Fee explanation handler</text>
+  <text x="390" y="220" class="type">[Component]</text>
+  <text x="390" y="239" class="detail">Coordinates retrieval, drafting, and checks</text>
+
+  <rect x="36" y="327" width="208" height="72" rx="8" class="focus"/>
+  <text x="140" y="350" class="name">Policy retriever</text>
+  <text x="140" y="369" class="type">[Component]</text>
+  <text x="140" y="388" class="detail">Filters by fee type and date</text>
+  <rect x="286" y="327" width="208" height="72" rx="8" class="focus"/>
+  <text x="390" y="350" class="name">Explanation generator</text>
+  <text x="390" y="369" class="type">[Component]</text>
+  <text x="390" y="388" class="detail">Prompts the LLM with policy</text>
+  <rect x="536" y="327" width="208" height="72" rx="8" class="focus"/>
+  <text x="640" y="350" class="name">Citation check</text>
+  <text x="640" y="369" class="type">[Component]</text>
+  <text x="640" y="388" class="detail">Matches citations to passages</text>
+
+  <rect x="36" y="484" width="208" height="60" rx="8" class="dependency"/>
+  <text x="140" y="509" class="name">Approved-policy index</text>
+  <text x="140" y="531" class="type">[Container · Qdrant]</text>
+  <rect x="286" y="484" width="208" height="60" rx="8" class="dependency"/>
+  <text x="390" y="509" class="name">LLM endpoint</text>
+  <text x="390" y="531" class="type">[Model service]</text>
+
+  <path d="M390 110V178" class="edge"/>
+  <text x="390" y="132" class="edge-label">Requests a fee explanation</text>
+  <path d="M390 250V289M140 289H640" class="connector"/>
+  <path d="M140 289V327" class="edge"/>
+  <text x="140" y="310" class="edge-label">Requests policy</text>
+  <path d="M390 289V327" class="edge"/>
+  <text x="390" y="310" class="edge-label">Requests a draft</text>
+  <path d="M640 289V327" class="edge"/>
+  <text x="640" y="310" class="edge-label">Checks draft citations</text>
+  <path d="M140 399V484" class="edge"/>
+  <text x="140" y="459" class="edge-label">Reads approved passages</text>
+  <path d="M390 399V484" class="edge"/>
+  <text x="390" y="459" class="edge-label">Sends prompt</text>
+</svg>
