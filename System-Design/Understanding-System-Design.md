@@ -27,6 +27,7 @@
   - [Worked Example: An Online Store on AWS](#worked-example-an-online-store-on-aws)
   - [Comparable Building Blocks Across Providers](#comparable-building-blocks-across-providers)
   - [Can the Whole Architecture Be Deployed Together?](#can-the-whole-architecture-be-deployed-together)
+  - [Terraform, Vault, and Consul in One System](#terraform-vault-and-consul-in-one-system)
 - [Core Terminology](#core-terminology)
 - [Functional and Non-Functional Requirements](#functional-and-non-functional-requirements)
 - [Design Process](#design-process)
@@ -371,6 +372,50 @@ Layer 4 (L4) and Layer 7 (L7) capabilities differ; see the [existing comparison]
 Your team can use its own definitions or a reviewed template. Automation creates the declared resources and handles supported dependencies; it does not decide the right architecture or prove the application's correctness. Separately configured services continue handling scaling, routing, and other ongoing mechanisms.
 
 > **The provider operates the services you select. Your team designs their configuration, integration, and application behavior.**
+
+### Terraform, Vault, and Consul in One System
+
+In the food-delivery app, Order Service calls Payment Service, which records payment data in PostgreSQL. Three tools can help with different parts of that design.
+
+| Tool | Question it answers | Order → Payment example |
+| --- | --- | --- |
+| **Terraform** | What infrastructure should exist? | Define network, compute, and database resources in code. Review what Terraform proposes to create, change, or delete before applying the plan. [Terraform plan](https://developer.hashicorp.com/terraform/cli/commands/plan) |
+| **Vault** | How does a workload obtain credentials? | Payment authenticates to Vault and receives leased database credentials through a configured integration. It uses those credentials to connect directly to PostgreSQL. [Vault database secrets engine](https://developer.hashicorp.com/vault/docs/secrets/databases) |
+| **Consul** | How do services find each other and control connections? | Order discovers Payment. In the configured mesh, the proxies use mutual TLS (mTLS), and a Consul intention controls whether Order may connect to Payment. [Consul intentions](https://developer.hashicorp.com/consul/docs/secure-mesh/intention) |
+
+```mermaid
+flowchart LR
+    subgraph SETUP["Provisioning"]
+        direction TB
+        TF["Terraform"] -.->|Provisions| INFRA["Network, compute,<br/>and database resources"]
+    end
+    subgraph RUN["Runtime"]
+        direction TB
+        ORDER["Order Service"] --> OP["Order proxy"]
+        OP -->|mTLS| PP["Payment proxy"]
+        PP --> PAY["Payment Service"]
+        PAY -->|Uses credentials| DB["PostgreSQL"]
+        CONSUL["Consul"] -.->|Discovery| OP
+        CONSUL -.->|Intentions| PP
+        VAULT["Vault"] -.->|Issues leased credentials| PAY
+    end
+    SETUP ~~~ RUN
+```
+
+Solid arrows carry application traffic. Dotted arrows show provisioning, mesh configuration, or credential issuance. For more detail, see the [Vault credential walkthrough](Identity-and-Access-Management.md#example-vault-supplies-database-credentials) and the [Consul Order → Payment walkthrough](Distributed-Systems-Building-Blocks.md#example-order-service-calls-payment-service).
+
+> **Terraform provisions resources. Vault issues credentials. Consul helps services find and connect to each other.**
+
+**Other HashiCorp tools**
+
+| Tool | Role to remember |
+| --- | --- |
+| **Nomad** | Schedules and runs workloads, including containers and supported non-container jobs. [Nomad](https://developer.hashicorp.com/nomad/docs/what-is-nomad) |
+| **Boundary** | Gives authorized users access to private targets such as servers and databases. [Boundary](https://developer.hashicorp.com/boundary/docs/what-is-boundary) |
+| **Packer** | Builds repeatable machine images for platforms such as AWS or VMware. [Packer](https://developer.hashicorp.com/packer/docs/intro) |
+| **HCP Waypoint** | Gives developers self-service templates and workflows defined by the platform team. [HCP Waypoint](https://developer.hashicorp.com/hcp/docs/waypoint) |
+| **Sentinel** | Expresses and evaluates policies as code in supported workflows. [Sentinel](https://developer.hashicorp.com/sentinel/docs) |
+| **Vagrant** | Creates reproducible local development environments. [Vagrant](https://developer.hashicorp.com/vagrant/intro) |
 
 ## Core Terminology
 

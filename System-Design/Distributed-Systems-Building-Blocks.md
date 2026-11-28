@@ -1886,6 +1886,8 @@ Health checks, cached discovery results, and policy propagation have delays. In 
 
 These responsibilities can work together; deploying one product does not automatically deploy or configure the others. See the [IAM service-identity explanation](Identity-and-Access-Management.md#consul-and-service-to-service-identity) and [Vault credential example](Identity-and-Access-Management.md#example-vault-supplies-database-credentials).
 
+For the wider platform view, see [Terraform, Vault, and Consul in One System](Understanding-System-Design.md#terraform-vault-and-consul-in-one-system).
+
 > **Recall:** Discovery finds an eligible endpoint; mesh proxies secure and control the configured connection; the application decides whether the business action is permitted.
 
 
