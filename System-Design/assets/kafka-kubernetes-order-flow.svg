@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="520" viewBox="0 0 780 520" role="img" aria-labelledby="title description">
+  <title id="title">OrderCreated event flow in Kubernetes</title>
+  <desc id="description">An Order Service container runs in a producer pod and publishes OrderCreated for order 101 to the Kafka orders topic. Three Kafka broker pods serve the topic. Payment, Inventory, and Notification consumer pods fetch the event. All illustrated pods are inside the Kubernetes cluster.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 20px; font-weight: 700; }
+    .label { font-size: 15px; font-weight: 650; }
+    .detail, .edge-label { font-size: 13px; fill: #43546a; }
+    .boundary { fill: #fbfcfd; stroke: #96a7bd; }
+    .kafka { fill: #eaf0f9; stroke: #8ca5c5; }
+    .pod { fill: #f1f5fa; stroke: #bcc8d6; }
+    .card { fill: #fff; stroke: #d3dce7; }
+    .server-icon { fill: none; stroke: #53657a; stroke-width: 1.25; }
+    .arrow, .connector { fill: none; stroke: #53657a; stroke-width: 1.5; }
+    .arrow { marker-end: url(#arrow); }
+    .edge-label { paint-order: stroke; stroke: #fbfcfd; stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+    <g id="server" class="server-icon">
+      <rect x="0" y="0" width="16" height="5" rx="1"/>
+      <rect x="0" y="7" width="16" height="5" rx="1"/>
+      <path d="M3 2.5h1M3 9.5h1"/>
+    </g>
+  </defs>
+
+  <rect x="1" y="1" width="778" height="518" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">Event-driven e-commerce on Kubernetes</text>
+  <rect x="20" y="53" width="740" height="449" rx="10" class="boundary"/>
+  <text x="390" y="76" class="label">Kubernetes cluster</text>
+
+  <rect x="257" y="91" width="266" height="84" rx="8" class="pod"/>
+  <text x="390" y="114" class="label">Order Service pod</text>
+  <rect x="271" y="126" width="238" height="34" rx="5" class="card"/>
+  <text x="390" y="148" class="detail">Order Service container · Producer</text>
+
+  <rect x="43" y="230" width="694" height="143" rx="8" class="kafka"/>
+  <text x="390" y="254" class="label">Kafka cluster</text>
+  <text x="390" y="275" class="detail">Topic · orders</text>
+  <rect x="56" y="287" width="215" height="54" rx="6" class="card"/>
+  <use href="#server" x="155.5" y="296"/>
+  <text x="163.5" y="328" class="detail">Broker 1 pod</text>
+  <rect x="282" y="287" width="216" height="54" rx="6" class="card"/>
+  <use href="#server" x="382" y="296"/>
+  <text x="390" y="328" class="detail">Broker 2 pod</text>
+  <rect x="509" y="287" width="215" height="54" rx="6" class="card"/>
+  <use href="#server" x="608.5" y="296"/>
+  <text x="616.5" y="328" class="detail">Broker 3 pod</text>
+  <text x="390" y="360" class="detail">Brokers store the topic’s partition logs</text>
+
+  <rect x="56" y="433" width="215" height="54" rx="6" class="pod"/>
+  <text x="163.5" y="455" class="label">Payment</text>
+  <text x="163.5" y="475" class="detail">Consumer pod</text>
+  <rect x="282" y="433" width="216" height="54" rx="6" class="pod"/>
+  <text x="390" y="455" class="label">Inventory</text>
+  <text x="390" y="475" class="detail">Consumer pod</text>
+  <rect x="509" y="433" width="215" height="54" rx="6" class="pod"/>
+  <text x="616.5" y="455" class="label">Notification</text>
+  <text x="616.5" y="475" class="detail">Consumer pod</text>
+
+  <path d="M390 175V230" class="arrow"/>
+  <text x="390" y="205" class="edge-label">Publishes OrderCreated · Order #101</text>
+  <path d="M390 373V406M163.5 406H616.5" class="connector"/>
+  <text x="390" y="395" class="edge-label">Event flow · Consumers fetch records</text>
+  <path d="M163.5 406V433" class="arrow"/>
+  <path d="M390 406V433" class="arrow"/>
+  <path d="M616.5 406V433" class="arrow"/>
+</svg>

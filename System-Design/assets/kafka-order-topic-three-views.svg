@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="604" viewBox="0 0 780 604" role="img" aria-labelledby="title description">
+  <title id="title">Three views of the Kafka orders topic</title>
+  <desc id="description">Three distinct consumer groups read the same OrderCreated event for order 101. The payment-service group has three payment pods assigned partitions P0, P1, and P2. Inside P0, orders 101, 104, 107, and 110 are stored at offsets 0, 1, 2, and 3.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; fill: #18283a; text-anchor: middle; }
+    .title { font-size: 20px; font-weight: 700; }
+    .section { font-size: 16px; font-weight: 650; text-anchor: start; }
+    .label { font-size: 14px; font-weight: 650; }
+    .detail { font-size: 13px; fill: #43546a; }
+    .panel { fill: #fbfcfd; stroke: #d3dce7; }
+    .event { fill: #eaf0f9; stroke: #8ca5c5; }
+    .card { fill: #f1f5fa; stroke: #bcc8d6; }
+    .group { fill: #edf6f0; stroke: #9cbca8; stroke-dasharray: 5 4; }
+    .arrow, .connector { fill: none; stroke: #53657a; stroke-width: 1.5; }
+    .arrow { marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 8 4 0 8Z" fill="#53657a"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="778" height="602" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+  <text x="390" y="32" class="title">Three views of the Kafka orders topic</text>
+
+  <rect x="20" y="55" width="740" height="151" rx="8" class="panel"/>
+  <text x="38" y="79" class="section">Pub/Sub · One event, three groups</text>
+  <rect x="274" y="89" width="232" height="30" rx="5" class="event"/>
+  <text x="390" y="109" class="label">OrderCreated · Order #101</text>
+  <rect x="42" y="148" width="216" height="44" rx="6" class="card"/>
+  <text x="150" y="167" class="label">Payment</text>
+  <text x="150" y="184" class="detail">payment-service</text>
+  <rect x="282" y="148" width="216" height="44" rx="6" class="card"/>
+  <text x="390" y="167" class="label">Inventory</text>
+  <text x="390" y="184" class="detail">inventory-service</text>
+  <rect x="522" y="148" width="216" height="44" rx="6" class="card"/>
+  <text x="630" y="167" class="label">Notification</text>
+  <text x="630" y="184" class="detail">notification-service</text>
+  <path d="M390 119V133M150 133H630" class="connector"/>
+  <path d="M150 133V148" class="arrow"/>
+  <path d="M390 133V148" class="arrow"/>
+  <path d="M630 133V148" class="arrow"/>
+
+  <rect x="20" y="220" width="740" height="189" rx="8" class="panel"/>
+  <text x="38" y="245" class="section">Queue-like work sharing · Three pods in one group</text>
+  <rect x="42" y="260" width="216" height="39" rx="6" class="event"/>
+  <text x="150" y="285" class="label">P0 · Order #101</text>
+  <rect x="282" y="260" width="216" height="39" rx="6" class="event"/>
+  <text x="390" y="285" class="label">P1 · Order #102</text>
+  <rect x="522" y="260" width="216" height="39" rx="6" class="event"/>
+  <text x="630" y="285" class="label">P2 · Order #103</text>
+
+  <rect x="36" y="320" width="708" height="75" rx="7" class="group"/>
+  <rect x="42" y="327" width="216" height="38" rx="6" class="card"/>
+  <text x="150" y="351" class="label">Payment Pod 1</text>
+  <rect x="282" y="327" width="216" height="38" rx="6" class="card"/>
+  <text x="390" y="351" class="label">Payment Pod 2</text>
+  <rect x="522" y="327" width="216" height="38" rx="6" class="card"/>
+  <text x="630" y="351" class="label">Payment Pod 3</text>
+  <text x="390" y="385" class="detail">Same consumer group · payment-service</text>
+  <path d="M150 299V327" class="arrow"/>
+  <path d="M390 299V327" class="arrow"/>
+  <path d="M630 299V327" class="arrow"/>
+
+  <rect x="20" y="423" width="740" height="161" rx="8" class="panel"/>
+  <text x="38" y="448" class="section">Retained log · Inside partition P0</text>
+  <rect x="42" y="465" width="150" height="62" rx="6" class="event"/>
+  <text x="117" y="490" class="label">Order #101</text>
+  <text x="117" y="511" class="detail">Offset 0</text>
+  <rect x="224" y="465" width="150" height="62" rx="6" class="card"/>
+  <text x="299" y="490" class="label">Order #104</text>
+  <text x="299" y="511" class="detail">Offset 1</text>
+  <rect x="406" y="465" width="150" height="62" rx="6" class="card"/>
+  <text x="481" y="490" class="label">Order #107</text>
+  <text x="481" y="511" class="detail">Offset 2</text>
+  <rect x="588" y="465" width="150" height="62" rx="6" class="card"/>
+  <text x="663" y="490" class="label">Order #110</text>
+  <text x="663" y="511" class="detail">Offset 3</text>
+  <path d="M192 496H224" class="arrow"/>
+  <path d="M374 496H406" class="arrow"/>
+  <path d="M556 496H588" class="arrow"/>
+  <text x="390" y="559" class="detail">Each group can revisit the records that Kafka still retains.</text>
+</svg>

@@ -20,6 +20,8 @@
 !assets/banking-assistant-c4-component.svg
 !assets/banking-assistant-c4-ai-service-component.svg
 !assets/refund-review-messaging-architecture.svg
+!assets/kafka-kubernetes-order-flow.svg
+!assets/kafka-order-topic-three-views.svg
 
 # Generated Unix executable; Windows executables are already ignored upstream.
 /examples/merkle_tree/merkle_tree_dsa

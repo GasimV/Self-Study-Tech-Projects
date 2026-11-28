@@ -16,6 +16,7 @@
 - [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery)
 - [Worked Design: Refund Review for Order 481](#worked-design-refund-review-for-order-481)
 - [Kafka, Kinesis, and Platform Selection](#kafka-kinesis-and-platform-selection)
+  - [Kafka on Kubernetes: One Order, Three Messaging Concepts](#kafka-on-kubernetes-one-order-three-messaging-concepts)
   - [Kafka: Partitions, Replicas, and Consumer Groups](#kafka-partitions-replicas-and-consumer-groups)
     - [How Kafka Stores and Fetches Records](#how-kafka-stores-and-fetches-records)
     - [Kafka Acknowledgments and Consumer Lag](#kafka-acknowledgments-and-consumer-lag)
@@ -134,6 +135,8 @@ Kafka is a **distributed event-streaming platform built on partitioned, retained
 Kafka 4.2 made **share groups** production-ready. They support queue-style processing with per-record acknowledgment and let several members consume from the same partition. The example above uses ordinary consumer groups with partition assignments. [Kafka 4.2 upgrade notes](https://kafka.apache.org/43/getting-started/upgrade/)
 
 > **Queues share jobs. Pub/Sub shares events. Retained streams preserve replayable history. Kafka uses retained logs to support both independent subscribers and shared work.**
+
+See how those patterns fit together in the [Kafka on Kubernetes example](#kafka-on-kubernetes-one-order-three-messaging-concepts).
 
 ### Work Queue: One Job, Competing Workers
 
@@ -310,6 +313,33 @@ The `messageId` identifies the envelope, the `correlationId` follows the work ac
 > **The outbox protects the transition from a database commit to publication. Idempotent processing protects the business result when a message returns.**
 
 ## Kafka, Kinesis, and Platform Selection
+
+### Kafka on Kubernetes: One Order, Three Messaging Concepts
+
+When a shopper places order **#101**, the **Order Service** publishes `OrderCreated` to Kafka’s `orders` topic. **Payment** starts its payment workflow, **Inventory** handles stock, and **Notification** sends an order-received update. Each service runs in its own pod in this example. A pod runs one or more containers. [Kubernetes Pods](https://kubernetes.io/docs/concepts/workloads/pods/)
+
+In the diagram, the **Kubernetes cluster** runs both the app pods and the Kafka broker pods. The **Kafka cluster** is the group of brokers working together to serve Kafka topics. The app pods can also connect to a Kafka cluster hosted outside their Kubernetes cluster. [Kafka introduction](https://kafka.apache.org/43/getting-started/introduction/)
+
+![A Kubernetes cluster containing an Order Service producer pod, a Kafka cluster with three broker pods, and Payment, Inventory, and Notification consumer pods. The Order Service publishes OrderCreated for order 101 to the orders topic.](assets/kafka-kubernetes-order-flow.svg)
+
+The arrows show the direction the event travels. The consumer clients fetch records from Kafka.
+
+![Three views of the same Kafka orders topic. Payment, Inventory, and Notification use separate consumer groups. Within Payment, three pods share partitions P0, P1, and P2. P0 retains orders 101, 104, 107, and 110 at offsets 0 through 3.](assets/kafka-order-topic-three-views.svg)
+
+- **Pub/Sub across groups.** Payment, Inventory, and Notification each use a distinct group ID. Each group can read the same `OrderCreated` record for #101 and track its own progress.
+- **Queue-like work sharing within a group.** Kubernetes scales Payment to three pods. In this ordinary consumer group, Kafka assigns P0 to Pod 1, P1 to Pod 2, and P2 to Pod 3. Each partition has one assigned consumer at a time in that group, and assignments can change as pods come and go.
+- **Retained log per partition.** After Payment Pod 1 processes order #101 at offset 0 in P0, it can commit offset 1 as the Payment group’s next position in P0. Any group can replay the record at offset 0 while Kafka still retains it. [Kafka consumer groups and offsets](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
+| Part | Responsibility |
+| --- | --- |
+| **Container image** | Packages the service and its dependencies. A container runs from the image inside a pod. |
+| **Kubernetes** | Runs and replaces pods and manages the configured replica count. |
+| **Microservice** | Executes the business logic, such as starting a payment workflow. |
+| **Kafka** | Stores event records, gives each consumer group its own progress, and assigns partitions to members of an ordinary group. |
+
+> **Kubernetes runs and scales the pods. Microservices do the business work. Kafka lets them share events, divide processing, and replay retained history.**
+
+For broker storage, replicas, and more detail on assignments, see [Kafka: Partitions, Replicas, and Consumer Groups](#kafka-partitions-replicas-and-consumer-groups).
 
 ### Kafka: Partitions, Replicas, and Consumer Groups
 
