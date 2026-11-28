@@ -18,6 +18,7 @@
 - [Kafka, Kinesis, and Platform Selection](#kafka-kinesis-and-platform-selection)
   - [Kafka on Kubernetes: One Order, Three Messaging Concepts](#kafka-on-kubernetes-one-order-three-messaging-concepts)
   - [Kafka: Partitions, Replicas, and Consumer Groups](#kafka-partitions-replicas-and-consumer-groups)
+    - [Kafka Record Anatomy and Partition Routing](#kafka-record-anatomy-and-partition-routing)
     - [How Kafka Stores and Fetches Records](#how-kafka-stores-and-fetches-records)
     - [Kafka Acknowledgments and Consumer Lag](#kafka-acknowledgments-and-consumer-lag)
   - [Kafka vs. RabbitMQ for Order 481](#kafka-vs-rabbitmq-for-order-481)
@@ -339,6 +340,8 @@ The arrows show the direction the event travels. The **consumer pods** are app p
 | **Microservice** | Executes the business logic, such as starting a payment workflow. |
 | **Kafka** | Stores event records, gives each consumer group its own progress, and assigns partitions to members of an ordinary group. |
 
+The **Orders database** answers “What’s the current status of order #101?” Kafka carries the `OrderCreated` event so other services can react and replay it while retained. Inventory can save a stock reservation and its outbox entry in one database transaction, then a relay publishes `InventoryReserved`. [Transactional outbox example](#worked-design-refund-review-for-order-481)
+
 > **Kubernetes runs and scales the pods. Microservices do the business work. Kafka lets them share events, divide processing, and replay retained history.**
 
 For broker storage, replicas, and more detail on assignments, see [Kafka: Partitions, Replicas, and Consumer Groups](#kafka-partitions-replicas-and-consumer-groups).
@@ -385,14 +388,49 @@ flowchart TB
 
 **Exactly-once boundary.** A Kafka consume-transform-produce workflow can use transactions to commit output records and input offsets together, with downstream readers using read-committed isolation. Kafka Streams can also include managed state updates within its processing guarantee when configured appropriately. A write to an unrelated database or a call to a payment API requires its own coordination or idempotency mechanism. [Kafka delivery semantics](https://kafka.apache.org/43/design/design/) · [Kafka Streams concepts](https://kafka.apache.org/43/streams/core-concepts/)
 
+#### Kafka Record Anatomy and Partition Routing
+
+Follow the `OrderCreated` event for order #101 from the [Kubernetes example](#kafka-on-kubernetes-one-order-three-messaging-concepts).
+
+| What the producer supplies | Example |
+| --- | --- |
+| **Topic** | `orders`, the destination. |
+| **Key** | The integer `101`, the order ID used for partition routing. |
+| **Value** | The serialized event payload, such as `{"type":"OrderCreated","orderId":101}`. |
+| **Headers** | Optional metadata, such as `correlation-id: order-101-flow` for tracing. |
+
+With the default Java producer settings and no explicit partition, the producer hashes the **serialized key** to choose a partition. With three partitions and Java’s integer serializer, key `101` routes to **P0**. For records without a key or explicit partition, the default producer uses **sticky batching**, keeping records on the same partition for a batch before switching. [Kafka ProducerRecord](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/producer/ProducerRecord.html) · [Kafka producer configuration](https://kafka.apache.org/43/configuration/producer-configs/)
+
+Kafka assigns the **offset** when it appends the record. Here the event lands at **P0, offset 0**. An offset is a position within one partition. Another partition in `orders` can also have an offset 0. [Kafka consumer offsets](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+
 #### How Kafka Stores and Fetches Records
+
+**Throughput** measures how much data moves per second. **End-to-end latency** measures how long one record takes to travel from producer to consumer. Batching can improve throughput by spreading request overhead across more records. The first record in a batch can wait while the producer collects more.
 
 1. **Send a batch.** The producer groups records going to the same partition and can compress them together. One request carries several records. Waiting to fill a batch can add delay.
 2. **Append to a segment.** The partition leader appends the batch to the active **log segment's** data file. A partition's log is stored as a series of these segments. Kafka rolls to a new one as needed. With delete-based retention, it can remove eligible old segments as units.
 3. **Find an offset.** Suppose P0 has segments starting at offsets `0` and `40`. To fetch `42`, Kafka selects the segment starting at `40`, uses its **sparse offset index** to jump to a nearby file position, and scans forward. A sparse index stores selected positions, so it can stay small.
 4. **Fetch a batch.** The operating system's **page cache** can serve recently used log data from RAM. On a supported path, Kafka can use `sendfile` to transfer log bytes to the socket with fewer copies through application memory. That path depends on how traffic is served, including whether TLS is used. If too little data is available for a fetch, the broker can wait briefly before replying. This **long poll** reduces repeated empty requests.
 
-Batching and caching can reduce disk, network, and CPU work. The time it takes to acknowledge a write still depends on the replication and durability settings. For performance comparisons, test with the same message sizes, hardware, and durability requirements. [Kafka design](https://kafka.apache.org/43/design/design/) · [Kafka log implementation](https://kafka.apache.org/43/implementation/log/)
+Sequential appends and batched reads let the broker move blocks of a partition log together. For a fetch, the operating system reads from storage if the data is missing from its page cache. The two paths below show what happens once the bytes are in the cache.
+
+```mermaid
+flowchart LR
+    subgraph BUFFERED["Buffered fetch"]
+        direction TB
+        B_CACHE["OS page cache"] --> B_APP["Broker application buffer"]
+        B_APP --> B_SOCKET["Kernel socket"]
+        B_SOCKET --> B_CONSUMER["Network to consumer"]
+    end
+    subgraph SENDFILE["Fetch with sendfile"]
+        direction TB
+        S_CACHE["OS page cache"] -->|sendfile| S_SOCKET["Kernel socket"]
+        S_SOCKET --> S_CONSUMER["Network to consumer"]
+    end
+    BUFFERED ~~~ SENDFILE
+```
+
+On a supported fetch path, `sendfile` avoids copying log bytes into the broker’s application buffer before sending them. Kafka’s TLS path uses application memory to encrypt the bytes. The time it takes to acknowledge a write still depends on the replication and durability settings. Compare throughput and latency under the same message sizes, hardware, and durability requirements. [Kafka design](https://kafka.apache.org/43/design/design/) · [Kafka log implementation](https://kafka.apache.org/43/implementation/log/)
 
 #### Kafka Acknowledgments and Consumer Lag
 
@@ -432,7 +470,7 @@ Use a queue when the primary requirement is **getting a job done**. Evaluate a r
 | **Fan-out with separate buffered workloads on AWS** | **Amazon SNS plus SQS.** Publish one event to a topic with separate queues for notifications and reporting. | Subscription filters, queue access, delivery retries, and downstream queue capacity. [SNS fan-out to SQS](https://docs.aws.amazon.com/sns/latest/dg/sns-sqs-as-subscriber.html) |
 | **Route messages to workers or multiple queues** | **RabbitMQ.** Exchanges route messages to bound queues, including competing-worker and fan-out patterns. | Exchange and queue behavior, publisher confirms, acknowledgments, and recovery for the chosen deployment. [RabbitMQ exchanges](https://www.rabbitmq.com/docs/exchanges) · [RabbitMQ queues](https://www.rabbitmq.com/docs/queues) |
 | **Independent managed subscriptions** | **Google Cloud Pub/Sub.** Each subscription has an independent delivery path, and workers can share a subscription. | Push or pull, acknowledgment deadlines, ordering or replay settings, and supported guarantee scope. [Google Cloud Pub/Sub subscriptions](https://docs.cloud.google.com/pubsub/docs/subscription-overview) |
-| **Retained history with independent readers** | **Apache Kafka.** Consumer groups can process or replay partitioned event history. | Partition keys, retention, consumer lag, replication, recovery, and operating effort. [Kafka introduction](https://kafka.apache.org/43/getting-started/introduction/) |
+| **Retained history with independent readers** | **Apache Kafka.** Consumer groups can process or replay partitioned event history, such as website clicks feeding analytics. | Partition keys, retention, consumer lag, replication, recovery, and operating effort. [Kafka use cases](https://kafka.apache.org/43/getting-started/uses/) |
 | **Managed AWS stream ingestion and replay** | **Amazon Kinesis Data Streams.** Producers send records using partition keys, and consumer applications read from shards. | Shard capacity, retention, reader throughput, and hot keys. [Kinesis Data Streams concepts](https://docs.aws.amazon.com/streams/latest/dev/key-concepts.html) |
 | **Live notifications or an existing Redis-based stream** | **Redis Pub/Sub** for live signals. **Redis Streams** for retained entries and consumer groups. | Pub/Sub messages can be missed while disconnected. With Streams, evaluate acknowledgment, trimming, persistence, and failure behavior. [Redis Pub/Sub delivery semantics](https://redis.io/docs/latest/develop/pubsub/#delivery-semantics) · [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/) |
 
@@ -516,7 +554,9 @@ These management commands let you observe routing and queue behavior in a lab. I
 
 **Stream processing** continuously transforms or analyzes arriving records. Kafka Streams is a library that runs in an application and reads and writes Kafka records. Apache Flink runs stream-processing jobs. The retained input gives a processor something to resume or replay, while the processor can filter, join, group, or aggregate those records. See [batch and streaming processing](Data-Engineering-for-Solution-Architecture.md#batch-streaming-and-interactive-queries). [Kafka Streams concepts](https://kafka.apache.org/43/streams/core-concepts/) · [Apache Flink architecture](https://flink.apache.org/what-is-flink/flink-architecture/)
 
-For the support dashboard, count unique reviews opened per five-minute window using the time the case opened (**event time**) and the review ID. A case opened at 10:04 belongs to `[10:00, 10:05)` even if the processor sees it at 10:06. A design that keeps that window open for late data can revise the count. Decide how long to maintain aggregation state and how to handle arrivals beyond the cutoff. A rebuild can replay into a fresh projection so the same review contributes once.
+For the support dashboard, a Kafka Streams application can read `support-events` and publish five-minute review counts to `support-review-counts`. A downstream consumer writes each window’s latest count to the dashboard’s read store.
+
+Count unique reviews opened per five-minute window using the time the case opened (**event time**) and the review ID. A case opened at 10:04 belongs to `[10:00, 10:05)` even if the processor sees it at 10:06. A design that keeps that window open for late data can revise the count. Decide how long to maintain aggregation state and how to handle arrivals beyond the cutoff. A rebuild can replay into a fresh projection so the same review contributes once.
 
 | Pattern | What it changes | Example for order 481 |
 | --- | --- | --- |
