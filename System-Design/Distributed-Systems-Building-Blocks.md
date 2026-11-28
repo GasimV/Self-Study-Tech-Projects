@@ -1848,6 +1848,7 @@ The value is stored as text. The application must read or watch it, interpret it
 | **Health checking** | Update health information from configured checks | Appropriate checks and consumers that act on their results; detection is not instantaneous |
 | **Service mesh** | Supply configuration and identity-based transport security for participating workloads | Proxy/workload configuration, certificate lifecycle, network reachability, and bypass prevention |
 | **Intentions** | Allow/deny configured service-to-service connections or requests | Appropriate rules and application-level business authorization |
+| **Mesh observability** | Configured Envoy proxies can report request rate, errors, and latency for traffic such as `order → payment` | Enable Layer 7 telemetry and choose how to collect and visualize it, for example with Prometheus and Grafana. [Consul mesh observability](https://developer.hashicorp.com/consul/docs/observe) |
 | **Configuration key-value (KV) store** | Store nonsecret settings and metadata, such as `payment/request_timeout_ms = 2000` | Applications or integrations must read/watch and apply changes; existing environment variables do not update themselves |
 | **Consul access controls** | Access Control Lists (ACLs) protect supported Consul API and KV operations | Configure access and protect credentials; these controls have a different scope from mesh intentions |
 
@@ -1855,6 +1856,8 @@ The value is stored as text. The application must read or watch it, interpret it
 
 For example, 50 Order Service instances and five Payment Service instances create **50 × 5 = 250 possible caller–destination pairs**. That does not necessarily require 250 firewall rules: network controls can also use groups, ranges, or other abstractions. The useful distinction is expressing the desired relationship between services rather than maintaining every instance pair individually.
 
+
+**Multiple datacenters.** Each Consul datacenter maintains its own service catalog and health data. Connecting services across datacenters requires configuration, such as cluster peering or WAN federation. [Consul control-plane architecture](https://developer.hashicorp.com/consul/docs/architecture/control-plane)
 
 Consul's KV store is intended for configuration and metadata, rather than replacing a general application database. **Each datacenter has its own KV store, without built-in replication between datacenters.** A watch or template integration can consume changes, but does not guarantee that every application can reload every setting without a restart. Use a secrets-management system for sensitive credentials. [KV overview](https://developer.hashicorp.com/consul/docs/automate/kv), [KV API and datacenter scope](https://developer.hashicorp.com/consul/api-docs/kv)
 
