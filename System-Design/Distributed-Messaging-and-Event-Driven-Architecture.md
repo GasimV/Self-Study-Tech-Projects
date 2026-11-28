@@ -9,6 +9,7 @@
   - [Queues, Pub/Sub, Streams, and Where Kafka Fits](#queues-pubsub-streams-and-where-kafka-fits)
   - [Work Queue: One Job, Competing Workers](#work-queue-one-job-competing-workers)
   - [Pub/Sub: One Event, Independent Subscribers](#pubsub-one-event-independent-subscribers)
+    - [Designing a Pub/Sub System](#designing-a-pubsub-system)
 - [Designing a Distributed Messaging System](#designing-a-distributed-messaging-system)
   - [What a Queue Gives You and What You Must Design](#what-a-queue-gives-you-and-what-you-must-design)
   - [Design Questions](#design-questions)
@@ -191,6 +192,16 @@ flowchart LR
 ```
 
 Both subscriptions can receive the event. Workers within the notification subscription can share notification work. A slow reporting consumer has its own backlog and can catch up within the configured retention window. It can still contribute to costs or load on shared broker resources. One implementation is an Amazon SNS topic with two Amazon SQS queues. [SNS fan-out to SQS](https://docs.aws.amazon.com/sns/latest/dg/sns-sqs-as-subscriber.html) · [Google Cloud Pub/Sub subscriptions](https://docs.cloud.google.com/pubsub/docs/subscription-overview)
+
+#### Designing a Pub/Sub System
+
+Use the Order 481 refund review to make five decisions:
+
+1. **Choose the topic and event contract.** The Support Service publishes `RefundReviewOpened` to `support-events` after the case is saved. Give the topic an owner and define the event schema, publish permissions, and retention.
+2. **Create a subscription for each independent job.** Give Notification and Reporting separate subscriptions with their own read permissions and progress. If the topic later carries `RefundReviewApproved` too, a filter can deliver just `RefundReviewOpened` to the Notification subscription while Reporting receives both. Check where a new subscription starts and whether it can replay earlier events. [Amazon SNS subscription filters](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html) · [Google Cloud Pub/Sub subscriptions](https://docs.cloud.google.com/pubsub/docs/subscription-overview)
+3. **Set delivery and ordering requirements.** With at-least-once delivery, make redelivery safe. Notification can use the review request ID to avoid sending a second case-opened update. If Reporting needs review events in order for each order ID, choose a platform and routing key or message group that support that scope. [Delivery, Ordering, and Recovery](#delivery-ordering-and-recovery)
+4. **Size and test each subscription.** Estimate deliveries using publish rate and matching subscriptions. Pause Reporting and publish a test event. Verify that Notification can finish, then restart Reporting within the retention window and check that its backlog drains. Monitor backlog age and completion rates. [Operations and Design Checklist](#operations-and-design-checklist)
+5. **Plan how to retire topics and subscriptions.** Confirm owners have migrated and required backlog has drained before removing a subscription. Before retiring a topic, check that its publishers and subscriptions have moved and preserve any history still needed for replay.
 
 ## Designing a Distributed Messaging System
 
