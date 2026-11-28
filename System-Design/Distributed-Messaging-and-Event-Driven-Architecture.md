@@ -391,6 +391,8 @@ flowchart TB
     L1 --> R
 ```
 
+> The arrows show records flowing to consumers. Consumers initiate the fetch.
+
 - **Partition order.** With a stable partition mapping, events for the same order can use the same partition. Partitions have separate orders. Changing the number of partitions can change key placement, so plan the transition if per-key order matters.
 - **Worker assignment.** With ordinary Kafka consumer groups, each partition is assigned to one group member at a time. Adding members beyond the partition count leaves some idle. A **rebalance** changes assignments when membership or subscriptions change. Another group can read the same records independently.
 - **Offsets and recovery.** If a worker has finished offset `42` and all earlier required work in that partition, it can commit `43` as its next position. If the worker saves an external result but dies before committing that position, a replacement can process `42` again. Committing past unfinished work can skip that work after recovery.
