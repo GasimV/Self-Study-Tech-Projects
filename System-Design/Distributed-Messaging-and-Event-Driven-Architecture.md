@@ -322,7 +322,9 @@ In the diagram, the **Kubernetes cluster** runs both the app pods and the Kafka 
 
 ![A Kubernetes cluster containing an Order Service producer pod, a Kafka cluster with three broker pods, and Payment, Inventory, and Notification consumer pods. The Order Service publishes OrderCreated for order 101 to the orders topic.](assets/kafka-kubernetes-order-flow.svg)
 
-The arrows show the direction the event travels. The consumer clients fetch records from Kafka.
+The arrows show the direction the event travels. The **consumer pods** are app pods running the Payment, Inventory, and Notification services. Their application code uses a Kafka consumer client to fetch and process records. For example, the Payment code reads `OrderCreated` and starts the payment workflow.
+
+> **Pod** describes where the code runs. **Consumer** describes its role in Kafka.
 
 ![Three views of the same Kafka orders topic. Payment, Inventory, and Notification use separate consumer groups. Within Payment, three pods share partitions P0, P1, and P2. P0 retains orders 101, 104, 107, and 110 at offsets 0 through 3.](assets/kafka-order-topic-three-views.svg)
 
