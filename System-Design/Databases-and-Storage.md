@@ -7,6 +7,7 @@
   - [Why Applications Use Databases](#why-applications-use-databases)
   - [Types of Databases](#types-of-databases)
   - [Relational Databases](#relational-databases)
+    - [Database, Schema, Table, and View](#database-schema-table-and-view)
     - [Customers and Orders Example](#customers-and-orders-example)
     - [Normalization and Indexes](#normalization-and-indexes)
     - [Greenplum: Relational Analytics with MPP](#greenplum-relational-analytics-with-mpp)
@@ -239,6 +240,39 @@ Relational databases organize data into **relations**, commonly represented as t
 | **Transaction** | A group of operations managed as one transaction boundary |
 
 Foreign keys can reference **suitable unique keys, not only primary keys**. Null handling and eligible referenced keys follow the engine's rules. A table name or column ending in `_id` does not create referential integrity by itself: the constraint must be declared and enforced. See [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html).
+
+#### Database, Schema, Table, and View
+
+| Concept | Meaning |
+| --- | --- |
+| **Database** | The overall container for data and database objects. |
+| **Schema** | A named group of objects such as tables, views, and functions. |
+| **Table** | Stores data in rows and columns. |
+| **Ordinary view** | A saved SQL query whose results you can read like a table. |
+
+Think of a PostgreSQL **schema** as a logical folder inside a database. It gives objects a namespace, so `customers.users` and `finance.users` could name two different tables. PostgreSQL schemas sit directly inside the database and cannot be nested. In data modeling, **schema** also means the definition of a structure, including its columns, data types, relationships, and constraints. [PostgreSQL schemas](https://www.postgresql.org/docs/current/ddl-schemas.html)
+
+![PostgreSQL banking database tree. The customers schema contains the users and addresses tables and the active_users view. The finance schema contains the accounts and transactions tables and the daily_revenue view.](assets/postgresql-banking-schema-tree.svg)
+
+In `finance.transactions`, `finance` is the schema and `transactions` is the table. This query reads rows from that table:
+
+```sql
+SELECT * FROM finance.transactions;
+```
+
+Assume the schema and table shown above already exist and `amount` is numeric. Create a new view in the `finance` schema and query it:
+
+```sql
+CREATE VIEW finance.large_transactions AS
+SELECT * FROM finance.transactions
+WHERE amount > 1000;
+
+SELECT * FROM finance.large_transactions;
+```
+
+The final query returns transactions whose amount is greater than 1,000. An ordinary view stores the query definition and evaluates it when you use the view. A **materialized view** also stores the query results and can be refreshed. [PostgreSQL CREATE VIEW](https://www.postgresql.org/docs/current/sql-createview.html) · [Cached Results vs. Materialized Views](#cached-results-vs-materialized-views)
+
+> **Database** = the overall container. **Schema** = a logical folder. **Table** = stored rows. **View** = a saved query you can read like a table.
 
 #### Customers and Orders Example
 

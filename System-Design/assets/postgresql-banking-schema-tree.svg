@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="335" viewBox="0 0 720 335" role="img" aria-labelledby="title description">
+  <title id="title">Example: PostgreSQL banking database</title>
+  <desc id="description">The banking database contains two schemas. The customers schema contains the users and addresses tables and the active_users view. The finance schema contains the accounts and transactions tables and the daily_revenue view.</desc>
+  <style>
+    text { font-family: system-ui, "Segoe UI", Arial, sans-serif; font-size: 14px; fill: #171717; }
+    .heading { font-weight: 650; }
+    .icon { fill: none; stroke: #575757; stroke-width: 1.15; stroke-linecap: round; stroke-linejoin: round; }
+    .folder { stroke: #bf8107; }
+  </style>
+  <defs>
+    <g id="database-icon">
+      <ellipse cx="7" cy="3.5" rx="4.5" ry="2"/>
+      <path d="M2.5 3.5v7a4.5 2 0 0 0 9 0v-7M2.5 7a4.5 2 0 0 0 9 0"/>
+    </g>
+    <g id="folder-icon">
+      <path d="M2 5V3.5a1 1 0 0 1 1-1h3l1.4 1.4H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM2 6h11"/>
+    </g>
+    <g id="table-icon">
+      <rect x="2.5" y="2.5" width="10" height="10" rx="1"/>
+      <path d="M2.5 5.8h10M2.5 9.2h10M6 5.8v6.7"/>
+    </g>
+    <g id="view-icon">
+      <path d="M1.5 7.5c1.6-3 3.6-4.5 6-4.5s4.4 1.5 6 4.5c-1.6 3-3.6 4.5-6 4.5S3.1 10.5 1.5 7.5z"/>
+      <circle cx="7.5" cy="7.5" r="1.8"/>
+    </g>
+  </defs>
+
+  <rect width="720" height="335" fill="#f8f8f8"/>
+  <text x="20" y="29" class="heading">Example: PostgreSQL banking database</text>
+  <rect x="20.5" y="49.5" width="691" height="273" rx="11" fill="#f8f8f8" stroke="#dcdcdc"/>
+
+  <use href="#database-icon" x="33" y="65" class="icon"/>
+  <text x="55" y="78" class="heading">Banking Database</text>
+
+  <use href="#folder-icon" x="49" y="93" class="icon folder"/>
+  <text x="72" y="105" class="heading">customers (Schema)</text>
+  <use href="#table-icon" x="68" y="122" class="icon"/>
+  <text x="84" y="136">users</text>
+  <use href="#table-icon" x="68" y="149" class="icon"/>
+  <text x="84" y="163">addresses</text>
+  <use href="#view-icon" x="68" y="177" class="icon"/>
+  <text x="84" y="190">active_users (View)</text>
+
+  <use href="#folder-icon" x="49" y="208" class="icon folder"/>
+  <text x="72" y="220" class="heading">finance (Schema)</text>
+  <use href="#table-icon" x="68" y="237" class="icon"/>
+  <text x="84" y="251">accounts</text>
+  <use href="#table-icon" x="68" y="264" class="icon"/>
+  <text x="84" y="278">transactions</text>
+  <use href="#view-icon" x="68" y="292" class="icon"/>
+  <text x="84" y="305">daily_revenue (View)</text>
+</svg>
